@@ -49,8 +49,26 @@ fn run_bytecode(path: &str) -> i32 {
     };
     let host = HostContext::stdio(Vec::new(), Vec::new());
     let mut process = Process::new(&image, limits, host);
-    match process.call(entry, Vec::new()) {
-        Outcome::Returned(v) => v.as_int() as i32,
+    let func = &image.file().functions[entry as usize];
+    let mut call_args = Vec::with_capacity(func.parameters.len());
+    for param in &func.parameters {
+        if image.file().types.get(param.ty).capability.is_none() {
+            return 70;
+        }
+        let Ok(val) = process.make_real_capability(param.ty) else {
+            return 70;
+        };
+        call_args.push(val);
+    }
+    let returns_int = image.file().types.get(func.result_type).kind == mo_bytecode::TypeKind::Int;
+    match process.call(entry, call_args) {
+        Outcome::Returned(v) => {
+            if returns_int {
+                v.as_int() as i32
+            } else {
+                0
+            }
+        }
         Outcome::Failed(_) | Outcome::Stopped(_) => 70,
     }
 }

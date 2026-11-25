@@ -35,6 +35,9 @@ use fake_files::{FakeFolderCap, FakeOpenFileCap};
 #[cfg(unix)]
 use real_files::{RealFolder, RealOpenFile, ResolverState};
 
+#[cfg(unix)]
+pub use real_files::open_confined_file;
+
 #[expect(
     clippy::expect_used,
     reason = "verified bytecode guarantees capability value matches host operation"

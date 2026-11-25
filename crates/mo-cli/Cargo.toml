@@ -32,6 +32,7 @@ mo-heap = { path = "../mo-heap" }
 mo-host = { path = "../mo-host" }
 mo-lower = { path = "../mo-lower" }
 mo-prim = { path = "../mo-prim" }
+mo-service = { path = "../mo-service" }
 mo-syntax = { path = "../mo-syntax" }
 mo-test = { path = "../mo-test" }
 mo-vm = { path = "../mo-vm" }

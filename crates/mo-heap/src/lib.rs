@@ -37,7 +37,9 @@ pub enum HeapError {
 struct BudgetInner {
     used: Cell<usize>,
     peak: Cell<usize>,
-    limit: usize,
+    limit: Cell<usize>,
+    scratch_used: Cell<usize>,
+    scratch_peak: Cell<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -51,7 +53,9 @@ impl HeapBudget {
             inner: Rc::new(BudgetInner {
                 used: Cell::new(0),
                 peak: Cell::new(0),
-                limit,
+                limit: Cell::new(limit),
+                scratch_used: Cell::new(0),
+                scratch_peak: Cell::new(0),
             }),
         }
     }
@@ -65,13 +69,28 @@ impl HeapBudget {
     }
 
     pub fn limit(&self) -> usize {
-        self.inner.limit
+        self.inner.limit.get()
+    }
+
+    /// Updates the heap byte limit in place (used to temporarily scope decode/request budgets).
+    pub fn set_limit(&self, limit: usize) {
+        self.inner.limit.set(limit);
+    }
+
+    /// Returns currently charged temporary scratch bytes.
+    pub fn scratch_used(&self) -> usize {
+        self.inner.scratch_used.get()
+    }
+
+    /// Returns peak temporary scratch bytes charged against this budget.
+    pub fn scratch_peak(&self) -> usize {
+        self.inner.scratch_peak.get()
     }
 
     pub fn charge(&self, bytes: usize) -> Result<(), HeapError> {
         let cur = self.inner.used.get();
         let next = cur.checked_add(bytes).ok_or(HeapError::OutOfMemory)?;
-        if next > self.inner.limit {
+        if next > self.inner.limit.get() {
             return Err(HeapError::OutOfMemory);
         }
         self.inner.used.set(next);
@@ -91,7 +110,7 @@ impl HeapBudget {
             .used
             .get()
             .checked_add(bytes)
-            .is_some_and(|next| next <= self.inner.limit)
+            .is_some_and(|next| next <= self.inner.limit.get())
     }
 }
 
@@ -113,6 +132,11 @@ impl<'a> ScratchGuard<'a> {
         }
         self.budget.charge(bytes)?;
         self.charged = self.charged.saturating_add(bytes);
+        let next_scratch = self.budget.inner.scratch_used.get().saturating_add(bytes);
+        self.budget.inner.scratch_used.set(next_scratch);
+        if next_scratch > self.budget.inner.scratch_peak.get() {
+            self.budget.inner.scratch_peak.set(next_scratch);
+        }
         Ok(())
     }
 
@@ -120,6 +144,11 @@ impl<'a> ScratchGuard<'a> {
         let n = bytes.min(self.charged);
         if n != 0 {
             self.budget.release(n);
+            let cur_scratch = self.budget.inner.scratch_used.get();
+            self.budget
+                .inner
+                .scratch_used
+                .set(cur_scratch.saturating_sub(n));
             self.charged -= n;
         }
     }
@@ -132,7 +161,13 @@ impl<'a> ScratchGuard<'a> {
 impl Drop for ScratchGuard<'_> {
     fn drop(&mut self) {
         if self.charged != 0 {
-            self.budget.release(self.charged);
+            let n = self.charged;
+            self.budget.release(n);
+            let cur_scratch = self.budget.inner.scratch_used.get();
+            self.budget
+                .inner
+                .scratch_used
+                .set(cur_scratch.saturating_sub(n));
             self.charged = 0;
         }
     }
@@ -305,7 +340,7 @@ impl HeapRef {
             let diff = new_bytes - old;
             let cur = self.0.budget.used.get();
             let next = cur.checked_add(diff).ok_or(HeapError::OutOfMemory)?;
-            if next > self.0.budget.limit {
+            if next > self.0.budget.limit.get() {
                 return Err(HeapError::OutOfMemory);
             }
             self.0.budget.used.set(next);

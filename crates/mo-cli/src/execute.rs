@@ -25,7 +25,8 @@ use crate::fix::{apply_fixes, leave_given, refuse_fix};
 use crate::format::format_files;
 use crate::fs_util::{FileIdentity, bytes_to_path, lstat_regular, write_bytecode_file};
 use crate::identity::{
-    MO_EMBEDDED_GUIDE, MO_EMBEDDED_REFERENCE, default_library_root, version_line,
+    MO_EMBEDDED_GUIDE, MO_EMBEDDED_REFERENCE, MO_VERSION, default_library_root, executable_path,
+    runtime_identity_digest, version_line,
 };
 use crate::install::install_program;
 use crate::render::{TestTotals, write_diagnostics, write_test_item, write_version};
@@ -538,32 +539,231 @@ pub fn execute_cli(
                 None,
             );
         }
+        if cli.command == Command::Emit {
+            let bundle_path = bytes_to_path(cli.file(0));
+            let Some(out_raw) = cli.output.as_deref() else {
+                let _ = writeln!(errors, "emit needs -o FILE: \"emit\"");
+                return 2;
+            };
+            let out_path = bytes_to_path(out_raw);
+            let old_bundle = cli.old_bundle.as_deref().map(bytes_to_path);
+            let migration = cli
+                .migration
+                .as_deref()
+                .and_then(|b| std::str::from_utf8(b).ok());
+            let ctx_in = cli.compile_context.as_deref().map(bytes_to_path);
+            let ctx_out_buf = {
+                let mut os = out_path.as_os_str().to_os_string();
+                os.push(".context");
+                PathBuf::from(os)
+            };
+            let lib_dir = cli.library.as_deref().map(bytes_to_path);
+            let build_digest = runtime_identity_digest().unwrap_or([0u8; 32]);
+            return mo_service::upgrade::compile::execute_emit_bundle(
+                bundle_path.as_ref(),
+                out_path.as_ref(),
+                old_bundle.as_deref(),
+                migration,
+                ctx_in.as_deref(),
+                Some(ctx_out_buf.as_path()),
+                lib_dir.as_deref(),
+                build_digest,
+                errors,
+            );
+        }
         return deferred_command_error(errors, "--bundle", "Slice 3E (crates/mo-upgrade)");
     }
-    if cli.upgrade_from.is_some() {
-        return deferred_command_error(errors, "--upgrade-from", "Slice 3E (crates/mo-upgrade)");
+    if let Some(old_raw) = cli.upgrade_from.as_deref() {
+        let old_path = bytes_to_path(old_raw);
+        let migration = cli
+            .migration
+            .as_deref()
+            .and_then(|b| std::str::from_utf8(b).ok());
+        let lib_dir = cli.library.as_deref().map(bytes_to_path);
+        let build_digest = runtime_identity_digest().unwrap_or([0u8; 32]);
+        let opts = mo_service::upgrade::commands::UpgradeCheckOptions {
+            candidate_path: cli.file(0),
+            old_path: old_path.as_ref(),
+            migration,
+            library: lib_dir.as_deref(),
+            json: cli.json,
+            build_digest,
+        };
+        return mo_service::upgrade::commands::run_upgrade_check(&opts, output, errors);
     }
     match cli.command {
         Command::Serve => {
-            return deferred_command_error(errors, "serve", "Slice 3D (crates/mo-service)");
+            #[cfg(unix)]
+            {
+                let is_api = cli.files.len() == 1
+                    && !cli.upgrade
+                    && !cli.adopt
+                    && cli.migration.is_none()
+                    && cli.admin_socket.is_none()
+                    && mo_service::api_server::probe_entry_api(cli.file(0));
+                if is_api {
+                    let data_dir = cli.data.as_deref().map(bytes_to_path);
+                    let bind_host = cli
+                        .bind_host
+                        .as_deref()
+                        .and_then(|b| std::str::from_utf8(b).ok());
+                    let lib_dir = cli.library.as_deref().map(bytes_to_path);
+                    let opts = mo_service::api_server::ApiServeOptions {
+                        entry_file: cli.file(0),
+                        data_dir: data_dir.as_deref(),
+                        port: cli.has_port.then_some(cli.port),
+                        bind_host,
+                        workers: cli.has_workers.then_some(cli.workers),
+                        watch: cli.watch,
+                        library: lib_dir.as_deref(),
+                        limits: cli.limits,
+                    };
+                    return mo_service::api_server::run_serve_api(&opts, output, errors);
+                }
+                if cli.bind_host.is_some() || cli.has_workers || cli.watch {
+                    let _ = writeln!(
+                        errors,
+                        "--bind, --workers and --watch apply only to api servers: \"serve\""
+                    );
+                    let _ = errors.flush();
+                    return 2;
+                }
+                if !cli.has_port {
+                    let _ = writeln!(errors, "serve needs --port N: \"serve\"");
+                    let _ = errors.flush();
+                    return 2;
+                }
+                let Some(data_raw) = cli.data.as_deref() else {
+                    let _ = writeln!(errors, "serve needs --data DIR: \"serve\"");
+                    let _ = errors.flush();
+                    return 2;
+                };
+                let data_dir = bytes_to_path(data_raw);
+                let allow_host = cli
+                    .allow_host
+                    .as_deref()
+                    .and_then(|b| std::str::from_utf8(b).ok());
+                let admin_socket = cli.admin_socket.as_deref().map(bytes_to_path);
+                let lib_dir = cli.library.as_deref().map(bytes_to_path);
+                let migration = cli
+                    .migration
+                    .as_deref()
+                    .and_then(|b| std::str::from_utf8(b).ok());
+                let executable = executable_path()
+                    .map(|b| bytes_to_path(&b).into_owned())
+                    .or_else(|| std::env::current_exe().ok())
+                    .unwrap_or_else(|| PathBuf::from("mo"));
+                let build_digest = runtime_identity_digest().unwrap_or([0u8; 32]);
+                let opts = mo_service::serve::ServeOptions {
+                    entry_file: (!cli.files.is_empty()).then(|| cli.file(0)),
+                    data_dir: data_dir.as_ref(),
+                    port: cli.port,
+                    bind: None,
+                    allow_host,
+                    admin_socket: admin_socket.as_deref(),
+                    library: lib_dir.as_deref(),
+                    upgrade: cli.upgrade,
+                    adopt: cli.adopt,
+                    migration,
+                    unconfined: cli.unconfined,
+                    limits: cli.limits,
+                    executable,
+                    build_digest,
+                };
+                return mo_service::serve::run_serve_service(&opts, output, errors);
+            }
+            #[cfg(not(unix))]
+            {
+                return deferred_command_error(errors, "serve", "Unix platforms only");
+            }
         }
         Command::Fetch => {
-            return deferred_command_error(errors, "fetch", "Slice 3D (crates/mo-service)");
+            #[cfg(unix)]
+            {
+                let Some(sock_raw) = cli.admin_socket.as_deref() else {
+                    let _ = writeln!(
+                        errors,
+                        "usage: mo fetch --admin-socket PATH --export state|failure ID --out FILE"
+                    );
+                    return 2;
+                };
+                let Some(out_raw) = cli.output.as_deref() else {
+                    let _ = writeln!(
+                        errors,
+                        "usage: mo fetch --admin-socket PATH --export state|failure ID --out FILE"
+                    );
+                    return 2;
+                };
+                let sock_path = bytes_to_path(sock_raw);
+                let out_path = bytes_to_path(out_raw);
+                let opts = mo_service::fetch::FetchOptions {
+                    admin_socket: sock_path.as_ref(),
+                    output_path: out_path.as_ref(),
+                    failure_id: (cli.fetch_failure > 0).then_some(cli.fetch_failure),
+                    json: cli.json,
+                };
+                return mo_service::fetch::run_fetch(&opts, output, errors);
+            }
+            #[cfg(not(unix))]
+            {
+                return deferred_command_error(errors, "fetch", "Unix platforms only");
+            }
         }
         Command::Push => {
-            return deferred_command_error(errors, "push", "Slice 3E (crates/mo-upgrade)");
+            #[cfg(unix)]
+            {
+                let Some(sock_raw) = cli.admin_socket.as_deref() else {
+                    let _ = writeln!(
+                        errors,
+                        "usage: mo push FILE --admin-socket PATH [--base DIGEST] [--migrate Module.function] [--json]"
+                    );
+                    return 2;
+                };
+                let sock_path = bytes_to_path(sock_raw);
+                let base_hex = cli
+                    .push_base
+                    .as_deref()
+                    .and_then(|b| std::str::from_utf8(b).ok());
+                let migration = cli
+                    .migration
+                    .as_deref()
+                    .and_then(|b| std::str::from_utf8(b).ok());
+                let lib_dir = cli.library.as_deref().map(bytes_to_path);
+                let opts = mo_service::upgrade::commands::PushOptions {
+                    candidate_path: cli.file(0),
+                    admin_socket: sock_path.as_ref(),
+                    base_hex,
+                    migration,
+                    library: lib_dir.as_deref(),
+                    json: cli.json,
+                };
+                return mo_service::upgrade::commands::run_push(&opts, output, errors);
+            }
+            #[cfg(not(unix))]
+            {
+                return deferred_command_error(errors, "push", "Unix platforms only");
+            }
         }
         Command::Replay => {
-            return deferred_command_error(errors, "replay", "Slice 3D (crates/mo-service)");
+            return deferred_command_error(errors, "replay", "Slice 3E (crates/mo-upgrade)");
         }
         Command::Query => {
-            return deferred_command_error(errors, "query", "Slice 3D (crates/mo-service)");
+            return deferred_command_error(errors, "query", "Slice 3E (crates/mo-upgrade)");
         }
         Command::Rehearse => {
             return deferred_command_error(errors, "rehearse", "Slice 3E (crates/mo-upgrade)");
         }
         Command::History => {
-            return deferred_command_error(errors, "history", "Slice 3D (crates/mo-service)");
+            let folder_cow = String::from_utf8_lossy(cli.file(0));
+            let build_digest = runtime_identity_digest().unwrap_or([0u8; 32]);
+            let opts = mo_service::history::HistoryOptions {
+                folder: folder_cow.as_ref(),
+                recover: cli.recover,
+                json: cli.json,
+                version: MO_VERSION,
+                build_digest,
+            };
+            return mo_service::history::run_history(&opts, output, errors);
         }
         Command::Diff => {
             return deferred_command_error(errors, "diff", "Slice 3E (crates/mo-upgrade)");
