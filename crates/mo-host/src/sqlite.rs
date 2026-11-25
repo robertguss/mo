@@ -26,9 +26,7 @@ use rustix::fs::{AtFlags, CWD, FileType, statat};
 use rustix::io::{Errno, fcntl_dupfd_cloexec};
 
 use crate::HostError;
-use crate::files_common::{
-    FileProblem, FileStatus, find_case_tag, plain_relative, prepare_real_path,
-};
+use crate::files_common::{FileProblem, FileStatus, find_case_tag, normalize_path, plain_relative};
 #[cfg(unix)]
 use crate::real_files::{PathMode, ResolverState, dir_fd_path, resolve};
 
@@ -702,7 +700,7 @@ pub(crate) fn sqlite_fake(
                     detail: None,
                 });
             }
-            let Ok(norm) = prepare_real_path(key_bytes) else {
+            let Ok(norm) = normalize_path(key_bytes) else {
                 return Err(HostError::Bug {
                     reason: "invalid database path",
                     detail: None,
@@ -1401,7 +1399,7 @@ pub(crate) fn call_sqlite(
             if raw == ":memory:" {
                 return open_ephemeral(heap, types, open_databases, result_ty);
             }
-            let norm = match prepare_real_path(raw.as_bytes()) {
+            let norm = match normalize_path(raw.as_bytes()) {
                 Ok(n) => n,
                 Err(nerr) => return file_error_to_sqlite(heap, types, result_ty, &args[1], nerr),
             };

@@ -1214,3 +1214,35 @@ fn reserved_keyword_field_and_param_recovery() {
         );
     }
 }
+
+#[test]
+fn misaligned_own_line_comments_preserve_position_and_equivalence() {
+    // 1. Over-indented comment before `x = 1` must stay above `x = 1`, never teleporting into
+    //    the inner `if` block that happens to share column 4.
+    let over_indented = "module Main\n\nfn f(flag: Bool) : Int\n    # before x\n  x = 1\n  if flag\n    x + 2\n  else\n    x + 3\n  end\nend\n";
+    let over_indented_expected = "module Main\n\nfn f(flag: Bool) : Int\n  # before x\n  x = 1\n  if flag\n    x + 2\n  else\n    x + 3\n  end\nend\n";
+    check_format_source(over_indented, Some(over_indented_expected));
+
+    // 2. Column-0 comment before the first `case` arm stays above the first arm, never
+    //    teleporting after the last arm.
+    let case_comment = "module Main\n\nfn f(x: Int) : Int\n  case x\n# before first arm\n    1: 10\n    _: 20\n  end\nend\n";
+    let case_comment_expected = "module Main\n\nfn f(x: Int) : Int\n  case x\n    # before first arm\n    1: 10\n    _: 20\n  end\nend\n";
+    check_format_source(case_comment, Some(case_comment_expected));
+
+    // 3. Branch-boundary comments preserve whether they end the previous branch or lead the next.
+    let branch_comments = "module Main\n\nfn f(a: Bool, b: Bool) : Int\n  if a\n    x = 1\n    # end of then\n  # before else if\n  else if b\n    y = 2\n    # end of else if\n  # before else\n  else\n    z = 3\n    # end of else\n  end\n  0\nend\n";
+    check_format_source(branch_comments, Some(branch_comments));
+
+    // 4. Case-arm boundary comments preserve ending-arm vs leading-next-arm placement.
+    let arm_comments = "module Main\n\nfn f(x: Int) : Int\n  case x\n    1:\n      a = 1\n      a + 1\n      # end of arm 1\n    # before arm 2\n    _: 2\n  end\nend\n";
+    check_format_source(arm_comments, Some(arm_comments));
+    let single_stmt_arm = "module Main\n\nfn f(x: Int) : Int\n  case x\n    1: a = 1\n      # end of arm 1\n    # before arm 2\n    _: 2\n  end\nend\n";
+    check_format_source(single_stmt_arm, Some(single_stmt_arm));
+}
+
+#[test]
+fn alternating_branch_comment_indentation_does_not_reorder_comments() {
+    let source = "module Main\n\nfn f(flag: Bool) : Int\n  if flag\n    1\n    # first\n  # second\n    # third\n  else\n    2\n  end\nend\n";
+    let expected = "module Main\n\nfn f(flag: Bool) : Int\n  if flag\n    1\n    # first\n  # second\n  # third\n  else\n    2\n  end\nend\n";
+    check_format_source(source, Some(expected));
+}

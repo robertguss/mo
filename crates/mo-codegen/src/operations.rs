@@ -338,6 +338,7 @@ pub fn resolve_operation(prim: &Prim) -> Option<Operation> {
             CoreCharOp::Lower => PrimId::CharAsciiLowercase,
             CoreCharOp::Upper => PrimId::CharAsciiUppercase,
             CoreCharOp::ToText => PrimId::CharToText,
+            CoreCharOp::Quoted => PrimId::CharQuoted,
         },
         Prim::Text(op) => match op {
             CoreTextOp::Concat => PrimId::TextConcat,
@@ -368,6 +369,7 @@ pub fn resolve_operation(prim: &Prim) -> Option<Operation> {
             CoreTextOp::ToFloat => PrimId::TextToFloat,
             CoreTextOp::Join => PrimId::ListJoin,
             CoreTextOp::Bytes => PrimId::TextBytes,
+            CoreTextOp::Quoted => PrimId::TextQuoted,
         },
         Prim::Bytes(op) => match op {
             CoreBytesOp::Size => PrimId::BytesSize,

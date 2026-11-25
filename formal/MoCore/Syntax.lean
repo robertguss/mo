@@ -287,7 +287,7 @@ inductive CmpOp where
 
 /-- Operations on `Char`. -/
 inductive CharOp where
-  | code | isDigit | isLetter | isWhiteSpace | lower | upper | toText
+  | code | isDigit | isLetter | isWhiteSpace | lower | upper | toText | quoted
   deriving DecidableEq, Repr, Inhabited
 
 /-- Operations on `Text`. -/
@@ -298,6 +298,7 @@ inductive TextOp where
   | toInt | toDecimal | toFloat | join
   /-- `text.bytes`: the text's UTF-8 encoding. -/
   | bytes
+  | quoted
   deriving DecidableEq, Repr, Inhabited
 
 /-- Operations on `Bytes`. `decodeUtf8` gives `None` for bytes that aren't
@@ -473,7 +474,7 @@ def CharOp.sig : CharOp → List Ty × Ty
   | .code => ([.char], .int)
   | .isDigit | .isLetter | .isWhiteSpace => ([.char], .bool)
   | .lower | .upper => ([.char], .char)
-  | .toText => ([.char], .text)
+  | .toText | .quoted => ([.char], .text)
 
 def TextOp.sig : TextOp → List Ty × Ty
   | .concat => ([.text, .text], .text)
@@ -483,7 +484,7 @@ def TextOp.sig : TextOp → List Ty × Ty
   | .fromChars => ([.list .char], .text)
   | .lines | .words => ([.text], .list .text)
   | .split => ([.text, .text], .list .text)
-  | .trim | .trimStart | .trimEnd | .lower | .upper => ([.text], .text)
+  | .trim | .trimStart | .trimEnd | .lower | .upper | .quoted => ([.text], .text)
   | .startsWith | .endsWith | .contains => ([.text, .text], .bool)
   | .dropPrefix | .dropSuffix => ([.text, .text], .option .text)
   | .replace => ([.text, .text, .text], .text)

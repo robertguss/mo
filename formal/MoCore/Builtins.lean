@@ -984,7 +984,7 @@ def fakeFileKindChecks : Expr :=
       (tCap .files) (.fileFolderConflict path)
 
 #guard (["/a", "", ".", "..", "./a", "../a", "a/", "a//b", "a/./b", "a/../b",
-  "a/.", "a/..", "a\x00/../b"]).all fun path =>
+  "a/.", "a/..", "a\x00/../b", "a\x00b"]).all fun path =>
     stops program (io .filesInMemory [mapOf tText tText [(str path, str "file")]])
       (tCap .files) (.filePathInvalid path)
 #guard ([("a", "a/", "a/"), ("a//b", "/bad", "a//b"), ("valid", "../bad", "../bad")] :
@@ -993,12 +993,15 @@ def fakeFileKindChecks : Expr :=
       (tCap .files) (.filePathInvalid expected)
 
 def fakeFileKeyChecks : Expr :=
-  let keys := ["leaf", ".hidden", "...", "..name", "a/.b", "a/..b", "β/é", "a\x00b"]
+  let keys := ["leaf", ".hidden", "...", "..name", "a/.b", "a/..b", "β/é"]
   let files := mapOf tText tText (keys.map fun path => (str path, str "kept"))
   lets [("files", io .filesInMemory [files])] <|
     keys.foldr (fun path rest => and_
       (eq (tRes tText tFileError) (io (.readText false) [v "files", str path])
-        (ok_ tText tFileError (str "kept"))) rest) tt
+        (ok_ tText tFileError (str "kept"))) rest) <|
+    and_ (eq (tRes tText tFileError) (io (.readText false) [v "files", str "a\x00b"])
+      (err_ tText tFileError (notAllowed "a\x00b"))) <|
+    not_ (io (.exists false) [v "files", str "a\x00/../leaf"])
 
 def libraryChecks : Expr :=
   and_ numberChecks (and_ randomChecks (and_ entryChecks (and_ fakeFileKindChecks fakeFileKeyChecks)))

@@ -51,4 +51,6 @@ fn main(console: Console)
   show = Shapes.to_text
   texts = [found, missing].map(Option.to_text)
   console.print("#{order(dear, cheap)} #{show(dear)} #{texts} #{[[1], []].map(List.to_text)}")
+  console.print(List.to_text(["\u{80}\u{200B}\u{E0001}"]))
+  console.print(List.to_text(['\u{202E}', '\u{9F}']))
 end

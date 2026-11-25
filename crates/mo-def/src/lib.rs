@@ -119,6 +119,27 @@ impl Opcode {
     }
 }
 
+/// Returns whether a Unicode scalar value is banned verbatim in Mo source (reference 2.1):
+/// C0 controls other than tab and line breaks, DEL, C1 controls, zero-width characters,
+/// direction overrides, and invisible formatting scalars.
+#[must_use]
+pub const fn is_invisible_scalar(c: u32) -> bool {
+    (c < 32 && c != 9 && c != 10 && c != 13)
+        || c == 127
+        || (c >= 128 && c <= 159)
+        || c == 0xad
+        || c == 0x61c
+        || c == 0x180e
+        || (c >= 0x200b && c <= 0x200f)
+        || (c >= 0x2028 && c <= 0x202e)
+        || (c >= 0x2060 && c <= 0x2064)
+        || (c >= 0x2066 && c <= 0x206f)
+        || c == 0xfeff
+        || (c >= 0xfff9 && c <= 0xfffb)
+        || c == 0xe0001
+        || (c >= 0xe0020 && c <= 0xe007f)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,8 +343,8 @@ mod tests {
         assert_eq!(CoreFloatOp::ALL.len(), 15);
         assert_eq!(CoreBase::ALL.len(), 11);
         assert_eq!(CoreCmpOp::ALL.len(), 4);
-        assert_eq!(CoreCharOp::ALL.len(), 7);
-        assert_eq!(CoreTextOp::ALL.len(), 28);
+        assert_eq!(CoreCharOp::ALL.len(), 8);
+        assert_eq!(CoreTextOp::ALL.len(), 29);
         assert_eq!(CoreBytesOp::ALL.len(), 21);
         assert_eq!(CoreUnicodeOp::ALL.len(), 7);
         assert_eq!(CoreCryptoOp::ALL.len(), 7);

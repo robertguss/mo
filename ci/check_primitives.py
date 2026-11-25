@@ -39,6 +39,9 @@ def query(name, primitive, args):
 def text_cases(rng, rows):
     texts = ["", "a", "aba", "ababa", "aaaaa", "aaaab", "a\n", "\n\n", "a\r\nb\r",
              " \t\n\r\v\f", " a  b \n c ", "\u00a0a\u00a0", "β🙂", "a\0b", "#{x}", '"\\\x7f']
+    invisible_edges = [0x80, 0x9F, 0xAD, 0x61C, 0x180E, 0x200B, 0x200F, 0x2028, 0x202E,
+                       0x2060, 0x2064, 0x2065, 0x2066, 0x206F, 0xFEFF, 0xFFF9, 0xFFFB,
+                       0xE0001, 0xE0020, 0xE007F]
     texts += ["".join(rng.choice("aβ🙂 \n\r\t\0") for _ in range(rng.randrange(33))) for _ in range(24)]
     number_texts = ["", "-", "+1", "00", "-0", "0x10", "1_000", " 1", "1 ", "1.", ".1",
                     "9223372036854775807", "9223372036854775808", "-9223372036854775808",
@@ -53,15 +56,16 @@ def text_cases(rng, rows):
         op = {"%concat": "concat", "empty?": "isEmpty", "starts_with?": "startsWith",
               "ends_with?": "endsWith", "contains?": "contains", "ascii_lowercase": "lower",
               "ascii_uppercase": "upper", "ascii_digit?": "isDigit", "ascii_letter?": "isLetter",
-              "ascii_white_space?": "isWhiteSpace"}.get(name, camel(name))
+              "ascii_white_space?": "isWhiteSpace", "%quoted": "quoted"}.get(name, camel(name))
         primitive = f"({module.lower()} ({op}))"
         values = []
         if name == "%compare":
             primitive = f"(order ({module.lower()}))"
-        if name == "%quoted":
-            primitive = "(quotedText)" if module == "Text" else "(quotedChar)"
         if module == "Text":
-            if name == "%structural":
+            if name == "%quoted":
+                extra = "".join(map(chr, invisible_edges)) + "\\#{x}"
+                values = [[f"(text {quote(s)})"] for s in [*texts, extra]]
+            elif name == "%structural":
                 primitive = "(structural (int))"
                 values = [[f"(int {n})"] for n in [-(1 << 63), -1, 0, 1, (1 << 63)-1]]
             elif name == "from_chars":
@@ -83,6 +87,8 @@ def text_cases(rng, rows):
                        127, 128, 0xA0, 0xD7FF, 0xE000, 0x1F642, 0x10FFFF]
             scalars += [n for n in [rng.randrange(0x110000) for _ in range(48)]
                         if not 0xD800 <= n <= 0xDFFF]
+            if name == "%quoted":
+                scalars += [n for n in invisible_edges if n not in scalars]
             values = [[f"(char {quote(chr(n))})"] for n in scalars]
         else:
             byte_sequences = [b"", b"\0", b"abc", b"\xff", b"\xc0\x80", b"\xed\xa0\x80",

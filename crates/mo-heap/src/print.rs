@@ -155,7 +155,8 @@ fn push_char_bounded(out: &mut String, ch: char, limit: Option<usize>) -> bool {
     true
 }
 
-/// Quotes UTF-8 bytes matching `src/heap/print.c:quote` (including C1 escapes).
+/// Quotes UTF-8 bytes as valid Mo source literals (reference 2.1 and 9.2),
+/// escaping C0/C1 controls, invisible/bidi scalars, delimiter, backslash, and `#{`.
 pub fn quote_structural(out: &mut String, s: &str, delimiter: Option<char>) {
     let _ = quote_structural_bounded(out, s, delimiter, None);
 }
@@ -172,58 +173,39 @@ fn quote_structural_bounded(
         return false;
     }
     let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
-        let is_c1 = c == 0xc2 && i + 1 < bytes.len() && (0x80..=0x9f).contains(&bytes[i + 1]);
-        match c {
-            b'\n' => {
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '\n' => {
                 if !push_str_bounded(out, "\\n", limit) {
                     return false;
                 }
-                i += 1;
             }
-            b'\r' => {
+            '\r' => {
                 if !push_str_bounded(out, "\\r", limit) {
                     return false;
                 }
-                i += 1;
             }
-            b'\t' => {
+            '\t' => {
                 if !push_str_bounded(out, "\\t", limit) {
                     return false;
                 }
-                i += 1;
             }
-            b if b < 32 || b == 127 => {
-                let esc = format!("\\u{{{b:x}}}");
+            c if mo_def::is_invisible_scalar(c as u32) => {
+                let esc = format!("\\u{{{:x}}}", c as u32);
                 if !push_str_bounded(out, &esc, limit) {
                     return false;
                 }
-                i += 1;
             }
-            _ if is_c1 => {
-                let code = bytes[i + 1];
-                let esc = format!("\\u{{{code:x}}}");
-                if !push_str_bounded(out, &esc, limit) {
-                    return false;
-                }
-                i += 2;
-            }
-            _ => {
-                let Some(ch) = s[i..].chars().next() else {
-                    break;
-                };
-                let is_interp = c == b'#' && i + 1 < bytes.len() && bytes[i + 1] == b'{';
-                if (delimiter == Some(ch) || ch == '\\' || is_interp)
+            c => {
+                let is_interp = c == '#' && bytes.get(i + 1) == Some(&b'{');
+                if (delimiter == Some(c) || c == '\\' || is_interp)
                     && !push_char_bounded(out, '\\', limit)
                 {
                     return false;
                 }
-                if !push_char_bounded(out, ch, limit) {
+                if !push_char_bounded(out, c, limit) {
                     return false;
                 }
-                i += ch.len_utf8();
             }
         }
     }
@@ -633,5 +615,24 @@ pub fn value_print_bounded(
         Some(out)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::quote_structural;
+
+    #[test]
+    fn quote_structural_escapes_c0_c1_and_invisible_scalars() {
+        let mut out = String::new();
+        quote_structural(
+            &mut out,
+            "x\0\u{80}\u{9f}\u{200b}\u{202e}\u{feff}\u{e0001}#{y}",
+            Some('"'),
+        );
+        assert_eq!(
+            out,
+            "\"x\\u{0}\\u{80}\\u{9f}\\u{200b}\\u{202e}\\u{feff}\\u{e0001}\\#{y}\""
+        );
     }
 }
