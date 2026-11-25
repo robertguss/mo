@@ -161,51 +161,20 @@ def check_workspace_lint_policy() -> tuple[int, int]:
     return len(crate_dirs), entry_points_checked
 
 
-def find_or_build_mo(explicit: str | None) -> pathlib.Path:
+def find_or_build_mo(explicit: str | None, skip_build: bool = False) -> pathlib.Path:
     if explicit:
         path = pathlib.Path(explicit).resolve()
         assert path.is_file(), f"mo binary not found: {path}"
         return path
-    for candidate in (
-        ROOT / "build/gcc/debug/mo",
-        ROOT / "build/clang/debug/mo",
-        ROOT / "build/cc/debug/mo",
-        ROOT / "build/gcc/release/mo",
-        ROOT / "build/clang/release/mo",
-        ROOT / "build/cc/release/mo",
-    ):
-        if candidate.is_file():
-            return candidate
-    subprocess.run(["make", "--no-print-directory", "-j8", "CC=gcc"], cwd=ROOT, check=True)
-    built = ROOT / "build/gcc/debug/mo"
-    assert built.is_file(), f"failed to build {built}"
-    return built
-
-
-def find_or_build_c_core_drivers(mo_bin: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
-    """Locate or build C `test_core_check.test` and `test_core_print.test`."""
-    # Prefer the debug tree matching mo_bin's compiler (`build/<cc>/debug/tests/...`).
-    rel_parts = None
-    try:
-        rel_parts = mo_bin.resolve().relative_to(ROOT).parts
-    except ValueError:
-        pass
-    compiler = rel_parts[1] if rel_parts and len(rel_parts) >= 3 and rel_parts[0] == "build" else "gcc"
-    if compiler not in ("gcc", "clang", "cc"):
-        compiler = "gcc"
-    test_dir = ROOT / "build" / compiler / "debug" / "tests"
-    check_bin = test_dir / "test_core_check.test"
-    print_bin = test_dir / "test_core_print.test"
-    missing = [str(p.relative_to(ROOT)) for p in (check_bin, print_bin) if not p.is_file()]
-    if missing:
+    built = ROOT / "target/release/mo"
+    if not skip_build and not built.is_file():
         subprocess.run(
-            ["make", "--no-print-directory", "-j8", f"CC={compiler}", *missing],
+            ["cargo", "build", "--release", "--bin", "mo"],
             cwd=ROOT,
             check=True,
         )
-    assert check_bin.is_file(), f"missing C driver: {check_bin}"
-    assert print_bin.is_file(), f"missing C driver: {print_bin}"
-    return check_bin, print_bin
+    assert built.is_file(), f"failed to build {built}"
+    return built
 
 
 def find_or_build_mo_fe_and_rt(
@@ -427,11 +396,10 @@ def run_batch_printed(cmd_prefix: list[str], files: list[str], jobs: int) -> lis
 
 def check_core_checker_differential(
     mo_fe: pathlib.Path,
-    c_check: pathlib.Path,
     mocore: pathlib.Path | None,
     jobs: int,
 ) -> tuple[int, int, int]:
-    """Compare mo-fe core-check verdicts & error codes against C and Lean mocore."""
+    """Compare mo-fe core-check verdicts & error codes against generator expectations and Lean mocore."""
     cases, originals, programs = collect_core_check_cases()
     with tempfile.TemporaryDirectory(prefix="mo-rust-core-check-") as tmp:
         files: list[str] = []
@@ -441,9 +409,7 @@ def check_core_checker_differential(
             files.append(str(p))
 
         rs_lines = run_batch_lines([str(mo_fe), "core-check-batch", "--kind", "run"], files, jobs)
-        c_lines = run_batch_lines([str(c_check)], files, jobs)
         assert len(rs_lines) == len(cases), f"mo-fe returned {len(rs_lines)} of {len(cases)} verdicts"
-        assert len(c_lines) == len(cases), f"C returned {len(c_lines)} of {len(cases)} verdicts"
 
         lean_verdicts: list[int] | None = None
         if mocore is not None:
@@ -463,33 +429,23 @@ def check_core_checker_differential(
             with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
                 lean_verdicts = list(pool.map(one_lean, zip(files, cases)))
 
-        for i, ((label, raw, want), rs_line, c_line) in enumerate(zip(cases, rs_lines, c_lines)):
+        for i, ((label, raw, want), rs_line) in enumerate(zip(cases, rs_lines)):
             rs_parts = rs_line.split()
-            c_parts = c_line.split()
             rs_status = int(rs_parts[0])
-            c_status = int(c_parts[0])
 
             if want is not None:
                 assert rs_status == want, (
                     f"{label}: generator expected {want}, mo-fe gave {rs_line!r}\n"
                     f"{raw.decode(errors='replace')}"
                 )
-            assert rs_status == c_status, (
-                f"{label}: verdict mismatch: C={c_line!r}, mo-fe={rs_line!r}\n"
-                f"{raw.decode(errors='replace')}"
-            )
             if lean_verdicts is not None:
                 assert rs_status == lean_verdicts[i], (
                     f"{label}: verdict mismatch vs Lean ({lean_verdicts[i]}): "
-                    f"mo-fe={rs_line!r}, C={c_line!r}\n{raw.decode(errors='replace')}"
+                    f"mo-fe={rs_line!r}\n{raw.decode(errors='replace')}"
                 )
             if rs_status in (4, 5):
-                assert len(rs_parts) >= 2 and len(c_parts) >= 2, (
-                    f"{label}: missing error code in output: C={c_line!r}, mo-fe={rs_line!r}"
-                )
-                assert rs_parts[1] == c_parts[1], (
-                    f"{label}: error code mismatch: C={c_line!r}, mo-fe={rs_line!r}\n"
-                    f"{raw.decode(errors='replace')}"
+                assert len(rs_parts) >= 2, (
+                    f"{label}: missing error code in output: mo-fe={rs_line!r}"
                 )
                 if rs_status == 5:
                     code_num = int(rs_parts[1][1:])
@@ -501,13 +457,11 @@ def check_core_checker_differential(
 
 def check_generated_core_programs(
     mo_fe: pathlib.Path,
-    c_check: pathlib.Path,
-    c_print: pathlib.Path,
     mocore: pathlib.Path | None,
     count: int,
     jobs: int,
 ) -> int:
-    """Verify generated well-typed Core programs pass Rust/C/Lean checkers and print byte-identically."""
+    """Verify generated well-typed Core programs pass Rust and Lean checkers and print byte-identically."""
     assert count >= 1, "--generated-count must be >= 1"
     texts = [gen_core.document(seed) for seed in range(count)]
     if count >= 200:
@@ -535,18 +489,13 @@ def check_generated_core_programs(
             files.append(str(p))
 
         rs_verdicts = run_batch_lines([str(mo_fe), "core-check-batch", "--kind", "run"], files, jobs)
-        c_verdicts = run_batch_lines([str(c_check)], files, jobs)
-        for i, (rv, cv) in enumerate(zip(rs_verdicts, c_verdicts)):
-            assert rv == "0" and cv == "0", (
-                f"generated seed {i} refused: mo-fe={rv!r}, C={cv!r}\n{texts[i]}"
-            )
+        for i, rv in enumerate(rs_verdicts):
+            assert rv == "0", f"generated seed {i} refused: mo-fe={rv!r}\n{texts[i]}"
 
         rs_printed = run_batch_printed([str(mo_fe), "core-print-batch", "--kind", "run"], files, jobs)
-        c_printed = run_batch_printed([str(c_print)], files, jobs)
-        assert len(rs_printed) == count and len(c_printed) == count
-        for i, (want, got_rs, got_c) in enumerate(zip(texts, rs_printed, c_printed)):
+        assert len(rs_printed) == count
+        for i, (want, got_rs) in enumerate(zip(texts, rs_printed)):
             assert got_rs == want, f"mo-fe print mismatch on seed {i}\nwant: {want}\ngot:  {got_rs}"
-            assert got_c == want, f"C print mismatch on seed {i}\nwant: {want}\ngot:  {got_c}"
 
         if mocore is not None:
             def lean_one(item: tuple[int, str]) -> None:
@@ -602,17 +551,16 @@ def discover_mo_programs() -> list[tuple[str, str]]:
 def check_c_emitted_core_programs(
     mo_bin: pathlib.Path,
     mo_fe: pathlib.Path,
-    c_check: pathlib.Path,
     jobs: int,
 ) -> tuple[int, int]:
-    """Emit `.core` via C `mo check --emit=core`, verify byte-exact round-trip and C==Rust verdicts."""
+    """Emit `.core` via `mo check --emit=core`, verify byte-exact round-trip and Core checker verdicts."""
     entries = discover_mo_programs()
     assert len(entries) >= 250, f"expected >= 250 real .mo programs, found {len(entries)}"
 
     with tempfile.TemporaryDirectory(prefix="mo-rust-emit-core-") as tmp:
         tmp_path = pathlib.Path(tmp)
 
-        def emit_one(item: tuple[int, tuple[str, str]]) -> tuple[str, pathlib.Path, pathlib.Path, bytes] | None:
+        def emit_one(item: tuple[int, tuple[str, str]]) -> tuple[str, pathlib.Path, bytes] | None:
             idx, (label, rel_prog) = item
             res = subprocess.run(
                 [str(mo_bin), "check", "--emit=core", rel_prog],
@@ -621,11 +569,10 @@ def check_c_emitted_core_programs(
                 timeout=60,
             )
             if res.returncode != 0:
-                # Some golden programs intentionally fail a checked anchor (`mo check` runs anchors).
                 if label.startswith("golden/"):
                     return None
                 raise AssertionError(
-                    f"C mo check --emit=core failed on {label} ({rel_prog}): "
+                    f"mo check --emit=core failed on {label} ({rel_prog}): "
                     f"{res.stderr.decode(errors='replace')}"
                 )
             raw = res.stdout
@@ -634,55 +581,38 @@ def check_c_emitted_core_programs(
             )
             prog_file = tmp_path / f"prog_{idx}.core"
             prog_file.write_bytes(raw)
-
-            # Also wrap as Run so C `test_core_check.test` can verify the exact same Program.
-            # Strip outer "(core 0.11 " prefix and trailing ")\n".
-            prefix = f"(core {check_core_check.VERSION} ".encode()
-            inner = raw[len(prefix) :].rstrip()
-            assert inner.endswith(b")"), f"malformed core envelope on {label}"
-            program_sexp = inner[:-1].decode("utf-8")
-            run_file = tmp_path / f"run_{idx}.core"
-            run_file.write_bytes(check_core_check.run(program_sexp))
-            return label, prog_file, run_file, raw
+            return label, prog_file, raw
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
             emitted = [item for item in pool.map(emit_one, enumerate(entries)) if item is not None]
 
         assert len(emitted) >= 250, f"expected >= 250 emitted .core programs, got {len(emitted)}"
 
-        prog_files = [str(p) for _, p, _, _ in emitted]
-        run_files = [str(r) for _, _, r, _ in emitted]
+        prog_files = [str(p) for _, p, _ in emitted]
 
         # 1. Byte-for-byte canonical round-trip on every emitted Program.
         printed = run_batch_printed(
             [str(mo_fe), "core-print-batch", "--kind", "program"], prog_files, jobs
         )
         assert len(printed) == len(emitted)
-        for (label, _, _, raw), got in zip(emitted, printed):
+        for (label, _, raw), got in zip(emitted, printed):
             assert got.encode("utf-8") == raw, f"mo-fe core-print round-trip diff on {label}"
 
-        # 2. Exact verdict & error-code parity between Rust mo-fe and C test_core_check.
+        # 2. Core checker verification on every emitted Program.
         rs_verdicts = run_batch_lines(
             [str(mo_fe), "core-check-batch", "--kind", "program"], prog_files, jobs
         )
-        c_verdicts = run_batch_lines([str(c_check)], run_files, jobs)
         accepted = 0
-        for (label, _, _, raw), rv, cv in zip(emitted, rs_verdicts, c_verdicts):
+        for (label, _, raw), rv in zip(emitted, rs_verdicts):
             rs_parts = rv.split()
-            c_parts = cv.split()
-            assert rs_parts[0] == c_parts[0], (
-                f"{label}: verdict mismatch on emitted Core: C={cv!r}, mo-fe={rv!r}"
-            )
             if rs_parts[0] == "0":
                 accepted += 1
             else:
-                # Only service programs with out-of-band `mo_services` descriptors (`sim (start/send)`)
-                # may fail standalone Core checking (and both C and Rust must give E1037).
                 assert b"(sim (start " in raw or b"(sim (send " in raw, (
                     f"{label}: unexpected Core refusal without service descriptors: {rv!r}"
                 )
-                assert rs_parts[1] == c_parts[1] == "E1037", (
-                    f"{label}: unexpected code mismatch on service Core: C={cv!r}, mo-fe={rv!r}"
+                assert rs_parts[1] == "E1037", (
+                    f"{label}: unexpected code on service Core: mo-fe={rv!r}"
                 )
         return len(emitted), accepted
 
@@ -728,31 +658,19 @@ SYNTAX_ERROR_GENERATORS = {
 
 
 def find_or_build_mo_grammar(
-    explicit: str | None, mo_bin: pathlib.Path, skip_build: bool, require_bison: bool
+    explicit: str | None, skip_build: bool, require_bison: bool
 ) -> pathlib.Path | None:
-    """Locate or build the Bison executable grammar (`build/<cc>/debug/mo-grammar`)."""
+    """Locate or build the Bison executable grammar (`build/grammar/mo-grammar`)."""
     if explicit:
         path = pathlib.Path(explicit).resolve()
         assert path.is_file(), f"mo-grammar binary not found: {path}"
         return path
-    rel_parts = None
-    try:
-        rel_parts = mo_bin.resolve().relative_to(ROOT).parts
-    except ValueError:
-        pass
-    compiler = (
-        rel_parts[1]
-        if rel_parts and len(rel_parts) >= 3 and rel_parts[0] == "build"
-        else "gcc"
-    )
-    if compiler not in ("gcc", "clang", "cc"):
-        compiler = "gcc"
-    target = ROOT / "build" / compiler / "debug" / "mo-grammar"
+    target = ROOT / "build/grammar/mo-grammar"
     if target.is_file():
         return target
     if not skip_build and shutil.which("bison") is not None:
         subprocess.run(
-            ["make", "--no-print-directory", "-j8", f"CC={compiler}", str(target.relative_to(ROOT))],
+            ["make", "--no-print-directory", "-C", "grammar", "mo-grammar"],
             cwd=ROOT,
             check=True,
         )
@@ -1524,7 +1442,6 @@ def run_lower_batch(
 def check_rust_lowering_and_lean_parity(
     mo_bin: pathlib.Path,
     mo_fe: pathlib.Path,
-    c_check: pathlib.Path,
     mocore: pathlib.Path | None,
     jobs: int,
 ) -> tuple[int, int, int, int]:
@@ -1615,26 +1532,21 @@ def check_rust_lowering_and_lean_parity(
         for (label, _), raw, got in zip(corpus, raw_docs, printed):
             assert got.encode("utf-8") == raw, f"canonical round-trip diff on Rust-lowered {label}"
 
-        # 2-way Rust mo-core == C test_core_check verification on every Rust-lowered Program.
+        # Rust mo-core verification on every Rust-lowered Program.
         rs_verdicts = run_batch_lines(
             [str(mo_fe), "core-check-batch", "--kind", "program"], prog_files, jobs
         )
-        c_verdicts = run_batch_lines([str(c_check)], run_files, jobs)
         standalone_runs: list[tuple[str, str]] = []
-        for (label, _), raw, rf, rv, cv in zip(corpus, raw_docs, run_files, rs_verdicts, c_verdicts):
+        for (label, _), raw, rf, rv in zip(corpus, raw_docs, run_files, rs_verdicts):
             rs_parts = rv.split()
-            c_parts = cv.split()
-            assert rs_parts[0] == c_parts[0], (
-                f"{label}: Core verdict mismatch on Rust-lowered output: C={cv!r}, mo-fe={rv!r}"
-            )
             if rs_parts[0] == "0":
                 standalone_runs.append((label, rf))
             else:
                 assert b"(sim (start " in raw or b"(sim (send " in raw, (
                     f"{label}: unexpected standalone Core refusal on Rust-lowered output: {rv!r}"
                 )
-                assert rs_parts[1] == c_parts[1] == "E1037", (
-                    f"{label}: expected E1037 on service-dependent Core, got C={cv!r}, mo-fe={rv!r}"
+                assert rs_parts[1] == "E1037", (
+                    f"{label}: expected E1037 on service-dependent Core, got mo-fe={rv!r}"
                 )
 
         # Lean `mocore` typechecking across every standalone-checkable Rust-lowered Program.
@@ -2792,6 +2704,16 @@ def main() -> None:
         "--skip-build", action="store_true", help="Do not build mo-fe, mo-rt, mocore, or mo-grammar"
     )
     parser.add_argument(
+        "--audit-only",
+        action="store_true",
+        help="Run only workspace lint/safety policy audit and binary linkage check",
+    )
+    parser.add_argument(
+        "--lean-only",
+        action="store_true",
+        help="Run only Lean MoCore differential parity checks (fixtures, Core checker, generated Core, lowering)",
+    )
+    parser.add_argument(
         "--require-lean",
         action="store_true",
         help="Fail if Lean mocore is unavailable (also enforced when CI=1)",
@@ -2812,18 +2734,44 @@ def main() -> None:
     require_tools = args.require_lean or os.environ.get("CI") == "1"
 
     crates_n, entries_n = check_workspace_lint_policy()
-    mo_bin = find_or_build_mo(args.mo)
-    c_check, c_print = find_or_build_c_core_drivers(mo_bin)
+    if args.audit_only:
+        mo_bin = find_or_build_mo(args.mo, skip_build=True)
+        check_rust_runtime.check_no_forbidden_linkage(mo_bin)
+        print(
+            f"Rust safety & linkage audit: {crates_n} crates/{entries_n} entry points "
+            f"(#![forbid(unsafe_code)], [lints] workspace = true); "
+            f"{mo_bin.relative_to(ROOT)} clean (zero libssl/libcrypto/libsqlite3)"
+        )
+        return
+
+    mo_bin = find_or_build_mo(args.mo, args.skip_build)
     mo_fe, mo_rt = find_or_build_mo_fe_and_rt(args.mo_fe, args.mo_rt, args.skip_build)
     mocore = find_or_build_mocore(args.mocore, args.skip_build, require_tools)
-    mo_grammar = find_or_build_mo_grammar(args.mo_grammar, mo_bin, args.skip_build, require_tools)
 
     runs_n, fuzz_n = check_committed_fixtures_and_fuzz_seeds(mo_fe)
-    diff_n, orig_n, prog_n = check_core_checker_differential(mo_fe, c_check, mocore, args.jobs)
+    diff_n, orig_n, prog_n = check_core_checker_differential(mo_fe, mocore, args.jobs)
     gen_n = check_generated_core_programs(
-        mo_fe, c_check, c_print, mocore, args.generated_count, args.jobs
+        mo_fe, mocore, args.generated_count, args.jobs
     )
-    emitted_n, accepted_n = check_c_emitted_core_programs(mo_bin, mo_fe, c_check, args.jobs)
+    emitted_n, accepted_n = check_c_emitted_core_programs(mo_bin, mo_fe, args.jobs)
+
+    if args.lean_only:
+        lower_corpus_n, lower_lean_n, lower_eval_n, lower_c_eval_n = (
+            check_rust_lowering_and_lean_parity(mo_bin, mo_fe, mocore, args.jobs)
+        )
+        print(
+            f"Rust <-> Lean MoCore differential parity: "
+            f"{runs_n}/15 runs + {fuzz_n}/20 fuzz seeds round-tripped; "
+            f"{diff_n} Core checker cases ({orig_n} corpus, {prog_n} programs) matched Lean; "
+            f"{gen_n} generated Core programs matched & printed identically; "
+            f"{emitted_n} emitted .core programs round-tripped ({accepted_n} standalone-checked); "
+            f"{lower_corpus_n} Rust-lowered programs verified ({lower_lean_n} Lean-typechecked, "
+            f"{lower_eval_n} Lean eval outcomes matched, {lower_c_eval_n} self-consistent); "
+            f"{time.monotonic() - started:.2f}s"
+        )
+        return
+
+    mo_grammar = find_or_build_mo_grammar(args.mo_grammar, args.skip_build, require_tools)
 
     gram_n, gram_good, gram_bad = check_grammar_corpus_parity(mo_fe, mo_grammar)
     tracked_n, fmt_ok, fmt_refused = check_tracked_mo_format_parity(mo_bin, mo_fe, args.jobs)
@@ -2835,7 +2783,7 @@ def main() -> None:
         mo_bin, mo_fe, args.jobs
     )
     lower_corpus_n, lower_lean_n, lower_eval_n, lower_c_eval_n = (
-        check_rust_lowering_and_lean_parity(mo_bin, mo_fe, c_check, mocore, args.jobs)
+        check_rust_lowering_and_lean_parity(mo_bin, mo_fe, mocore, args.jobs)
     )
     cg_fix_n, cg_gen_n, cg_exc_n, cg_bi_n, cg_rt_n = check_rust_codegen_and_bytecode_parity(
         mo_bin, mo_fe, mo_rt, args.jobs

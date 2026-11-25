@@ -20,19 +20,19 @@ fail() {
 # every place, an operator implemented by a primitive, a constant, a function called through
 # its module, a lowering row that names primitives, and Mo rows in modules of one word and two.
 good_tree() {
-	rm -rf "$tree/docs" "$tree/src"
-	mkdir -p "$tree/docs/design" "$tree/src/base" "$tree/src/core" "$tree/src/bytecode" \
+	rm -rf "$tree/docs" "$tree/crates" "$tree/formal"
+	mkdir -p "$tree/docs/design" "$tree/crates/mo-def/defs" \
 		"$tree/formal/MoCore/Text"
 	# The small runtime map below still uses the actual Core contract. Each case
 	# gets fresh copies, including cases that remove an operation from a codec.
 	repo="$(dirname "$check")/.."
-	cp "$repo/src/core/ops.def" "$repo/src/core/text_schema.def" "$tree/src/core/"
-	cp "$repo/src/bytecode/opcodes.def" "$tree/src/bytecode/"
+	cp "$repo/crates/mo-def/defs/ops.def" "$repo/crates/mo-def/defs/text_schema.def" \
+		"$repo/crates/mo-def/defs/opcodes.def" "$tree/crates/mo-def/defs/"
 	cp "$repo/formal/MoCore/Text/Prim.lean" "$tree/formal/MoCore/Text/"
-	cat >"$tree/src/base/prims.def" <<'EOF'
+	cat >"$tree/crates/mo-def/defs/prims.def" <<'EOF'
 /* PRIM(id, module, name, signature, params, bugs) */
 #ifndef PRIM
-#error "Define PRIM before including base/prims.def."
+#error "Define PRIM before including prims.def."
 #endif
 PRIM(INT_ABS,     "Int",    "abs",     "fn(Int) : Int",                "b",  "overflow")
 PRIM(BIGINT_ADD,  "BigInt", "%add",    "fn(BigInt, BigInt) : BigInt",  "bb", "")
@@ -43,7 +43,7 @@ PRIM(TEXT_TRIM,   "Text",   "trim",    "fn(Text) : Text",              "o",  "")
 PRIM(TEXT_FROM_CHARS, "Text", "from_chars", "fn(List(Char)) : Text",   "b",  "")
 #undef PRIM
 EOF
-	cat >"$tree/src/base/hostops.def" <<'EOF'
+	cat >"$tree/crates/mo-def/defs/hostops.def" <<'EOF'
 HOSTOP(CONSOLE_PRINT, "Console", "print", "fn(Console, Text)", "bb", "printing to an output that is gone", false)
 HOSTOP(CONSOLE_FAKE,  "Console", "fake",  "fn() : Console",    "",   "",                                  true)
 #undef HOSTOP
@@ -140,8 +140,8 @@ refuses() {
 }
 
 map=docs/design/library.md
-prims=src/base/prims.def
-hostops=src/base/hostops.def
+prims=crates/mo-def/defs/prims.def
+hostops=crates/mo-def/defs/hostops.def
 
 good_tree
 status=0
@@ -214,8 +214,8 @@ refuses $map '| `map(f)` | Mo | `lib/list.mo` | takes a function |' \
 
 # A library/runtime agreement must not conceal a missing Core operation.
 good_tree
-sed 's/X(ABS, "abs")//g' "$tree/src/core/ops.def" >"$tree/replaced"
-mv "$tree/replaced" "$tree/src/core/ops.def"
+sed 's/X(ABS, "abs")//g' "$tree/crates/mo-def/defs/ops.def" >"$tree/replaced"
+mv "$tree/replaced" "$tree/crates/mo-def/defs/ops.def"
 expect_refusal "$tree/$prims:5:" 'INT_ABS has no Core operation'
 
 good_tree
@@ -225,17 +225,17 @@ expect_refusal "$tree/$prims:10:" 'TEXT_TRIM has no Core operation'
 
 # Removing an operation from both codecs must fail too, not merely their drift.
 good_tree
-sed 's/X(ABS, "abs")//g' "$tree/src/core/ops.def" >"$tree/replaced"
-mv "$tree/replaced" "$tree/src/core/ops.def"
+sed 's/X(ABS, "abs")//g' "$tree/crates/mo-def/defs/ops.def" >"$tree/replaced"
+mv "$tree/replaced" "$tree/crates/mo-def/defs/ops.def"
 sed 's/("abs", .abs), //g' "$tree/formal/MoCore/Text/Prim.lean" >"$tree/replaced"
 mv "$tree/replaced" "$tree/formal/MoCore/Text/Prim.lean"
 expect_refusal "$tree/$prims:5:" 'INT_ABS has no Core operation'
 
 # Arithmetic instructions are covered independently of prims.def.
 good_tree
-sed 's/X(REM, "rem")//g' "$tree/src/core/ops.def" >"$tree/replaced"
-mv "$tree/replaced" "$tree/src/core/ops.def"
-expect_refusal "$tree/src/bytecode/opcodes.def:40:" 'REM_FLOAT has no Core operation'
+sed 's/X(REM, "rem")//g' "$tree/crates/mo-def/defs/ops.def" >"$tree/replaced"
+mv "$tree/replaced" "$tree/crates/mo-def/defs/ops.def"
+expect_refusal "$tree/crates/mo-def/defs/opcodes.def:40:" 'REM_FLOAT has no Core operation'
 
 good_tree
 rm "$tree/$hostops"

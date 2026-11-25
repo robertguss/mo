@@ -16,19 +16,16 @@ fn run() -> BuildResult<()> {
     let manifest_dir = PathBuf::from(
         env::var("CARGO_MANIFEST_DIR").map_err(|e| format!("CARGO_MANIFEST_DIR: {e}"))?,
     );
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .ok_or_else(|| "crates/mo-def must live two levels under repo root".to_string())?;
+    let defs_dir = manifest_dir.join("defs");
 
-    let limits_path = repo_root.join("src/base/limits.h");
-    let opcodes_path = repo_root.join("src/bytecode/opcodes.def");
-    let prims_path = repo_root.join("src/base/prims.def");
-    let hostops_path = repo_root.join("src/base/hostops.def");
-    let codes_path = repo_root.join("src/base/codes.h");
-    let core_h_path = repo_root.join("src/core/core.h");
-    let core_ops_path = repo_root.join("src/core/ops.def");
-    let cli_c_path = repo_root.join("src/tools/cli.c");
+    let limits_path = defs_dir.join("limits.h");
+    let opcodes_path = defs_dir.join("opcodes.def");
+    let prims_path = defs_dir.join("prims.def");
+    let hostops_path = defs_dir.join("hostops.def");
+    let codes_path = defs_dir.join("codes.h");
+    let core_h_path = defs_dir.join("core.h");
+    let core_ops_path = defs_dir.join("ops.def");
+    let version_path = defs_dir.join("version.def");
 
     for path in [
         &limits_path,
@@ -38,7 +35,7 @@ fn run() -> BuildResult<()> {
         &codes_path,
         &core_h_path,
         &core_ops_path,
-        &cli_c_path,
+        &version_path,
     ] {
         println!("cargo:rerun-if-changed={}", path.display());
     }
@@ -50,7 +47,7 @@ fn run() -> BuildResult<()> {
     let codes_src = read_file(&codes_path)?;
     let core_h_src = read_file(&core_h_path)?;
     let core_ops_src = read_file(&core_ops_path)?;
-    let cli_c_src = read_file(&cli_c_path)?;
+    let version_src = read_file(&version_path)?;
 
     let limits = parse_limits(&limits_src)?;
     let opcodes = parse_opcodes(&opcodes_src, &limits)?;
@@ -59,7 +56,7 @@ fn run() -> BuildResult<()> {
     let error_codes = parse_error_codes(&codes_src)?;
     let core_text_version = parse_core_text_version(&core_h_src)?;
     let (typed_ops, core_op_families) = parse_core_ops(&core_ops_src)?;
-    let mo_version = parse_mo_version(&cli_c_src)?;
+    let mo_version = parse_mo_version(&version_src)?;
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").map_err(|e| format!("OUT_DIR: {e}"))?);
     let mut out = String::new();
@@ -1307,5 +1304,5 @@ fn parse_mo_version(src: &str) -> BuildResult<String> {
             }
         }
     }
-    Err("could not find #define MO_VERSION in src/tools/cli.c".to_string())
+    Err("could not find #define MO_VERSION in crates/mo-def/defs/version.def".to_string())
 }

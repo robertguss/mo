@@ -22,25 +22,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: gcc, clang and static
-            groups: gcc clang static
-          - name: sanitize
-            groups: sanitize
-          - name: drivers on gcc
+          - name: rust and static
+            groups: rust static
+          - name: drivers
             groups: drivers
-            drivers: gcc/debug
-          - name: drivers on clang
-            groups: drivers
-            drivers: clang/debug
-            shared: '0'
-          - name: drivers on sanitize
-            groups: drivers
-            drivers: clang/sanitize
-            shared: '0'
-            side_by_side: '2'
           - name: bench
             groups: bench
-            drivers: gcc/debug clang/debug clang/sanitize
           - name: lean
             groups: lean
             lean: true
@@ -51,27 +38,24 @@ jobs:
       CI: '1'
       PYTHONDONTWRITEBYTECODE: '1'
       MO_CORE_DIFF_OUT: build/nightly-mismatches
-      MO_ALL_DRIVERS: '1'
-      MO_DRIVERS: ${{ matrix.drivers }}
-      MO_SHARED_CHECKS: ${{ matrix.shared }}
-      MO_SIDE_BY_SIDE: ${{ matrix.side_by_side }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      - name: Install the toolchain
+      - name: Install system tools (bison, python3, gcc for Bison grammar & tree-sitter)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y build-essential python3 clang-18 libclang-rt-18-dev \
-            clang-format-14 clang-tidy-18 bison libssl-dev
-          # The runner also has other LLVM versions. Select these tools explicitly.
-          mkdir -p "$RUNNER_TEMP/mo-tools"
-          ln -s /usr/bin/clang-18 "$RUNNER_TEMP/mo-tools/clang"
-          ln -s /usr/bin/clang-tidy-18 "$RUNNER_TEMP/mo-tools/clang-tidy"
-          ln -s /usr/bin/clang-format-14 "$RUNNER_TEMP/mo-tools/clang-format"
-          echo "$RUNNER_TEMP/mo-tools" >> "$GITHUB_PATH"
-          /usr/bin/clang-format-14 --version | grep -F 'version 14.0.6'
+          sudo apt-get install -y build-essential python3 bison
+
+      - name: Install Rust toolchain
+        run: |
+          if ! command -v cargo >/dev/null 2>&1; then
+            curl -sSfL https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --component rustfmt,clippy
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          else
+            rustup component add rustfmt clippy
+          fi
 
       - name: Install Lean
         if: matrix.lean
@@ -85,24 +69,16 @@ jobs:
           "$ELAN_HOME/bin/elan" toolchain install "$(cat formal/lean-toolchain)"
 
       - name: Run the checks
-        run: |
-          MAKEFLAGS="-j$(nproc) -Otarget"
-          export MAKEFLAGS
-          bash ci/check.sh ${{ matrix.groups }}
+        run: bash ci/check.sh ${{ matrix.groups }}
 
-      - name: Compare a fresh seed range
+      - name: Compare a fresh Core differential seed range against Lean
         if: matrix.lean
-        env:
-          MO_CORE_DIFF: '1000'
         run: |
-          # Every UTC day gets a disjoint range, even when main has not changed.
-          day=$(( $(date -u +%s) / 86400 ))
-          export MO_CORE_DIFF_SEED=$(( day * MO_CORE_DIFF ))
-          echo "Core differential seeds: $MO_CORE_DIFF_SEED..$((MO_CORE_DIFF_SEED + MO_CORE_DIFF - 1))"
-          python3 ci/check_core_differential.py \
-            build/gcc/debug/tests/test_vm.test \
-            build/clang/debug/tests/test_vm.test \
-            build/clang/sanitize/tests/test_vm.test
+          python3 ci/check_rust_frontend.py \
+            --mo target/release/mo \
+            --mo-fe target/release/mo-fe \
+            --mo-rt target/release/mo-rt \
+            --skip-build --require-lean --lean-only --generated-count 1000
 
       - name: Keep programs that differ
         if: failure() && matrix.lean

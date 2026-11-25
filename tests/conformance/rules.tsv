@@ -1,10 +1,10 @@
 rule	accepts	refuses	stops	gap	drivers	cost	untestable
 1/1	ref-source	e0008		
 1/2	ref-shout	e0091		
-1/3	ref-source				tests/test_format.c:check_source,ci/check_format.py:audit
+1/3	ref-source				crates/mo-syntax/src/tests.rs:formatter_rules_and_fixed_points,ci/check_format.py:audit
 2.1/1	mod-chain,mod-path-words	e0034,e0035		
 2.1/2	ref-source	e0001,e0002		
-2.2/1	ref-source	e0028			tests/test_format.c:check_source,ci/check_format.py:audit
+2.2/1	ref-source	e0028			crates/mo-syntax/src/tests.rs:formatter_rules_and_fixed_points,ci/check_format.py:audit
 2.3/1	ref-source	e0003		
 2.3/2	lang-enum-shapes	e0008-capcase,e0013-capcase,e0014-capcase		
 2.3/3	lang-generic-functions	e0066		
@@ -12,9 +12,9 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 2.3/5	ref-source	e0052		
 2.3/6	ref-source	e0003		
 2.3/7	ref-source	e0017-reserved		
-2.3/8	service-read-only				tests/test_syntax.c:services,Makefile:grammar
+2.3/8	service-read-only				crates/mo-syntax/src/tests.rs:services_and_headers,grammar/Makefile:grammar
 2.4/1	ref-source	e0006		
-2.4/2					tests/test_format.c:check_source,ci/check_cli.py:check,ci/check_format.py:audit
+2.4/2					crates/mo-syntax/src/tests.rs:formatter_rules_and_fixed_points,ci/check_cli.py:check,ci/check_format.py:audit
 3/1	ref-evaluation			
 3/2	ref-library-natives,num-bigint			
 3/3	num-decimal-exact,num-float-arithmetic			
@@ -40,16 +40,16 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 3.4/1	txt-escapes,txt-interpolation,txt-interpolation-case	e0005		
 3.4/2	txt-multiline			
 3.4/3	txt-escapes,txt-case-chars			
-3.4/4	txt-counts,txt-ordering,lib-unicode16	e0024				tests/test_prim.c
-3.4/5	ref-library-natives,txt-invalid-utf8-file		fail-bug-slice-negative		tests/test_prim.c:bytes_slice_and_join
+3.4/4	txt-counts,txt-ordering,lib-unicode16	e0024				crates/mo-prim/src/lib.rs
+3.4/5	ref-library-natives,txt-invalid-utf8-file		fail-bug-slice-negative		crates/mo-prim/src/lib.rs:text_and_bytes_prims_and_unimplemented_errors
 3.5/1	lang-abilities-text-forms,tst-fakes			
 3.6/1	col-tuples	e0019,e0061		
 3.7/1	col-list-basics	e0024,e0032,e0053-list		
-3.7/2	col-build-with-var,col-shared-values	e0056				tests/test_heap.c:test_lists,tests/test_prim.c:primitive_work
+3.7/2	col-build-with-var,col-shared-values	e0056				crates/mo-heap/src/lib.rs:perceus_set_field_and_collections_unique_inplace_vs_shared_cow,crates/mo-prim/src/lib.rs:int_and_range_prims_and_overflow_checks
 3.8/1	col-map-basics,col-set-basics	e0094	fail-bug-map-duplicate	
 3.8/2	col-map-order,col-map-equality,col-set-basics			
 3.9/1	ref-time		fail-bug-time-range,fail-bug-duration-overflow	
-3.9/2	ref-time				tests/test_format.c:check_source,ci/check_cli.py:check,ci/check_format.py:audit
+3.9/2	ref-time				crates/mo-syntax/src/tests.rs:formatter_rules_and_fixed_points,ci/check_cli.py:check,ci/check_format.py:audit
 4.1/1	lang-records	e0062,e0063,e0065		
 4.1/2	lang-records-order	e0063		
 4.2/1	lang-enum-shapes	e0063		
@@ -64,7 +64,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 5.4/3	ref-qualified-abilities,ref-unit-qualified	e0077-module-ability		
 5.5/1	lang-generic-functions	e0081		
 5.5/2	lang-enum-tree	e0083		
-5.5/3	json-ability				tests/test_syntax.c:type_args_syntax
+5.5/3	json-ability				crates/mo-syntax/src/tests.rs:ast_shapes
 5.6/1	lang-closures,lang-generic-functions			
 5.6/2	lang-closures,ref-functions,dx-bytes-lambda-discard	e0090,e0091		
 5.6/3	ref-functions	e0092		
@@ -74,7 +74,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 6.1/2	lang-bindings	e0051		
 6.1/3	ref-source,lang-bindings,dx-bytes-lambda-discard	e0052,e0056,e0093,e0412		
 6.2/1	lang-records-update,dx-bytes-lambda-discard	e0057		
-6.2/2	lang-records-update,col-shared-values	e0026,e0057			tests/test_format.c:check_source,ci/check_cli.py:check	tests/test_heap.c:test_reuse_and_images,tests/test_prim.c:reuse_aliases
+6.2/2	lang-records-update,col-shared-values	e0026,e0057			crates/mo-syntax/src/tests.rs:formatter_rules_and_fixed_points,ci/check_cli.py:check	crates/mo-heap/src/lib.rs:perceus_reset_reuse_and_free_token_unique_vs_shared_and_immortal
 6.2/3	lang-dot-calls,col-shared-values			
 7.1/1	lang-is-and-if	e0022		
 7.1/2	lang-is-and-if	e0022		
@@ -105,7 +105,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 9.2/4	lang-abilities-order,lang-abilities-custom-order			
 9.2/5	lang-abilities-text-forms,lang-abilities-custom-text			
 9.2/6	ref-library-natives,ref-abilities,num-bigint,num-decimal-exact,num-float-arithmetic	e0075,e0076		
-9.2/7	lang-abilities-hash,lang-abilities-order,col-map-equality,lang-abilities-structural	e0080,e0080-bytes,e0080-capability,e0080-map-set,e0080-range			tests/test_check.c:generic_import_sources
+9.2/7	lang-abilities-hash,lang-abilities-order,col-map-equality,lang-abilities-structural	e0080,e0080-bytes,e0080-capability,e0080-map-set,e0080-range			crates/mo-check/src/tests.rs:abilities_customizers_cycles_and_depth_limit
 9.2/8	lang-abilities-order,ref-abilities			
 9.2/9	lang-abilities-order,num-bigint,num-decimal-exact,ref-abilities			
 9.2/10	ref-library-natives,ref-abilities	e0076		
@@ -123,12 +123,12 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 9.2/22	lang-abilities-order,lang-abilities-custom-order,lang-dot-calls-cases,ref-abilities,ref-case-receivers			
 9.2/23	lang-abilities-custom-order,lang-abilities-custom-text,mod-hidden-customized	e0082		
 9.2/24	lang-generic-functions	e0081		
-9.2/25	json-ability				tests/test_program.c:json_ability_graph
+9.2/25	json-ability				crates/mo-lower/src/tests.rs:lowers_json_ability_and_schema
 9.2/26	json-ability				lib/json.mo:encode,lib/json.mo:encode_pretty
 10.1/1	mod-brace-import,mod-qualified	e0008,e0027,e0039		
 10.1/2	tst-private-names	e0041		
 10.2/1	mod-hidden-type	e0040,e0047,e0064		
-10.3/1	mod-qualified,mod-brace-import,mod-choice-cases,mod-type-named-like-module	e0036,e0037,e0037-http,e0038,e0038-import-repeat,e0038-module-case,e0038-module-imported-case,e0044,e0046,e0048,e1110			tests/test_check.c:package_manifests
+10.3/1	mod-qualified,mod-brace-import,mod-choice-cases,mod-type-named-like-module	e0036,e0037,e0037-http,e0038,e0038-import-repeat,e0038-module-case,e0038-module-imported-case,e0044,e0046,e0048,e1110			crates/mo-check/src/tests.rs:package_manifests_full_parity
 10.4/1	lang-constants,mod-constants			
 10.4/2	lang-constants,mod-constants,service-read-only	e0089	fail-bug-constant-stop				A constant has no effects, so no program can observe how many times it is computed.
 10.5/1	mod-type-bare-after-use,lang-bindings,cap-files-walk,cap-network-error	e0045			ci/check_simulation.py:main
@@ -140,14 +140,14 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 11.1/6	cap-files-read	e0050-read-files		
 11.1/7	cap-clock-fixed						The real clock reads differently on every run; only Clock.fixed can be asserted.
 11.1/8	ref-capability-fakes			
-11.1/9	cap-network-fake				tests/test_network.c:test_round_trip
-11.1/10	cap-network-fake				tests/test_network.c:test_round_trip
-11.1/11	cap-sqlite-fake				tests/test_sqlite.c:test_real_crud
-11.1/12	cap-sqlite-fake				tests/test_sqlite.c:test_real_crud
-11.1/13	cap-command-fake				tests/test_command.c:test_real_command
-11.1/14	lib-crypto-date				tests/test_crypto.c:test_secure_random_and_threads,tests/test_fakes.c:secure_random_deterministic
-11.1/15	cap-files-binary				tests/test_files_binary.c:test_parity_core,tests/test_files_binary.c:test_real_strict_confinement,tests/test_files_binary.c:test_open_file_limit
-11.2/1	cap-files-read,cap-args-list,cap-network-error	e0079			tests/test_check.c:corpus
+11.1/9	cap-network-fake				crates/mo-host/src/slice1d_tests.rs:network_real_tcp_allowlist_limits_and_fake_parity
+11.1/10	cap-network-fake				crates/mo-host/src/slice1d_tests.rs:network_real_tcp_allowlist_limits_and_fake_parity
+11.1/11	cap-sqlite-fake				crates/mo-host/src/slice1d_tests.rs:sqlite_real_confinement_authorizer_limits_and_fake_parity
+11.1/12	cap-sqlite-fake				crates/mo-host/src/slice1d_tests.rs:sqlite_real_confinement_authorizer_limits_and_fake_parity
+11.1/13	cap-command-fake				crates/mo-host/src/slice1d_tests.rs:command_real_confinement_allowlist_timeout_output_cap_and_fake_parity
+11.1/14	lib-crypto-date				crates/mo-host/src/lib.rs:clock_random_and_secure_random_parity
+11.1/15	cap-files-binary				crates/mo-host/src/lib.rs:fake_files_and_file_handles_parity,crates/mo-host/src/lib.rs:real_files_confinement_symlinks_and_limits
+11.2/1	cap-files-read,cap-args-list,cap-network-error	e0079			crates/mo-check/src/tests.rs:corpus_diagnostics_byte_for_byte
 11.2/2	ref-shout	fail-main-exit-status,fail-main-result-error	fail-bug-exit-range	
 11.3/1	cap-files-fake,cap-files-within-escape			
 11.4/1	cap-record-of-capabilities			
@@ -156,21 +156,21 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 11.4/4	cap-record-of-capabilities	e0080-capability		
 11.4/5	ref-shout	e0007-log		
 11.5/1	service-read-only	e1408			ci/cli_serve.py:service_commands
-11.5/2	service-read-only				tests/test_syntax.c:services,tests/test_program.c:service_rules
-11.5/3	service-read-only	e0099,e0099-duplicate-handler,e0107			ci/cli_serve.py:service_refusals,tests/test_program.c:service_rules,Makefile:grammar
-11.5/4	service-read-only	e0100,e0100-generic,e0100-import,e0100-state,e0103,e0104,e0104-function		mo run of a service entry is still E1408	ci/cli_serve.py:service_refusals,tests/test_program.c:service_handlers
+11.5/2	service-read-only				crates/mo-syntax/src/tests.rs:services_and_headers,crates/mo-check/src/tests.rs:services_fixes_promises_queries_migrations_and_apis
+11.5/3	service-read-only	e0099,e0099-duplicate-handler,e0107			ci/cli_serve.py:service_refusals,crates/mo-check/src/tests.rs:services_fixes_promises_queries_migrations_and_apis,grammar/Makefile:grammar
+11.5/4	service-read-only	e0100,e0100-generic,e0100-import,e0100-state,e0103,e0104,e0104-function		mo run of a service entry is still E1408	ci/cli_serve.py:service_refusals,crates/mo-check/src/tests.rs:services_fixes_promises_queries_migrations_and_apis
 11.5/5	service-read-only	e0105,e0105-nested,e0105-update,e0105-result-update,e0106,e0101-predicate			ci/check_errors.py:check_cases
-11.5/6	service-read-only	e0101,e0101-predicate,e0101-result,service-bare-state,service-result-state			ci/cli_serve.py:service_commands,tests/test_program.c:service_handlers,tests/test_fix.c:service_fixes,tests/test_service_store.c:run
-11.5/7	service-read-only	e0103-interval			ci/cli_serve.py:service_refusals,tests/test_program.c:service_inputs,tests/test_service_runtime.c:timers
+11.5/6	service-read-only	e0101,e0101-predicate,e0101-result,service-bare-state,service-result-state			ci/cli_serve.py:service_commands,crates/mo-check/src/tests.rs:services_fixes_promises_queries_migrations_and_apis,crates/mo-service/tests/service_unit.rs:store_frame_durability_programs_and_offline_history
+11.5/7	service-read-only	e0103-interval			ci/cli_serve.py:service_refusals,crates/mo-check/src/tests.rs:services_fixes_promises_queries_migrations_and_apis,crates/mo-vm/src/simulation.rs:simulation_lifecycle_timers_durability_crash_restart_and_supervisor
 11.5/8	service-read-only	e0102,e1408			ci/cli_serve.py:service_commands,ci/cli_serve.py:service_refusals,ci/cli_guide.py:guide_claims
-11.5/9					tests/test_protocol_server.c:wire,tests/test_protocol_server.c:response_limit,tests/test_protocol_server.c:small_body_reads,tests/test_protocol_server.c:rejection_paths,tests/test_protocol_server.c:result_updates,tests/test_protocol_server_faults.c:exhausted_fallback,tests/test_protocol_server_faults.c:store_failure,tests/test_protocol_server_faults.c:preauth_failure,tests/test_protocol_server_faults.c:poll_failures,tests/test_protocol_bounds.c:header_bytes,tests/test_protocol_bounds.c:header_fields,tests/test_protocol_bounds.c:body_ceiling,tests/test_protocol_bounds.c:chunk_ceilings,tests/test_protocol_bounds.c:response_ceiling,tests/test_protocol_composites.c:output_nodes,tests/test_listener.c:real_io,tests/test_listener_faults.c:retry_accept,tests/test_lower.c:test_embedded_protocol
-11.6/1	api-server,actors	e0108			tests/test_program.c:api_server_checks,tests/test_program.c:actor_checks,tests/test_api_server.c:main
-11.6/2	api-server,actors	e0109			tests/test_program.c:api_server_checks,tests/test_program.c:actor_checks,tests/test_api_server.c:main,lib/api.mo:match_path
-11.6/3	api-server	e0110			tests/test_program.c:api_server_checks,tests/test_api_server.c:main,ci/cli_guide.py:guide_claims
-11.7/1	actors,actor-run	e0111			tests/test_program.c:actor_checks,tests/test_diff.c:main
-11.7/2	actors,actor-run	e0111			tests/test_program.c:actor_checks,tests/test_api_server.c:main,tests/test_diff.c:main
-11.7/3	actors,actor-run				tests/test_program.c:actor_checks,tests/test_api_server.c:main
-12/1	lang-test-passing,col-test-passing	e0015-after-code,e0018-after-code			tests/test_format.c:check_source,ci/check_cli.py:check
+11.5/9					crates/mo-service/tests/service_unit.rs:embedded_protocol_image_compiles_and_initializes,crates/mo-service/tests/service_unit.rs:store_frame_durability_programs_and_offline_history,crates/mo-service/tests/service_unit.rs:bearer_validation_and_redacted_debug
+11.6/1	api-server,actors	e0108			crates/mo-check/src/tests.rs:services_fixes_promises_queries_migrations_and_apis
+11.6/2	api-server,actors	e0109			crates/mo-check/src/tests.rs:services_fixes_promises_queries_migrations_and_apis,lib/api.mo:match_path
+11.6/3	api-server	e0110			crates/mo-check/src/tests.rs:services_fixes_promises_queries_migrations_and_apis,ci/cli_guide.py:guide_claims
+11.7/1	actors,actor-run	e0111			crates/mo-check/src/tests.rs:services_fixes_promises_queries_migrations_and_apis,crates/mo-upgrade/tests/upgrade_unit.rs:diff_reports_added_and_changed_public_functions
+11.7/2	actors,actor-run	e0111			crates/mo-check/src/tests.rs:services_fixes_promises_queries_migrations_and_apis,crates/mo-upgrade/tests/upgrade_unit.rs:diff_reports_added_and_changed_public_functions
+11.7/3	actors,actor-run				crates/mo-check/src/tests.rs:services_fixes_promises_queries_migrations_and_apis
+12/1	lang-test-passing,col-test-passing	e0015-after-code,e0018-after-code			crates/mo-syntax/src/tests.rs:formatter_rules_and_fixed_points,ci/check_cli.py:check
 12.1/1	col-test-passing	tst-failing-example		
 12.2/1	sample-account-tests	e0015			ci/cli_promises.py:vacuous_promises
 12.2/2	sample-account-tests				ci/cli_promises.py:vacuous_promises
@@ -184,45 +184,45 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 12.2/10		e0107,e0107-no-tool,e0107-reserved,e1109,service-promise-result,service-promise-restart			ci/check_task_queue.py:simulation,ci/cli_intent.py:service_promise_checks
 12.2/11	mod-hidden-type,fail-result-declared	e0007-requires
 12.3/1	tst-passing,tst-private-names,sample-job-queue-tests	tst-failing-assert		
-12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes,cap-network-fake,cap-command-fake,api-server	e0098,e0098-constant,e0098-printed,e0098-simulation,e0098-network,e0098-command			ci/check_simulation.py:main,tests/test_program.c:api_server_checks
-12.4/2		e0050-simulation-dot,e0050-simulation-operation,e0055-simulation-value,e0055-simulation-start,e0055-simulation-send,e0055-simulation-advance,e0055-simulation-crash,e0055-simulation-restart,e0100-simulation-start,e0100-simulation-send			ci/check_simulation.py:main,tests/test_program.c:simulation_inputs,tests/test_service_store.c:simulation_persistence
-12.4/3					ci/check_simulation.py:main,tests/test_service_store.c:simulation_persistence
-12.4/4					ci/check_simulation.py:main,tests/test_program.c:simulation_inputs
-12.4/5		tst-simulation-admission,e1400-simulation			ci/check_simulation.py:main,tests/test_service_store.c:simulation_persistence,tests/test_service_store.c:simulation_admission
+12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes,cap-network-fake,cap-command-fake,api-server	e0098,e0098-constant,e0098-printed,e0098-simulation,e0098-network,e0098-command			ci/check_simulation.py:main,crates/mo-check/src/tests.rs:services_fixes_promises_queries_migrations_and_apis
+12.4/2		e0050-simulation-dot,e0050-simulation-operation,e0055-simulation-value,e0055-simulation-start,e0055-simulation-send,e0055-simulation-advance,e0055-simulation-crash,e0055-simulation-restart,e0100-simulation-start,e0100-simulation-send			ci/check_simulation.py:main,crates/mo-vm/src/simulation.rs:simulation_lifecycle_timers_durability_crash_restart_and_supervisor
+12.4/3					ci/check_simulation.py:main,crates/mo-vm/src/simulation.rs:simulation_lifecycle_timers_durability_crash_restart_and_supervisor
+12.4/4					ci/check_simulation.py:main,crates/mo-vm/src/simulation.rs:simulation_lifecycle_timers_durability_crash_restart_and_supervisor
+12.4/5		tst-simulation-admission,e1400-simulation			ci/check_simulation.py:main,crates/mo-vm/src/simulation.rs:simulation_lifecycle_timers_durability_crash_restart_and_supervisor
 12.4/6	cap-console-fake,cap-files-fake	e0098-printed
-12.5/1	service-read-only				ci/cli_intent.py:recovery_checks,ci/check_simulation.py:main,tests/test_recovery.c:two_services
-12.5/2					tests/test_recovery.c:task_queue,tests/test_recovery.c:replay,tests/test_recovery.c:read_only,tests/test_recovery.c:deterministic
-12.5/3					tests/test_recovery.c:comparison,tests/test_recovery.c:failure_report,tests/test_recovery_faults.c:check_directly,tests/test_recovery_faults.c:check_command
-12.5/4		service-start-stops			tests/test_recovery.c:failing_tool,tests/test_recovery.c:supervisor_stop,tests/test_recovery.c:failed_firings,tests/test_recovery.c:start_failure,ci/cli_intent.py:recovery_checks,tests/test_recovery_faults.c:check_directly,tests/test_recovery_faults.c:check_command
-12.5/5		service-promise-restart,service-promise-timer,service-promise-two,service-promise-work			ci/cli_intent.py:service_promise_checks,ci/check_task_queue.py:restart_fault,tests/test_recovery_faults.c:promise_after_refusal
-12.5/6					ci/cli_intent.py:recovery_checks,ci/cli_intent.py:service_promise_checks,tests/test_deadline.c:main
-12.5/7					tests/test_recovery.c:failure_report,tests/test_recovery.c:same_text,tests/test_recovery_faults.c:shrunk_failure,tests/test_recovery_faults.c:shrunk_advance,tests/test_recovery_faults.c:check_command,tests/test_recovery_faults.c:check_unrepeatable,tests/test_recovery.c:shrink_same_line
+12.5/1	service-read-only				ci/cli_intent.py:recovery_checks,ci/check_simulation.py:main,crates/mo-vm/src/simulation.rs:simulation_lifecycle_timers_durability_crash_restart_and_supervisor
+12.5/2					ci/cli_intent.py:recovery_checks
+12.5/3					ci/cli_intent.py:recovery_checks
+12.5/4		service-start-stops			ci/cli_intent.py:recovery_checks
+12.5/5		service-promise-restart,service-promise-timer,service-promise-two,service-promise-work			ci/cli_intent.py:service_promise_checks,ci/check_task_queue.py:restart_fault
+12.5/6					ci/cli_intent.py:recovery_checks,ci/cli_intent.py:service_promise_checks,crates/mo-test/src/tests.rs:deadline_modes_and_none
+12.5/7					ci/cli_intent.py:recovery_checks
 12.6/1					ci/cli_gates.py:mutants
-12.6/2		e1439			tests/test_mutants.c:comparison,ci/cli_gates.py:mutants
-12.6/3					tests/test_mutants.c:comparison
-12.6/4					tests/test_mutants.c:literals,ci/cli_gates.py:mutants
-12.6/5					tests/test_mutants.c:literals,ci/cli_gates.py:mutants
-12.6/6					tests/test_mutants.c:arithmetic,ci/cli_gates.py:mutants
-12.6/7					tests/test_mutants.c:literals
-12.6/8					tests/test_mutants.c:literals,ci/cli_gates.py:mutants
-12.6/9					tests/test_mutants.c:specs,tests/test_mutants.c:library,ci/cli_gates.py:mutants
-12.6/10		e1439			tests/test_gates.c:step_limits,tests/test_gates.c:stop_at_first,ci/cli_gates.py:mutants
+12.6/2		e1439			crates/mo-test/src/tests.rs:gate_limit_and_start_failed,ci/cli_gates.py:mutants
+12.6/3					crates/mo-test/src/tests.rs:gate_limit_and_start_failed
+12.6/4					crates/mo-test/src/tests.rs:gate_limit_and_start_failed,ci/cli_gates.py:mutants
+12.6/5					crates/mo-test/src/tests.rs:gate_limit_and_start_failed,ci/cli_gates.py:mutants
+12.6/6					crates/mo-test/src/tests.rs:gate_limit_and_start_failed,ci/cli_gates.py:mutants
+12.6/7					crates/mo-test/src/tests.rs:gate_limit_and_start_failed
+12.6/8					crates/mo-test/src/tests.rs:gate_limit_and_start_failed,ci/cli_gates.py:mutants
+12.6/9					crates/mo-test/src/tests.rs:gate_limit_and_start_failed,ci/cli_gates.py:mutants
+12.6/10		e1439			crates/mo-test/src/tests.rs:gate_limit_and_start_failed,ci/cli_gates.py:mutants
 12.6/11					ci/cli_gates.py:mutants,ci/cli_guide.py:guide_claims
 13.1/1	ref-evaluation			
-13.2/1	ref-shout	tst-fake-files-bugs	fail-bug-overflow,fail-bug-divide-by-zero,fail-bug-stop,fail-bug-map-duplicate,fail-bug-take-negative,fail-bug-decimal-overflow,fail-bug-decimal-divide-by-zero,fail-bug-duration-overflow,fail-bug-duration-unit-overflow,fail-bug-time-range,fail-bug-pow-negative,fail-bug-decimal-places,fail-bug-split-empty,fail-bug-replace-empty,fail-bug-repeat-negative,fail-bug-drop-negative,fail-bug-constant-stop,fail-bug-network-port,fail-bug-slice-negative		ci/cli_programs.py:observations,tests/test_host.c:test_real_console,tests/test_host.c:test_real_files,tests/test_host.c:test_clock_random,tests/test_network.c:test_bugs
-13.3/1						tests/test_prim.c:primitive_work,tests/test_heap.c:test_reuse_and_images
-13.3/2						tests/test_heap.c:test_lists,tests/test_heap.c:test_list_windows
-13.3/3	col-build-with-var,lang-records-update					tests/test_heap.c:test_lists,tests/test_prim.c:primitive_work
-13.3/4	col-map-basics,col-set-basics					tests/test_heap.c:test_tables
-13.3/5	col-map-order,col-set-basics					tests/test_prim.c:primitive_work,tests/test_heap.c:test_tables
-13.3/6	txt-counts					tests/test_prim.c
-13.3/7	txt-counts,txt-lines-words,txt-search					tests/test_prim.c
-13.3/8	txt-ordering,col-list-map-find,col-list-order-ties					measured:tests/test_lower.c:test_source_sort_work
-13.3/9	col-shared-values,lang-records-update					tests/test_prim.c:shared_copy_charge,tests/test_prim.c:reuse_aliases,tests/test_heap.c:test_reuse_and_images
-13.4/1	ref-shout,col-test-passing,api-server				ci/check_cli.py:check,ci/cli_guide.py:emit_command,ci/cli_guide.py:install_command,ci/cli_guide.py:guide_claims,ci/cli_intent.py:diff_command,ci/cli_intent.py:fix_command,ci/cli_serve.py:serve_command,ci/check_fetch.py:run,ci/check_operator.py:run,tests/test_api_server.c:main,tests/test_diff.c:main
+13.2/1	ref-shout	tst-fake-files-bugs	fail-bug-overflow,fail-bug-divide-by-zero,fail-bug-stop,fail-bug-map-duplicate,fail-bug-take-negative,fail-bug-decimal-overflow,fail-bug-decimal-divide-by-zero,fail-bug-duration-overflow,fail-bug-duration-unit-overflow,fail-bug-time-range,fail-bug-pow-negative,fail-bug-decimal-places,fail-bug-split-empty,fail-bug-replace-empty,fail-bug-repeat-negative,fail-bug-drop-negative,fail-bug-constant-stop,fail-bug-network-port,fail-bug-slice-negative		ci/cli_programs.py:observations,crates/mo-host/src/lib.rs:real_and_fake_args_env_console,crates/mo-host/src/lib.rs:real_files_confinement_symlinks_and_limits,crates/mo-host/src/lib.rs:clock_random_and_secure_random_parity,crates/mo-host/src/slice1d_tests.rs:network_real_tcp_allowlist_limits_and_fake_parity
+13.3/1						crates/mo-prim/src/lib.rs:int_and_range_prims_and_overflow_checks,crates/mo-heap/src/lib.rs:perceus_reset_reuse_and_free_token_unique_vs_shared_and_immortal
+13.3/2						crates/mo-heap/src/lib.rs:perceus_set_field_and_collections_unique_inplace_vs_shared_cow
+13.3/3	col-build-with-var,lang-records-update					crates/mo-heap/src/lib.rs:perceus_set_field_and_collections_unique_inplace_vs_shared_cow,crates/mo-prim/src/lib.rs:int_and_range_prims_and_overflow_checks
+13.3/4	col-map-basics,col-set-basics					crates/mo-heap/src/lib.rs:perceus_set_field_and_collections_unique_inplace_vs_shared_cow
+13.3/5	col-map-order,col-set-basics					crates/mo-prim/src/lib.rs:int_and_range_prims_and_overflow_checks,crates/mo-heap/src/lib.rs:perceus_set_field_and_collections_unique_inplace_vs_shared_cow
+13.3/6	txt-counts					crates/mo-prim/src/lib.rs
+13.3/7	txt-counts,txt-lines-words,txt-search					crates/mo-prim/src/lib.rs
+13.3/8	txt-ordering,col-list-map-find,col-list-order-ties					measured:crates/mo-lower/src/tests.rs:lowers_generics_patterns_loops_and_derived_abilities
+13.3/9	col-shared-values,lang-records-update					crates/mo-heap/src/lib.rs:perceus_set_field_and_collections_unique_inplace_vs_shared_cow,crates/mo-heap/src/lib.rs:perceus_reset_reuse_and_free_token_unique_vs_shared_and_immortal
+13.4/1	ref-shout,col-test-passing,api-server				ci/check_cli.py:check,ci/cli_guide.py:emit_command,ci/cli_guide.py:install_command,ci/cli_guide.py:guide_claims,ci/cli_intent.py:diff_command,ci/cli_intent.py:fix_command,ci/cli_serve.py:serve_command,ci/check_fetch.py:run,ci/check_operator.py:run,crates/mo-check/src/tests.rs:services_fixes_promises_queries_migrations_and_apis,crates/mo-upgrade/tests/upgrade_unit.rs:diff_reports_added_and_changed_public_functions
 13.4/2					ci/cli_intent.py:promise_selection,ci/cli_intent.py:recovery_checks,ci/cli_intent.py:strength_checks
-13.4/3	tst-passing,col-test-passing,sample-job-queue-tests	e1439,tst-fake-files-bugs			ci/cli_gates.py:mutants,ci/cli_guide.py:guide_claims,tests/test_deadline.c:main
-13.4/4	lang-recursion-tail				ci/cli_programs.py:observations,ci/check_cli.py:check,tests/test_limits.c:test_the_defaults
+13.4/3	tst-passing,col-test-passing,sample-job-queue-tests	e1439,tst-fake-files-bugs			ci/cli_gates.py:mutants,ci/cli_guide.py:guide_claims,crates/mo-test/src/tests.rs:deadline_modes_and_none
+13.4/4	lang-recursion-tail				ci/cli_programs.py:observations,ci/check_cli.py:check,crates/mo-def/src/lib.rs:pin_named_limits
 13.4/5		e1410,e1411,e1411-function,e1412,e1413			ci/check_offline.py:history,ci/check_offline.py:owned,ci/check_offline.py:hot_journal,ci/check_offline.py:pre_capture,ci/check_offline.py:replays,ci/check_offline.py:work_limit,ci/check_offline.py:queries,ci/cli_guide.py:guide_claims
 13.4/6					ci/cli_common.py:records,ci/check_cli.py:check,ci/check_offline.py:replays,ci/check_offline.py:queries		No program can show that a field keeps its name, type and meaning in later versions of the format.
 14/1	lang-dot-calls,lang-dot-calls-cases,col-range-loops,ref-abilities,ref-case-receivers,ref-qualified-abilities	e0050-unknown-member	fail-bug-take-negative	
@@ -230,9 +230,9 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 14/3	num-bigint,ref-library-natives,ref-bigint			
 14/4	num-decimal-rounding,num-decimal-int,num-float-convert,num-decimal-boundaries		fail-bug-decimal-places	
 14/5	ref-library-natives,num-decimal-boundaries			
-14/6	txt-counts,txt-lines-words,txt-split-join,txt-trim-pad,txt-search,txt-replace-repeat,txt-parse-numbers,ref-library-natives		fail-bug-split-empty,fail-bug-replace-empty,fail-bug-repeat-negative		tests/test_prim.c:text_split,ci/check_primitives.py:text_cases
+14/6	txt-counts,txt-lines-words,txt-split-join,txt-trim-pad,txt-search,txt-replace-repeat,txt-parse-numbers,ref-library-natives		fail-bug-split-empty,fail-bug-replace-empty,fail-bug-repeat-negative		crates/mo-prim/src/lib.rs:text_and_bytes_prims_and_unimplemented_errors,ci/check_primitives.py:text_cases
 14/7	txt-case-chars,txt-chars-roundtrip			
-14/8	ref-library-natives,txt-invalid-utf8-file,cap-network-forms,cap-files-binary,dx-bytes-lambda-discard		fail-bug-slice-negative		tests/test_prim.c:bytes_slice_and_join,tests/test_prim.c:bytes_packing_and_unpacking,tests/test_prim.c:bytes_empty_and_compare_slice_at
+14/8	ref-library-natives,txt-invalid-utf8-file,cap-network-forms,cap-files-binary,dx-bytes-lambda-discard		fail-bug-slice-negative		crates/mo-prim/src/lib.rs:text_and_bytes_prims_and_unimplemented_errors
 14/9	col-list-basics,col-list-slicing,col-list-map-find,col-list-enumerate-zip,ref-library-natives,col-list-order-ties		fail-bug-take-negative,fail-bug-drop-negative	
 14/10	col-map-basics,col-map-order,col-map-counting,col-map-equality			
 14/11	col-set-basics			
@@ -242,35 +242,35 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 14/15	ref-time			
 14/16	cap-args-list,ref-capability-fakes			
 14/17	cap-console-streams,cap-console-line-endings,cap-console-stdin,cap-console-fake,cap-console-stdin-invalid	e0098-printed		
-14/18	cap-files-fake,cap-files-fake-folders,cap-files-read,cap-files-walk,cap-files-within-escape,cap-files-binary	tst-fake-files-bugs			tests/test_host.c:test_real_files,tests/test_host.c:test_hostile_links,tests/test_files_binary.c:test_parity_core,tests/test_files_binary.c:test_real_strict_confinement,tests/test_files_binary.c:test_open_file_limit
+14/18	cap-files-fake,cap-files-fake-folders,cap-files-read,cap-files-walk,cap-files-within-escape,cap-files-binary	tst-fake-files-bugs			crates/mo-host/src/lib.rs:real_files_confinement_symlinks_and_limits,crates/mo-host/src/lib.rs:fake_files_and_file_handles_parity
 14/19	fail-option-result-map,fail-result-declared,fail-file-error-forms,txt-invalid-utf8-file,cap-files-within-escape	fail-main-result-error		
-14/20	cap-clock-fixed,cap-args-list,ref-capability-fakes				tests/test_host.c:test_clock_random		No program can move the system clock outside the years 1 to 9999; Clock.fixed, Clock.sleep, Args, Env and Random fakes are asserted.
-14/21	cap-network-fake,cap-network-forms		fail-bug-network-port		tests/test_network.c:test_round_trip,tests/test_network.c:test_errors,tests/test_network.c:test_deadline,tests/test_network.c:test_reset,tests/test_network.c:test_bugs,tests/test_network.c:test_large_send
-14/22	cap-network-error,cap-network-fake,cap-network-forms				tests/test_network.c:test_errors
-14/23	cap-network-fake	e0098-network			tests/test_network.c:test_fake_reply,tests/test_network.c:test_fake_no_reply,tests/test_network.c:test_fake_snapshot,tests/test_network.c:test_fake_bugs,tests/test_fakes.c:network_has_no_peers
+14/20	cap-clock-fixed,cap-args-list,ref-capability-fakes				crates/mo-host/src/lib.rs:clock_random_and_secure_random_parity		No program can move the system clock outside the years 1 to 9999; Clock.fixed, Clock.sleep, Args, Env and Random fakes are asserted.
+14/21	cap-network-fake,cap-network-forms		fail-bug-network-port		crates/mo-host/src/slice1d_tests.rs:network_real_tcp_allowlist_limits_and_fake_parity
+14/22	cap-network-error,cap-network-fake,cap-network-forms				crates/mo-host/src/slice1d_tests.rs:network_real_tcp_allowlist_limits_and_fake_parity
+14/23	cap-network-fake	e0098-network			crates/mo-host/src/slice1d_tests.rs:network_real_tcp_allowlist_limits_and_fake_parity
 14/24	lib-json-query,lib-json-errors			
 14/25	lib-json-query,lib-json-errors,lib-json-numbers				lib/json.mo:to_decimal
 14/26	lib-json-lookup				lib/json.mo:path
 14/27	http-fake				lib/http.mo:request,ci/check_network.py:main
 14/28	http-fake				lib/http.mo:request,lib/http.mo:query,lib/http.mo:form,lib/http.mo:with_body,lib/http.mo:within,lib/http.mo:max_body
 14/29	http-fake	e0050-network		No test opens two connections to show that a second request reuses none.	lib/http.mo:wire,lib/http.mo:parsed,lib/http.mo:send,ci/check_network.py:main
-14/30	http-fake			No test sends a redirect, a cookie or a compressed body to show that send leaves each alone. The 16 MiB limit is tested with a Content-Length of 16777217, not with a body that long.	lib/http.mo:read,lib/http.mo:whole,lib/http.mo:content,lib/http.mo:chunks,ci/check_network.py:main,fuzz/fuzz_http_client.c:LLVMFuzzerTestOneInput
+14/30	http-fake			No test sends a redirect, a cookie or a compressed body to show that send leaves each alone. The 16 MiB limit is tested with a Content-Length of 16777217, not with a body that long.	lib/http.mo:read,lib/http.mo:whole,lib/http.mo:content,lib/http.mo:chunks,ci/check_network.py:main
 14/31	http-fake				lib/http.mo:named,lib/http.mo:headers_named,lib/http.mo:json,lib/http.mo:text
 14/32	http-fake			No golden program shows the bug in Http.replies: its report names a place in lib/http.mo by byte offset, which moves with every edit there.	lib/http.mo:reply,lib/http.mo:replies,ci/cli_guide.py:guide_claims
-14/33	lib-unicode16				ci/check_unicode16.py:corpus		No program can test the promise about a future Unicode17 module.
-14/34	cap-sqlite-fake				tests/test_sqlite.c:test_real_crud,tests/test_sqlite.c:test_ephemeral_memory,tests/test_sqlite.c:test_real_errors,tests/test_sqlite.c:test_containment,tests/test_sqlite.c:test_authorizer,tests/test_sqlite.c:test_open_limit,fuzz/fuzz_sqlite.c:LLVMFuzzerTestOneInput
-14/35	cap-sqlite-fake				tests/test_sqlite.c:test_real_crud
-14/36	cap-sqlite-fake,api-server	e0098-sqlite			tests/test_sqlite.c:test_fake_sqlite,tests/test_fakes.c:sqlite_starts_empty
-14/37	api-server				lib/api.mo:request,lib/api.mo:match_path,lib/api.mo:sse_response,tests/test_api_server.c:main
-14/38	cap-command-fake	e0098-command			lib/command.mo:run,lib/command.mo:replies,tests/test_command.c:test_real_command,tests/test_command.c:test_containment_and_allowlist,tests/test_command.c:test_fake_command,tests/test_fakes.c:command_starts_empty,fuzz/fuzz_command.c:LLVMFuzzerTestOneInput
-14/39	lib-crypto-date				lib/crypto.mo:seal,lib/crypto.mo:open,lib/crypto.mo:hash_password,tests/test_crypto.c:test_sha256_fips_180_4,tests/test_crypto.c:test_hmac_sha256_rfc_4231,tests/test_crypto.c:test_aes_256_gcm_nist_sp_800_38d,tests/test_crypto.c:test_scrypt_and_constant_time,ci/check_crypto.py:main,fuzz/fuzz_crypto.c:LLVMFuzzerTestOneInput
+14/33	lib-unicode16				crates/mo-prim/src/unicode.rs:unicode16_basics_and_edge_cases		No program can test the promise about a future Unicode17 module.
+14/34	cap-sqlite-fake				crates/mo-host/src/slice1d_tests.rs:sqlite_real_confinement_authorizer_limits_and_fake_parity
+14/35	cap-sqlite-fake				crates/mo-host/src/slice1d_tests.rs:sqlite_real_confinement_authorizer_limits_and_fake_parity
+14/36	cap-sqlite-fake,api-server	e0098-sqlite			crates/mo-host/src/slice1d_tests.rs:sqlite_real_confinement_authorizer_limits_and_fake_parity
+14/37	api-server				lib/api.mo:request,lib/api.mo:match_path,lib/api.mo:sse_response,crates/mo-check/src/tests.rs:services_fixes_promises_queries_migrations_and_apis
+14/38	cap-command-fake	e0098-command			lib/command.mo:run,lib/command.mo:replies,crates/mo-host/src/slice1d_tests.rs:command_real_confinement_allowlist_timeout_output_cap_and_fake_parity
+14/39	lib-crypto-date				lib/crypto.mo:seal,lib/crypto.mo:open,lib/crypto.mo:hash_password,crates/mo-prim/src/crypto.rs:sha256_fips_180_4_and_hmac_rfc_4231,crates/mo-prim/src/crypto.rs:aes_256_gcm_nist_vectors_and_errors,crates/mo-prim/src/crypto.rs:scrypt_rfc_7914_phc_and_constant_time_eq,ci/check_crypto.py:main
 14/40	lib-crypto-date				lib/date.mo:from_ymd,lib/date.mo:parse_iso,lib/date.mo:from_time_utc,lib/date.mo:add_months,lib/date.mo:days_between,lib/date.mo:to_json,lib/date.mo:from_json
 15/1							Roadmap only: it names later phases and changes no rule of v0.1.
 A/1		e0412			ci/check_errors.py:check_cases
 A/2		e0412			ci/check_errors.py:check_cases
-A/3		e0412,e0050			ci/check_cli.py:check,ci/cli_intent.py:fix_command,tests/test_program.c:diagnostic_order		No program can show that a code never changes its meaning in future versions.
-B/1	ref-source	e0008			Makefile:grammar
-B/2	ref-source	e0008			Makefile:grammar,tests/test_syntax_corpus.c:files
+A/3		e0412,e0050			ci/check_cli.py:check,ci/cli_intent.py:fix_command,crates/mo-base/src/tests.rs:diag_bag_validation_sorting_and_limits		No program can show that a code never changes its meaning in future versions.
+B/1	ref-source	e0008			grammar/Makefile:grammar
+B/2	ref-source	e0008			grammar/Makefile:grammar,crates/mo-syntax/src/tests.rs:grammar_corpus_and_reference_blocks
 B/3	ref-source			
 B/4	ref-operators	e0007-chain		
 B/5	ref-operators			

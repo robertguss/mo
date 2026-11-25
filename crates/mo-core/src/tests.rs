@@ -2117,3 +2117,11 @@ fn test_deterministic_fuzz_smoke_codec_and_checker() {
         }
     }
 }
+
+#[test]
+fn test_core_memory_error_codes_pinned() {
+    assert_eq!(ErrorCode::CoreNoMemory.number(), 1017);
+    assert_eq!(ErrorCode::CoreNoMemory.section(), None);
+    assert_eq!(ErrorCode::CoreCheckMemory.number(), 1053);
+    assert_eq!(ErrorCode::CoreCheckMemory.section(), None);
+}

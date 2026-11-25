@@ -53,36 +53,40 @@ class ConformanceCheck(unittest.TestCase):
     def test_driver_cost_and_untestable_rows_are_not_gaps(self):
         (self.root / "ci/check_x.py").write_text(
             "def alignment(binary):\n    pass\n\nalignment(None)\n")
-        (self.root / "tests/test_heap.c").write_text(
-            "static void test_lists(struct fixture *f) {\n}\nint main(void) {\n"
-            "    test_lists(NULL);\n}\n")
-        (self.root / "Makefile").write_text("grammar: build/mo-grammar\n")
+        heap_test = self.root / "crates/mo-heap/src/lib.rs"
+        heap_test.parent.mkdir(parents=True, exist_ok=True)
+        heap_test.write_text(
+            "#[test]\nfn test_lists() {}\n")
+        grammar_mk = self.root / "grammar/Makefile"
+        grammar_mk.parent.mkdir(parents=True, exist_ok=True)
+        grammar_mk.write_text("grammar: build/mo-grammar\n")
         self.index.write_text(
             HEADER +
-            "3/1\t\t\t\t\tci/check_x.py:alignment,Makefile:grammar\t"
-            "tests/test_heap.c:test_lists,tests/test_heap.c\tThe real clock varies.\n")
+            "3/1\t\t\t\t\tci/check_x.py:alignment,grammar/Makefile:grammar\t"
+            "crates/mo-heap/src/lib.rs:test_lists,crates/mo-heap/src/lib.rs\tThe real clock varies.\n")
         result = self.command()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("1 reference rules indexed; 0 have explicit gaps; 1 name other drivers; "
                       "1 have cost claims checked for semantics only; 0 have cost measured; "
                       "1 untestable", result.stdout)
         result = self.command("--section", "3")
-        self.assertIn("cost (semantics checked, cost not measured): tests/test_heap.c", result.stdout)
+        self.assertIn("cost (semantics checked, cost not measured): crates/mo-heap/src/lib.rs", result.stdout)
 
     def test_measured_cost_is_counted_apart(self):
-        (self.root / "tests/test_lower.c").write_text(
-            "static void sort_work(void) {\n}\nint main(void) {\n    sort_work();\n}\n")
-        self.index.write_text(HEADER + "3/1\t\t\t\t\t\tmeasured:tests/test_lower.c:sort_work\n")
+        lower_test = self.root / "crates/mo-lower/src/tests.rs"
+        lower_test.parent.mkdir(parents=True, exist_ok=True)
+        lower_test.write_text("#[test]\nfn sort_work() {}\n")
+        self.index.write_text(HEADER + "3/1\t\t\t\t\t\tmeasured:crates/mo-lower/src/tests.rs:sort_work\n")
         result = self.command()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("0 have cost claims checked for semantics only; 1 have cost measured",
                       result.stdout)
         result = self.command("--section", "3")
-        self.assertIn("  cost measured: tests/test_lower.c:sort_work\n", result.stdout)
+        self.assertIn("  cost measured: crates/mo-lower/src/tests.rs:sort_work\n", result.stdout)
         self.assertNotIn("cost not measured", result.stdout)
-        self.index.write_text(HEADER + "3/1\t\t\t\t\t\tmeasured:tests/test_lower.c:sort_wrk\n")
-        self.rejected("3/1: no test sort_wrk in tests/test_lower.c")
-        self.index.write_text(HEADER + "3/1\t\t\t\t\t\tmeasured:tests/test_lower.c\n")
+        self.index.write_text(HEADER + "3/1\t\t\t\t\t\tmeasured:crates/mo-lower/src/tests.rs:sort_wrk\n")
+        self.rejected("3/1: no test sort_wrk in crates/mo-lower/src/tests.rs")
+        self.index.write_text(HEADER + "3/1\t\t\t\t\t\tmeasured:crates/mo-lower/src/tests.rs\n")
         self.rejected("3/1: measured cost evidence must name a test")
 
     def test_renamed_or_missing_driver_test_fails(self):
@@ -101,15 +105,19 @@ class ConformanceCheck(unittest.TestCase):
                               "3/1\t\t\t\t\tci/check_x.py\n")
         self.rejected("3/1: driver evidence must name a test")
         self.index.write_text(HEADER +
-                              "3/1\tgood\t\t\t\t\ttests/test_gone.c:lists\n")
-        self.rejected("3/1: missing driver tests/test_gone.c")
-        (self.root / "tests/test_heap.c").write_text("int main(void) {\n    lists();\n}\n")
-        self.index.write_text(HEADER + "3/1\tgood\t\t\t\t\ttests/test_heap.c:lists\n")
-        self.rejected("3/1: no test lists in tests/test_heap.c")
-        (self.root / "Makefile").write_text("grammar-check: x\n")
+                              "3/1\tgood\t\t\t\t\tcrates/mo-heap/src/gone.rs:lists\n")
+        self.rejected("3/1: missing driver crates/mo-heap/src/gone.rs")
+        heap_test = self.root / "crates/mo-heap/src/lib.rs"
+        heap_test.parent.mkdir(parents=True, exist_ok=True)
+        heap_test.write_text("fn other() {}\n")
+        self.index.write_text(HEADER + "3/1\tgood\t\t\t\t\tcrates/mo-heap/src/lib.rs:lists\n")
+        self.rejected("3/1: no test lists in crates/mo-heap/src/lib.rs")
+        grammar_mk = self.root / "grammar/Makefile"
+        grammar_mk.parent.mkdir(parents=True, exist_ok=True)
+        grammar_mk.write_text("grammar-check: x\n")
         self.index.write_text(HEADER +
-                              "3/1\t\t\t\t\tMakefile:grammar\n")
-        self.rejected("3/1: no test grammar in Makefile")
+                              "3/1\t\t\t\t\tgrammar/Makefile:grammar\n")
+        self.rejected("3/1: no test grammar in grammar/Makefile")
         (self.root / "lib").mkdir()
         (self.root / "lib/json.mo").write_text("module Json\n\nfn to_decimal(n: Int) : Int\n"
                                                "  n\nend\n")

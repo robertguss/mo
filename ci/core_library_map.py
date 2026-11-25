@@ -12,7 +12,8 @@ import re
 import sys
 
 root = pathlib.Path(sys.argv[1])
-c_path = root / "src/core/ops.def"
+defs_dir = root / "crates/mo-def/defs"
+c_path = defs_dir / "ops.def"
 lean_path = root / "formal/MoCore/Text/Prim.lean"
 c = c_path.read_text()
 lean = lean_path.read_text()
@@ -49,7 +50,7 @@ for family, body in re.findall(
 
 # Parameterized constructors are not in the nullary tables. Check their actual
 # codec clauses too, rather than assuming that a known name still exists.
-schema = (root / "src/core/text_schema.def").read_text()
+schema = (defs_dir / "text_schema.def").read_text()
 for family, tag, wire in [("LIST", "LIT", "lit"), ("LIST", "ZIP", "zip"), ("MAP", "LIT", "lit")]:
     if f"MO_CORE_{family}_OP_{tag}" in schema and re.search(rf'\| \.{wire}\b', lean):
         operations[family, tag] = wire
@@ -82,7 +83,7 @@ recipes = {
 }
 
 count = 0
-path = root / "src/base/prims.def"
+path = defs_dir / "prims.def"
 for line_number, line in enumerate(path.read_text().splitlines(), 1):
     match = re.match(r"PRIM\((\w+),", line)
     if not match:
@@ -97,7 +98,7 @@ for line_number, line in enumerate(path.read_text().splitlines(), 1):
             errors.append(f"{path}:{line_number}: {identifier} has no Core operation {op[0]}.{op[1]} in both codecs")
     count += 1
 
-path = root / "src/bytecode/opcodes.def"
+path = defs_dir / "opcodes.def"
 for line_number, line in enumerate(path.read_text().splitlines(), 1):
     match = re.match(r"OPCODE\((ADD|SUB|MUL|DIV|REM|NEG)_(INT|DECIMAL|FLOAT),", line)
     if match and (families.get(match[2], match[2]), match[1]) not in operations:

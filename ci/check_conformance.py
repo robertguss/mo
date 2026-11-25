@@ -16,6 +16,8 @@ def has_test(path, name):
     text = path.read_text()
     if path.name == "Makefile":
         return re.search(rf"^{name}:", text, re.M) is not None
+    if path.suffix == ".rs":
+        return re.search(rf"^\s*(?:pub\s+)?fn\s+{name}\s*\(", text, re.M) is not None
     if path.suffix in (".c", ".h"):
         return re.search(rf"^[A-Za-z_][\w *]*\b{name}\(", text, re.M) is not None
     if path.suffix == ".mo":
@@ -45,8 +47,8 @@ def check_tests(root, rule, field, entries):
         path, _, name = entry.partition(":")
         assert name or field == "cost", f"{rule}: driver evidence must name a test: {entry}"
         assert re.fullmatch(r"[\w./-]+", path) and re.fullmatch(r"\w*", name), (rule, field, entry)
-        assert field != "cost" or re.fullmatch(r"tests/test_\w+\.c", path), \
-            f"{rule}: cost evidence must be a C unit test: {entry}"
+        assert field != "cost" or re.fullmatch(r"crates/[\w./-]+\.rs", path), \
+            f"{rule}: cost evidence must be a Rust unit test: {entry}"
         assert (root / path).is_file(), f"{rule}: missing driver {path}"
         assert not name or has_test(root / path, name), f"{rule}: no test {name} in {path}"
 

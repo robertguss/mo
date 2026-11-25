@@ -111,10 +111,6 @@ def find_or_build_rust_mo(explicit: str | None, skip_build: bool) -> pathlib.Pat
             check=True,
         )
     assert target.is_file(), f"failed to build {target}"
-    tests_dir = target.parent / "tests"
-    tests_dir.mkdir(exist_ok=True)
-    shutil.copy2(helper_deadline, tests_dir / "test_deadline.test")
-    shutil.copy2(helper_cli, tests_dir / "test_cli.test")
     return target
 
 

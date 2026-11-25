@@ -3,10 +3,10 @@
 This is a map of Mo's core library: every function
 of reference section 14, and every operator that section 3 defines on a
 built-in type, with where it is implemented. It belongs to Architecture v0.1
-(`architecture.md`) and points into two of its contracts, `src/base/prims.def`
-and `src/base/hostops.def` (`bytecode.md` sections 6 and 7). `make
-library-map` checks that this map and those two tables agree, and that each
-primitive's Core route exists in both C and Lean's codec tables. Arithmetic
+(`architecture.md`) and points into two of its contracts, `crates/mo-def/defs/prims.def`
+and `crates/mo-def/defs/hostops.def` (`bytecode.md` sections 6 and 7). `sh ci/library_map.sh`
+checks that this map and those two tables agree, and that each
+primitive's Core route exists in both Rust (`crates/mo-def/defs/ops.def`) and Lean's codec tables. Arithmetic
 instruction routes are checked too. The explicit lowering recipes and the
 two existing unmodeled quoted-text helpers are listed in
 `formal/TRANSLATION.md`; a new primitive without a Core route fails the check.
@@ -56,8 +56,8 @@ Two facts settle most of the choices that rule leaves open:
 | Where | Implemented as | The third column gives |
 | --- | --- | --- |
 | instruction | an instruction of `bytecode.md` section 4.4, on immediates | the instruction family, and the type it works at |
-| primitive | C in `src/prim/`, called by the `prim` instruction (`bytecode.md` 4.6) | its id in `prims.def` |
-| host | a capability operation in `src/host/`, called by the `host` instruction (`bytecode.md` 7) | its id in `hostops.def` |
+| primitive | Rust in `crates/mo-prim/`, called by the `prim` instruction (`bytecode.md` 4.6) | its id in `crates/mo-def/defs/prims.def` |
+| host | a capability operation in `crates/mo-host/`, called by the `host` instruction (`bytecode.md` 7) | its id in `crates/mo-def/defs/hostops.def` |
 | generic | the VM's structural equality and hashing, driven by the type table (`bytecode.md` 8) | what runs it |
 | lowering | Core that lowering writes in place, or generates for each type (architecture 4.3) | what it becomes |
 | Mo | Mo code in `lib/` | its file |
@@ -695,9 +695,9 @@ mutex-serialized `mo_live_actor` in `mo serve` and `mo run`.
 
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
-| `Actor.start(Type)`, `Actor.start_at(Type, time)` | lowering | `src/lower/applications.c` | spec-only deterministic actor handles backed by `MO_SIM_START` |
-| `Actor.send(handle, Type.call, ...)` | lowering | `src/lower/applications.c` | explicit `MO_SIM_SEND` returning `Result(Reply, SimulationError)` with state projected out |
-| `Actor.advance(handle, duration)`, `Actor.crash(handle)`, `Actor.restart(handle)` | lowering | `src/lower/applications.c` | spec-only fake clock and supervisor controls backed by `MO_SIM_ADVANCE`, `MO_SIM_CRASH` and `MO_SIM_RESTART` |
+| `Actor.start(Type)`, `Actor.start_at(Type, time)` | lowering | `crates/mo-lower/src/applications.rs` | spec-only deterministic actor handles backed by `MO_SIM_START` |
+| `Actor.send(handle, Type.call, ...)` | lowering | `crates/mo-lower/src/applications.rs` | explicit `MO_SIM_SEND` returning `Result(Reply, SimulationError)` with state projected out |
+| `Actor.advance(handle, duration)`, `Actor.crash(handle)`, `Actor.restart(handle)` | lowering | `crates/mo-lower/src/applications.rs` | spec-only fake clock and supervisor controls backed by `MO_SIM_ADVANCE`, `MO_SIM_CRASH` and `MO_SIM_RESTART` |
 
 ## Clock
 
@@ -775,7 +775,7 @@ the reference's section 14 and the Unicode policy below.
 These trusted primitives use Unicode **16.0.0**, independent of the host's
 locale or Unicode library. `letter?` and `digit?` classify one code point,
 without normalization. Neither includes `Nl`, `No` or marks; `letter?` is not
-the derived Alphabetic property. Their flags in `src/prim/unicode16-data.h`
+the derived Alphabetic property. Their flags in `crates/mo-prim/src/unicode16_data.rs`
 come from the pinned `UnicodeData.txt`, including its First/Last ranges.
 `graphemes` returns the default extended grapheme
 clusters of UAX #29 revision 45, without tailoring or changing their bytes.

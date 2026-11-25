@@ -7,9 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "base/buffer.h"
 #include "lexer.h"
 #include "mo.tab.h"
+#include "support.h"
 
 // Memory from the parse's arena. The grammar is an instrument, so running out of memory ends
 // it, as any other failure to run does.

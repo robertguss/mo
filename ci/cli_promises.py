@@ -1,7 +1,7 @@
 import pathlib
 import tempfile
 
-from cli_common import records, root, run
+from cli_common import records, root, run, test_helper
 
 
 def scalar_promises(binary):
@@ -101,7 +101,7 @@ def promise_boundaries(binary):
 
 
 def promise_deadlines(binary):
-    clock = binary.parent / 'tests/test_deadline.test'
+    clock = test_helper(binary, "test-deadline")
     minimum = '-9223372036854775808'
     loop = 'var spin = 0\nwhile spin == 0\nspin = 0\nend\n'
     tail = 'test "after promise"\nassert true\nend\nfn main()\nstop "main ran"\nend\n'
@@ -207,7 +207,7 @@ def promise_deadlines(binary):
 
 
 def promise_shrinking(binary):
-    clock = binary.parent / 'tests/test_deadline.test'
+    clock = test_helper(binary, "test-deadline")
     tail = 'test "after promise"\nassert true\nend\nfn main()\nstop "main ran"\nend\n'
     with tempfile.TemporaryDirectory(prefix='mo-promise-shrinking-') as directory:
         path = pathlib.Path(directory) / 'main.mo'
@@ -290,7 +290,7 @@ def generic_promises(binary):
                         'allows _value: [13], n: 3, result: 4\n'
                         'forbids _value: [13], n: -2, result: -1\nend\nn + 1\nend\n'
                         'fn main() : Int\n_text = probe(3, ["text"])\nprobe(3, [true])\nend\n')
-        clock = binary.parent / 'tests/test_deadline.test'
+        clock = test_helper(binary, "test-deadline")
         items = records(run(clock, ['fixed', 'test', '--json', '--calls', '4', str(path)], 1), 'test')
         results = items[1:-1]
         assert {r['instance'] for r in results} == {
@@ -776,7 +776,7 @@ def composite_promises(binary):
             emitted = run(binary, ['check', '--emit=' + codec, str(path)], 0)
             artifact = path.parent / ('composite.' + codec)
             artifact.write_bytes(emitted.stdout)
-            run(binary.parent / 'tests/test_cli.test', ['--roundtrip-' + codec, str(artifact)], 0)
+            run(test_helper(binary, "test-cli"), ['--roundtrip-' + codec, str(artifact)], 0)
 
         # Declaration order is not alphabetical or parameter-letter order.
         # Two independent predicates pin both false-line locations and the
@@ -905,7 +905,7 @@ def composite_promises(binary):
 
 
 def composite_deadlines(binary):
-    clock = binary.parent / 'tests/test_deadline.test'
+    clock = test_helper(binary, "test-deadline")
     loop = 'var spin = 0\nwhile spin == 0\nspin = 0\nend\n'
     tail = 'test "after promise"\nassert true\nend\nfn main()\nstop "main ran"\nend\n'
     with tempfile.TemporaryDirectory(prefix='mo-composite-deadlines-') as directory:

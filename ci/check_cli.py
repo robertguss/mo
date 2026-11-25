@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 
-from cli_common import records, root, run, utf8_locale
+from cli_common import records, root, run, test_helper, utf8_locale
 from cli_fixtures import anchors, constants, filenames, lower_source_fixtures, source_stack
 from cli_gates import mutants
 from cli_guide import emit_command, flags, guide_claims, install_command
@@ -28,8 +28,7 @@ from cli_serve import serve_command, service_commands, service_refusals
 
 
 def check(binary):
-    driver = binary.parent / "tests/test_cli.test"
-    faults = binary.parent / "tests/test_cli_faults.test"
+    driver = test_helper(binary, "test-cli")
     guide_claims(binary)
     service_commands(binary)
     service_refusals(binary)
@@ -64,11 +63,11 @@ def check(binary):
     diff_command(binary)
     imported_constants(binary)
     fix_command(binary)
-    items = records(run(faults, ["--json"], 1), "check")
+    items = records(run(driver, ["--fault-stack", "--json"], 1), "check")
     assert items[1]["code"] == "E1401" and items[-1]["dropped"] == 0
     assert items[1]["primary"]["file"] is None and items[1]["primary"]["file_bytes"] is None
     assert items[1]["section"] is None
-    failure = run(faults, ["--text"], 1)
+    failure = run(driver, ["--fault-stack", "--text"], 1)
     assert not failure.stdout and b"E1401" in failure.stderr
     for stage in ("parse", "load", "modules", "signatures", "bodies", "program", "fix",
                   "multiline"):

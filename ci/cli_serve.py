@@ -16,7 +16,7 @@ from cli_common import (
     SERVE_INITIALIZE, SERVE_INITIALIZED, SERVE_LIST, SERVE_OPERATOR_NAMES, SERVE_OVERLOADED,
     SERVE_READ, SERVE_SIGNALLED, SERVE_TOOL_PAGE, SERVE_UPGRADE_NAMES,
     STORE_BUSY, STORE_FAILED, Served, records, root, run, serve_events, serve_spellings,
-    serve_structured, serve_supervised,
+    serve_structured, serve_supervised, test_helper,
 )
 
 
@@ -63,13 +63,13 @@ def service_commands(binary):
         assert not result.stdout and not result.stderr
         assert emitted.read_bytes().startswith(b'MOBC')
         assert int.from_bytes(emitted.read_bytes()[8:12], 'little') == 1
-        run(binary.parent / 'tests/test_cli.test', ['--run-bytecode', str(emitted)], 0)
+        run(test_helper(binary, "test-cli"), ['--run-bytecode', str(emitted)], 0)
         result = run(binary, ['check', '--emit=bytecode', str(path)], 0, env=env)
         assert b'\nservices\n  S0 ' in result.stdout and not result.stderr
         assert b'MO_SERVICE_TEST_TOKEN_NOT_READ' in result.stdout
         indexed = folder / 'counter.bytecode'
         indexed.write_bytes(result.stdout)
-        run(binary.parent / 'tests/test_cli.test', ['--roundtrip-bytecode', str(indexed)], 0)
+        run(test_helper(binary, "test-cli"), ['--roundtrip-bytecode', str(indexed)], 0)
         result = run(binary, ['check', '--emit=core', str(path)], 0, env=env)
         assert b'"Counter.%service.start"' in result.stdout and not result.stderr
         assert b'Counter.%service.interval.1' in result.stdout
@@ -99,9 +99,9 @@ def service_commands(binary):
         assert services[0].startswith(b'  S0 ') and services[1].startswith(b'  S1 ')
         assert services[2] == b'end' and len(services) == 3
         indexed.write_bytes(result.stdout)
-        run(binary.parent / 'tests/test_cli.test', ['--roundtrip-bytecode', str(indexed)], 0)
+        run(test_helper(binary, "test-cli"), ['--roundtrip-bytecode', str(indexed)], 0)
         run(binary, ['emit', str(main), '-o', str(emitted)], 0, env=env)
-        result = run(binary.parent / 'tests/test_cli.test', ['--run-bytecode', str(emitted)], 0)
+        result = run(test_helper(binary, "test-cli"), ['--run-bytecode', str(emitted)], 0)
         assert result.stdout == b'[9]\n' and not result.stderr
 
         bare = (root / 'tests/errors/e0101/main.mo').read_text()

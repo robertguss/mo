@@ -267,7 +267,7 @@ def run(driver, paths):
 def main():
     started = time.monotonic()
     assert sys.argv[1:], "a built test_codegen driver is required"
-    version = re.search(r'#define MO_CORE_TEXT_VERSION "([^"]+)"', pathlib.Path("src/core/core.h").read_text())[1]
+    version = re.search(r'#define MO_CORE_TEXT_VERSION "([^"]+)"', pathlib.Path("crates/mo-def/defs/core.h").read_text())[1]
     paths = []
     for root in [pathlib.Path("tests/core"), *[pathlib.Path(base) / name
                  for base in ["fuzz/corpus", "build/fuzz/corpus"]

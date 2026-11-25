@@ -4,7 +4,7 @@ import subprocess
 import tempfile
 
 from cli_common import (
-    SERVE_COUNTER, SERVE_OPERATOR_NAMES, SERVE_UPGRADE_NAMES, root, run,
+    SERVE_COUNTER, SERVE_OPERATOR_NAMES, SERVE_UPGRADE_NAMES, root, run, test_helper,
 )
 
 flags = {
@@ -737,7 +737,7 @@ def guide_claims(binary):
 
 def emit_command(binary):
     """mo emit FILE -o OUT writes the verified bytecode that mo run executes (MO-41)."""
-    driver = binary.parent / "tests/test_cli.test"
+    driver = test_helper(binary, "test-cli")
     sources = {
         # Console output and an exit status, so both sides of the comparison have something to match.
         "console": 'module Main\nfn main(console: Console) : Int\nconsole.print("hello 日本語")\n37\nend\n',

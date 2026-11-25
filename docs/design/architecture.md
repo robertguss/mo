@@ -3440,18 +3440,18 @@ so a second declaration cannot drift from the API it describes.
 
 | Interface | Owning header | Main operations |
 | --- | --- | --- |
-| Sources and diagnostics | [diag.h](../../src/base/diag.h) | source storage, spans, labels, edits and diagnostic ownership |
-| Parsing and formatting | [syntax.h](../../src/syntax/syntax.h) | `mo_parse`, `mo_read_header`, syntax-tree formatting |
-| Loading and checking | [check.h](../../src/check/check.h) | `mo_load_program`, intermediate stages, `mo_check` and its complete `mo_program` carrier |
-| Lowering | [lower.h](../../src/lower/lower.h) | `mo_lower`, copying checked source metadata into Core |
-| Core | [core.h](../../src/core/core.h) | `mo_core_check`, `mo_core_parse`, `mo_core_print` |
-| Compilation | [codegen.h](../../src/codegen/codegen.h) | `mo_compile`, verified bytecode and classified refusals |
-| Bytecode | [bytecode.h](../../src/bytecode/bytecode.h) | writer, assembler, disassembler, `mo_load`, image access and register-state replay |
-| Heap values | [heap.h](../../src/heap/heap.h) | image/process heaps, type-directed duplication and drop, builders and reuse |
-| Primitive dispatch | [prim.h](../../src/prim/prim.h) | `mo_prim_call`, typed refusal status and operand ownership |
-| Host operations | [host.h](../../src/host/host.h) | `mo_host_call`, fake snapshot and restore, real host context |
-| Execution | [vm.h](../../src/vm/vm.h) | image initialization, processes, `mo_call`, `mo_call_controlled`, `mo_call_main` and defect rendering |
-| CLI integration | [tools.h](../../src/tools/tools.h) | command parsing, `mo_cli_execute`, diagnostic and defect output |
+| Sources and diagnostics | [mo-base](../../crates/mo-base/src/lib.rs) | source storage, spans, labels, edits and diagnostic ownership |
+| Parsing and formatting | [mo-syntax](../../crates/mo-syntax/src/lib.rs) | parsing, header reading, syntax-tree formatting |
+| Loading and checking | [mo-check](../../crates/mo-check/src/lib.rs) | program loading, intermediate stages, typechecking and complete checked program |
+| Lowering | [mo-lower](../../crates/mo-lower/src/lib.rs) | lowering checked source and metadata into Mo Core |
+| Core | [mo-core](../../crates/mo-core/src/lib.rs) | Core checker, parser and printer |
+| Compilation | [mo-codegen](../../crates/mo-codegen/src/lib.rs) | bytecode compilation, verified bytecode and classified refusals |
+| Bytecode | [mo-bytecode](../../crates/mo-bytecode/src/lib.rs) | writer, disassembler, loader, verifier and register-state replay |
+| Heap values | [mo-heap](../../crates/mo-heap/src/lib.rs) | image/process heaps, type-directed duplication and drop, builders and reuse |
+| Primitive dispatch | [mo-prim](../../crates/mo-prim/src/lib.rs) | primitive dispatch, typed refusal status and operand ownership |
+| Host operations | [mo-host](../../crates/mo-host/src/lib.rs) | capability operations, fake snapshot and restore, real host context |
+| Execution | [mo-vm](../../crates/mo-vm/src/lib.rs) | image initialization, processes, calls and defect rendering |
+| CLI integration | [mo-cli](../../crates/mo-cli/src/lib.rs) | command parsing, CLI execution, diagnostic and defect output |
 
 The Makefile builds `src/<module>/*.c` per module. Lean 4.34.0 (via elan)
 and CBMC are installed separately; `ci/check.sh` exposes their checks as the

@@ -30,6 +30,13 @@ def run(binary, args, status, env=None, timeout=30):
     return result
 
 
+def test_helper(binary, name):
+    candidate = binary.parent / f"mo-{name}"
+    if candidate.is_file():
+        return candidate
+    return binary.parent / f"tests/{name.replace('-', '_')}.test"
+
+
 def records(result, command):
     assert not result.stderr, result.stderr
     lines = result.stdout.decode("utf-8").splitlines()
