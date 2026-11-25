@@ -1,10 +1,10 @@
 # Editor Support for Mo (Zed & Cursor / VS Code)
 
-First install the `mo` binary onto `$PATH` (`~/.local/bin/mo`) so editor formatting can invoke
+First install the `mo` binary onto `$PATH` so editor formatting can invoke
 `mo format --stdin`:
 
 ```sh
-make install
+cargo install --path crates/mo-cli
 ```
 
 ---

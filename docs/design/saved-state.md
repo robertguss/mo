@@ -27,22 +27,11 @@ returns fixed, path-free error text, or NULL for `MO_STORE_OK`. The service's
 existing store and damaged-state messages are unchanged. MO-161 adds CLI use
 of these messages; this API does not print them.
 
-SQLite 3.54.1 is vendored unchanged, with its archive digest and public-domain
-dedication recorded in `vendor/sqlite/README.md`. `SQLITE_ZERO_MALLOC` removes
-its default allocator. Before initialization, host installs the bounded
-callbacks in `base/store-memory.c`, which `base` owns because only `base` and
-`heap` call `malloc`. Each block is charged its exact size plus a small header,
-under a mutex, before it is allocated. All stores in a process share one
-budget, `MO_LIMIT_STORE_MEMORY`, and at most `MO_LIMIT_STORES` (8) stores are
-open at once; another open fails with `MO_STORE_HANDLES`. Its message includes
-the value of `MO_LIMIT_STORES`, rather than a separate literal. Each connection's page
-cache is `MO_LIMIT_STORE_CACHE_KIB` (256 KiB). A disk store's largest operation
-measured about 17 MB of SQLite memory with a 16 MiB record, and an idle one
-about 0.3 MB, so the budget allows 24 MiB per store and every disk store can
-run its largest operation at the same time, provided no in-memory fake holds a
-large state. Reallocation temporarily charges both
-blocks and preserves the original on failure. This budget is separate from the
-service process heap. The in-memory fake keeps its whole database in the same
+SQLite is bundled statically via `rusqlite` (zero system `libsqlite3` dynamic linkage),
+with per-connection page-cache bounds (`MO_LIMIT_STORE_CACHE_KIB`, 256 KiB), row-size
+ceilings (`MO_LIMIT_STORE_ROW`), and at most `MO_LIMIT_STORES` (8) stores open at once.
+The service store budget is separate from the VM process heap. The in-memory fake keeps
+its database in memory under the same framing and validation rules.
 budget, so it suits tests and simulations with small states; a fake write that
 does not fit fails like a disk write.
 
@@ -255,20 +244,13 @@ and reading them reports `MO_STORE_CORRUPT`. A failed rollback or commit error p
 the handle and requires close/recovery.
 Record ids are published only after successful commit. Snapshots never prune diagnostics.
 
-## Whole-program upgrades and the review door
+## Whole-program upgrades and local administration
 
 Whole-program upgrades are implemented as [the upgrade design](upgrades.md)
-describes. Activation atomically records the source bundle, migrated snapshot and
-program identities in a version-2 folder that older readers refuse. The upgrade
-operator tools change the service and require a separate credential. A compiler
-child limits crashes and stalls but shares the host identity, files and secrets:
-its compiler is part of the upgrade credential's trusted base. Write access to
-the data folder confers the authority to replace the running program.
-
-Phase 6's approved design adds [the review door](intent.md), not yet implemented: a third
-secret, the approval credential, held only on the service's host; a second
-child that runs the candidate's checks there under limits but without
-operating-system confinement; and a version-3 folder holding approvals. Write
-access to the data folder then confers approval authority too, and a
-memory-safety defect in the compiler or the VM that pushed source can reach is a
-way around the door without a shell.
+describes. Activation atomically records the source bundle, migrated snapshot, and
+program identities in a version-2 data folder that older readers refuse. Live
+upgrades and operator views run over an opt-in mode-`0600` local Unix domain socket
+(`--admin-socket PATH`), with candidate compilation in a confined child process.
+Write access to the data folder confers the authority to replace the running program.
+An earlier external approval door (`mo intent`/`mo review`) was retired in favor of
+`mo diff` and code-first non-vacuous `promise` blocks.

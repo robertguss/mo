@@ -98,8 +98,8 @@ No second expectation format or second language runner is introduced.
 
 Map an existing golden or error program before adding a new one. If none
 exercises the requirement, add a program to the existing corpus and write its
-expectation by hand from the reference. If the compiler disagrees, record the
-discrepancy in `docs/status/golden-gaps.md`; never adopt the wrong output.
+expectation by hand from the reference. If the compiler disagrees, fix the
+discrepancy or record an explicit gap in `rules.tsv`; never adopt the wrong output.
 Keep a gap for requirements that the new program still does not exercise.
 
 After a reference edit, review the affected mappings, including blocks whose

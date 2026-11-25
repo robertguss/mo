@@ -1,58 +1,39 @@
-# The three Mo-written tools
+# Mo Tools
 
-linkcheck, notioncopy and tally were written in Mo by fresh agent sessions in the three tools'
-final learnability round ([#181](https://github.com/robertguss/mo/pull/181)). The copies here are
-maintained: they may change, and `ci/check_tools.py` (the `bench` group of `ci/check.sh`) runs
-each one on this repository. The round's frozen programs, grades and logs stay unchanged in
-`learnability/tools-final/`, and the task texts and hidden tests in `bench/tools/`.
+Ten standalone command-line tools written in Mo—exercising HTTPS, `Json.decode[T]`, `Sqlite`, `Files.walk`, `Unicode16`, `Decimal`, `Command` confinement, and in-process BEAM `actor`s.
 
-| Tool | Taken from | Changed since |
+Every tool passes `mo test` in CI (`ci/check_programs.py` and `ci/check_tools.py`), and any of them can be installed onto `$PATH` as pre-verified bytecode with `mo install`.
+
+## Daily-driver & API CLI tools
+
+| Tool | Entry | What it does |
 | --- | --- | --- |
-| [linkcheck.mo](linkcheck.mo) | `learnability/tools-final/gpt-6.1-sol/linkcheck.mo` | heading text is trimmed before its anchor is made, and a test for that |
-| [notioncopy.mo](notioncopy.mo) | `learnability/tools-final/gpt-6.1-sol/notioncopy.mo` | nothing |
-| [tally.mo](tally.mo) | `learnability/tools-final/claude-code/tally.mo` | nothing |
+| **`mox`** | [`mox/main.mo`](mox/main.mo) | Human-friendly HTTP/HTTPS client (`httpie`/`xh` in Mo) with shorthand request items (`Header:Val`, `q==val`, `n:=42`), formatted output, local SQLite request history, and response diffing. |
+| **`moloc`** | [`moloc/main.mo`](moloc/main.mo) | Fast polyglot source, comment, and blank line counter (`tokei`/`scc` in Mo) built on `ReadFiles.walk`, block-comment tracking, and `Unicode16` widths. |
+| **`moq`** | [`moq/main.mo`](moq/main.mo) | Pipe JSON, NDJSON, or CSV to slice by path (`jq`-style, with `[]` fan-out) or auto-load into SQLite (`sqlite-utils`-style) for one-liner SQL analytics. |
+| **`gh-sync`** | [`gh-sync/main.mo`](gh-sync/main.mo) | GitHub repository issue and pull-request sync into SQLite over HTTPS with cycle-time analytics. |
+| **`dev-pulse`** | [`dev-pulse/main.mo`](dev-pulse/main.mo) | Multi-source developer feed aggregator fetching Hacker News, Lobsters, and GitHub feeds over HTTPS with SQLite URL deduplication and search. |
+| **`work-etl`** | [`work-etl/main.mo`](work-etl/main.mo) | Cursor-paginated API ETL CLI ingesting JSON invoices into SQLite and emitting exact-`Decimal` revenue reports in Markdown, CSV, or JSON. |
+| **`mo-harness`** | [`mo-harness/README.md`](mo-harness/README.md) | Confined autonomous coding-agent harness combining `Files.within`, Landlock/seccomp-confined `Command`, host-allowlisted `Http`, a `TaskCoordinator` `actor`, and replayable SQLite trajectories. |
 
-## Why these versions
+## Repository & learnability tools
 
-Each tool had two passing or near-passing versions; the one kept is the one that is right on the
-inputs the round found in dispute.
+`linkcheck`, `notioncopy`, and `tally` were originally written in Mo by fresh agent sessions during the learnability rounds and are maintained as live repository tools checked by `ci/check_tools.py` (the `bench` group of `ci/check.sh`):
 
-- **linkcheck.** GPT-6.1 Sol's passed 23 of 23 in the round; Claude Code's failed tests 21 and 22
-  (empty `#` fragments, combining marks and fullwidth punctuation in anchors). GPT-6.1 Sol's kept
-  spaces around heading text, which hidden test 23 (#183) catches; trimming the text is a one-word
-  change, and it now passes all 24 runs.
-- **notioncopy.** Both passed 22 of 22. Claude Code's keeps a table separator line holding a tab,
-  `| ---\t| --- |`, as a data row (the round's finding); GPT-6.1 Sol's drops it, as the reference
-  does.
-- **tally.** Both passed 19 of 19 and print the same tables on every recorded round. Claude Code's
-  is kept because GPT-6.1 Sol's stops with `not allowed` on the final round's logs: one session
-  ran `mo check` on a file outside its work folder, so the log's `src/` holds an absolute path,
-  `src//tmp/s/bad.mo`, which the read-only folder capability refuses.
+| Tool | Entry | What it does |
+| --- | --- | --- |
+| **`linkcheck`** | [`linkcheck.mo`](linkcheck.mo) | Verifies every relative Markdown link and heading anchor across all tracked files in the repository. |
+| **`notioncopy`** | [`notioncopy.mo`](notioncopy.mo) | Splits Markdown documents (such as `docs/reference/README.md`) into byte-limited pieces with Adler-32 checksums. |
+| **`tally`** | [`tally.mo`](tally.mo) | Reports first-retry compile-error repair rates from recorded learnability session logs (`learnability/README.md`). |
 
-## How each is used
+## Running and installing
 
-From the repository's root, with `mo` built:
+From the repository root, with `target/release/mo` built (`cargo build --release --bin mo`):
 
 ```sh
-mo run tools/linkcheck.mo                                  # every Markdown link in the repository
-mo run tools/tally.mo LOGS                                 # a round's logs, from session.py collect
-mo run tools/notioncopy.mo docs/reference/README.md OUT    # the reference, in pieces for Notion
-python3 ci/check_tools.py build/gcc/debug/mo               # what the bench group runs
+./target/release/mo run tools/moloc/main.mo
+./target/release/mo run tools/linkcheck.mo
+./target/release/mo test tools/mox/main.mo
+./target/release/mo install tools/moloc/main.mo          # installs ~/.local/bin/moloc
+python3 ci/check_tools.py target/release/mo              # runs the three repo tools + hidden tests
 ```
-
-- **linkcheck** checks every relative link and heading anchor in the repository's Markdown. The
-  check runs it over a copy of the tracked files (Markdown whole, the rest empty), so untracked
-  files don't change the answer, and fails on any broken link. Fix the link, or the heading it
-  names.
-- **tally** reports the first-retry numbers of a learnability round. Session logs are in the
-  evidence release, not in git (`learnability/README.md`). When they are restored, the check
-  collects each `learnability/*/sessions/` folder with `learnability/harness/session.py collect`
-  and requires tally's table to match, byte for byte, the reference tally that
-  `learnability/retry.py` uses for a round's report.
-- **notioncopy** turns the Language Reference into the pieces that are pasted into its Notion
-  copy, each under 12,000 bytes with its Adler-32 to confirm the paste. The check converts
-  `docs/reference/README.md` and requires the same pieces and output as the reference
-  converter.
-
-Each tool's own tests (`mo test tools/NAME.mo`) and its frozen hidden tests
-(`bench/tools/grade.py`) run in the same check. A change to a tool must keep both passing.

@@ -14,14 +14,14 @@ two existing unmodeled quoted-text helpers are listed in
 The runtime-owned store operations in the `STOREOP` section of `hostops.def`
 are not library functions. `LOAD` reads a snapshot and consecutive messages,
 `APPEND` commits the next message, and `SNAPSHOT` replaces state and prunes the
-covered log. `host/store.c` implements all three for disk and in-memory SQLite.
+covered log. `crates/mo-service/` implements all three for disk and in-memory SQLite.
 The separate `FAILUREOP` table names typed capture, listing, bounded metadata catalog, indexed pair lookup, export and summary operations. Capture atomically writes a diagnostic pair and retention changes, reporting committed, clean refusal or unsafe outcome; none changes recovery state.
 No handler receives the store capability, and no checker signature, Core form
 or bytecode operation exposes it. See [saved state](saved-state.md).
 
 The runtime-only `LISTENEROP` section of `hostops.def` is not a library family
 either. `NOW`, `WAIT`, `ACCEPT`, `READ`, `WRITE`, `AUTH`, `HALF_CLOSE` and `CLOSE`
-are the operations the private MCP server calls on its listener. `host/listener.c`
+are the operations the private MCP server calls on its listener. `crates/mo-service/src/listener.rs`
 implements all eight for real sockets and its fake. No handler receives the listener,
 and it has no Mo type, checker signature, Core form or bytecode operation. See
 [services](services.md).
@@ -32,11 +32,11 @@ The map prefixes their row IDs with `SIM_` to distinguish this family.
 
 ## The rule
 
-The library is written in Mo wherever it can be (condition 4 of D207). C
+The library is written in Mo wherever it can be. Rust
 implements only what Mo can't express or must be fast: arithmetic and
 conversions, text and byte operations, the basic list, map and set
 operations, and the capability operations (architecture section 7). Every
-function that takes a function as a parameter is Mo code in `lib/`, so C never
+function that takes a function as a parameter is Mo code in `lib/`, so Rust never
 calls back into Mo (`bytecode.md` section 6).
 
 Two facts settle most of the choices that rule leaves open:
@@ -74,7 +74,7 @@ for literals; `Text.%concat` for interpolation; `Text.%quoted` and
 `Text.%structural`, the VM's structural text form, for the details of a
 failed assertion.
 
-## How `make library-map` checks it
+## How `sh ci/library_map.sh` checks it
 
 `ci/library_map.sh` reads the tables below. Each section is about one type,
 whose module is the first word of its heading. A row whose second column is
@@ -568,9 +568,7 @@ the same code as `Files`'s, on a handle marked read-only (`bytecode.md` 7).
 
 ## Network
 
-The real network is C in `src/host/real-network.c` (with TLS in
-`src/host/tls.c`), and the fake is C in `src/host/fake-network.c`.
-`src/host/network.c` holds the checks both share.
+Both real and fake network capabilities live in `crates/mo-host/` (with TLS 1.2+ via `rustls`).
 
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
@@ -598,29 +596,28 @@ generated for every type with `Text` (the first table).
 
 ## Sqlite
 
-Real databases use `src/host/sqlite.c` with SQLite inside the program's
+Real databases use `crates/mo-host/` with bundled SQLite (`rusqlite`) inside the program's
 starting folder; the fake keeps each database as serialized bytes in memory.
 
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
 | `open(path)` | host | `SQLITE_OPEN` | |
 | `Sqlite.fake()` | host | `SQLITE_FAKE` | a fake, for spec code only (reference 12.4) |
-| `Sqlite.in_memory()` | lowering | `src/lower/applications.c` | spec-only alias for `Sqlite.fake()`, matching `Files.in_memory` |
+| `Sqlite.in_memory()` | lowering | `crates/mo-lower/src/applications.rs` | spec-only alias for `Sqlite.fake()`, matching `Files.in_memory` |
 | `run(statement, values)` | host | `SQLITE_RUN` | |
 | `query(statement, values)` | host | `SQLITE_QUERY` | |
 | `execute_raw(statement, values)` | host | `SQLITE_EXECUTE_RAW` | returns `(changes, last_insert_rowid)` from `sqlite3_total_changes64` delta and `sqlite3_last_insert_rowid` |
 | `execute(statement, values)` | Mo | `lib/sqlite.mo` | wraps `SQLITE_EXECUTE_RAW` in `Sqlite.ExecResult` |
 | `Sqlite.transaction(db, ctx, work, on_sql)` | Mo | `lib/sqlite.mo` | runs `BEGIN IMMEDIATE`, commits on `Ok`, rolls back on `Error` |
-| `Sqlite.decode(rows)` | lowering | `src/lower/abilities.c`, `lib/sqlite.mo` | compiler-derived struct row decoder with column-name matching and cell validation |
-| `Sqlite.decode_one(rows)` | lowering | `src/lower/abilities.c`, `lib/sqlite.mo` | single-row variant returning `ExpectedOneRow` when `rows.rows.size != 1` |
-| `Sqlite.decode_optional(rows)` | lowering | `src/lower/abilities.c`, `lib/sqlite.mo` | optional-row variant (`0` -> `None`, `1` -> `Some`, `>1` -> `ExpectedOneRow`) |
+| `Sqlite.decode(rows)` | lowering | `crates/mo-lower/src/abilities.rs`, `lib/sqlite.mo` | compiler-derived struct row decoder with column-name matching and cell validation |
+| `Sqlite.decode_one(rows)` | lowering | `crates/mo-lower/src/abilities.rs`, `lib/sqlite.mo` | single-row variant returning `ExpectedOneRow` when `rows.rows.size != 1` |
+| `Sqlite.decode_optional(rows)` | lowering | `crates/mo-lower/src/abilities.rs`, `lib/sqlite.mo` | optional-row variant (`0` -> `None`, `1` -> `Some`, `>1` -> `ExpectedOneRow`) |
 | `SqliteDecodeError.to_text` | Mo | `lib/sqlite.mo` | |
 
 ## Command
 
-`Command` (`use Command`) runs confined child processes in `src/host/command.c`
-(`mo_command_confine` in `src/host/confine.c` applies Landlock filesystem scoping
-and seccomp network/mount/signal filtering on Linux) and decodes structured
+`Command` (`use Command`) runs confined child processes in `crates/mo-host/src/command.rs`
+(applying Landlock filesystem scoping and seccomp filtering on Linux) and decodes structured
 results in `lib/command.mo`.
 
 | Function | Where | Implemented by | Why |
@@ -650,16 +647,16 @@ new for it: it parses and prints with text and list primitives.
 | `text_at`, `int_at`, `bool_at` and `list_at` on a `Json` | Mo | `lib/json.mo` | `path`, then the one kind of value each gives |
 | `Json.int(n)`, `Json.decimal(d)`, `Json.float(f)` | Mo | `lib/json.mo` | |
 | `to_int`, `to_decimal`, `to_float` and `to_text` on a `JsonNumber` | Mo | `lib/json.mo` | the parser has already checked JSON's own number syntax; `to_float` is `Text.to_float` on the number's text, and `to_int` and `to_decimal` first write it without its exponent, so `1.5e1` is the `Int` 15 |
-| `value.to_json`, `T.to_json(value)` | lowering | `src/lower/abilities.c` | derived over records, choice cases (`snake_case` tags), tuples and collections, or calls the declaring module's `to_json` |
+| `value.to_json`, `T.to_json(value)` | lowering | `crates/mo-lower/src/abilities.rs` | derived over records, choice cases (`snake_case` tags), tuples and collections, or calls the declaring module's `to_json` |
 | `Json.encode(value)`, `Json.encode_pretty(value)` | Mo | `lib/json.mo` | `value.to_json` followed by `to_text` or `pretty` |
-| `Json.decode[T](input)`, `Json.decode_strict[T](input)` | lowering | `src/lower/abilities.c` | `Json.parse` (after `Bytes.decode_utf8` for `Bytes`), then derived or custom `from_json` with dotted error paths |
-| `Json.from_json[T](json)`, `Json.from_json_strict[T](json)` | lowering | `src/lower/abilities.c` | derived field and case decoding, or the declaring module's `from_json` |
-| `Json.schema[T]()` | lowering | `src/lower/abilities.c` | structural JSON Schema object for `T`, with `$ref` on recursive nominal types |
+| `Json.decode[T](input)`, `Json.decode_strict[T](input)` | lowering | `crates/mo-lower/src/abilities.rs` | `Json.parse` (after `Bytes.decode_utf8` for `Bytes`), then derived or custom `from_json` with dotted error paths |
+| `Json.from_json[T](json)`, `Json.from_json_strict[T](json)` | lowering | `crates/mo-lower/src/abilities.rs` | derived field and case decoding, or the declaring module's `from_json` |
+| `Json.schema[T]()` | lowering | `crates/mo-lower/src/abilities.rs` | structural JSON Schema object for `T`, with `$ref` on recursive nominal types |
 
 ## Http
 
 `Http` is a module of the library, written in Mo on `Bytes` and the `Network` capability. The VM
-needs nothing new for it. The only C that touches a response's bytes is `receive`, which copies
+needs nothing new for it. The only host code that touches a response's bytes is `receive`, which copies
 them and reads none.
 
 | Function | Where | Implemented by | Why |
@@ -674,7 +671,7 @@ them and reads none.
 
 `Api` is a module of the library, written in Mo (`lib/api.mo`), supplying the
 `Request` and `Response` types and routing, query, path, CORS, SSE and OpenAPI
-helpers that lowered `api` servers (`src/lower/apis.c`) and handlers call.
+helpers that lowered `api` servers (`crates/mo-lower/src/apis.rs`) and handlers call.
 
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
@@ -684,7 +681,7 @@ helpers that lowered `api` servers (`src/lower/apis.c`) and handlers call.
 | `Api.response(status, headers, body)`, `Api.json_response(status, value)`, `Api.text_response(status, body)`, `Api.html_response(status, html)`, `Api.no_content()`, `Api.redirect(location)`, `Api.redirect_see_other(location)`, `Api.redirect_with(status, location)`, `Api.sse_response(events)`, `Api.serve_static_fake(req, prefix, dir, files)` | Mo | `lib/api.mo` | response constructors, 3xx redirects, SSE and `ApiTest.send` static asset serving |
 | `ok?`, `with_header`, `add_header`, `header`, `headers_named`, `text` and `json` on an `Api.Response` | Mo | `lib/api.mo` | response header appending (including multiple `Set-Cookie` headers) and inspection |
 | `Api.encode_job_payload(payload)`, `Api.parse_job_payload(raw)`, `Api.unknown_job_error(name)`, `Api.sqlite_job_error(err)` | Mo | `lib/api.mo` | JSON payload encoding/decoding and error formatting for lowered `%api.job` and `ApiTest.run_job` dispatch |
-| `ApiTest.send(module, request, ...)`, `ApiTest.run_job(module, name, payload, ...)` | lowering | `src/lower/apis.c` | spec-only direct calls to `Module.%api.dispatch` and `Module.%api.job` with real or synthesized fake capabilities and actors |
+| `ApiTest.send(module, request, ...)`, `ApiTest.run_job(module, name, payload, ...)` | lowering | `crates/mo-lower/src/apis.rs` | spec-only direct calls to `Module.%api.dispatch` and `Module.%api.job` with real or synthesized fake capabilities and actors |
 
 ## Actor
 
@@ -716,29 +713,30 @@ mutex-serialized `mo_live_actor` in `mo serve` and `mo run`.
 
 ## SecureRandom
 
-Real cryptographic randomness wraps OpenSSL 3 `RAND_bytes` in `src/host/random.c`
+Real cryptographic randomness draws OS entropy via `getrandom` in `crates/mo-host/`
 (failing closed on OS entropy errors). `SecureRandom.seeded` produces a deterministic
 SHA-256 counter stream for tests, examples, and promises.
 
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
-| `bytes(count)` | host | `SECURERANDOM_BYTES` | CSPRNG byte stream (`0..65536` bytes per call; real uses `RAND_bytes`) |
+| `bytes(count)` | host | `SECURERANDOM_BYTES` | CSPRNG byte stream (`0..65536` bytes per call; real uses OS `getrandom`) |
 | `SecureRandom.seeded(seed)` | host | `SECURERANDOM_SEEDED` | deterministic fake CSPRNG, for spec code only (reference 12.4) |
 
 ## Crypto
 
-`Crypto` (`use Crypto`) wraps OpenSSL 3 `libcrypto` in `src/prim/crypto.c` (zero hand-rolled
-cryptographic algorithms) and exposes typed `CryptoError` wrappers in `lib/crypto.mo`.
+`Crypto` (`use Crypto`) runs pure-Rust cryptographic primitives (`sha2`, `hmac`, `subtle`,
+`aes-gcm`, `scrypt`, `zeroize`) in `crates/mo-prim/src/crypto.rs` and exposes typed
+`CryptoError` wrappers in `lib/crypto.mo`.
 
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
-| `Crypto.sha256(data)` | primitive | `CRYPTO_SHA256` | OpenSSL `EVP_Digest` + `EVP_sha256()` |
-| `Crypto.hmac_sha256(key, data)` | primitive | `CRYPTO_HMAC_SHA256` | OpenSSL `EVP_Q_mac` HMAC-SHA256 |
-| `Crypto.constant_time_eq?(a, b)` | primitive | `CRYPTO_CONSTANT_TIME_EQ` | OpenSSL `CRYPTO_memcmp` without early exit on equal-length inputs |
-| `Crypto.seal_raw(key, nonce, plaintext, aad)` | primitive | `CRYPTO_SEAL_RAW` | OpenSSL `EVP_aes_256_gcm()` returning ciphertext plus 16-byte tag or error tag |
-| `Crypto.open_raw(key, nonce, ciphertext, aad)` | primitive | `CRYPTO_OPEN_RAW` | OpenSSL `EVP_aes_256_gcm()` verifying the 16-byte tag before releasing plaintext |
-| `Crypto.hash_password_raw(password, salt)` | primitive | `CRYPTO_HASH_PASSWORD_RAW` | OpenSSL `EVP_PBE_scrypt` (`ln=15,r=8,p=1`) producing a PHC string |
-| `Crypto.verify_password(password, encoded)` | primitive | `CRYPTO_VERIFY_PASSWORD` | strict PHC scrypt parser with DoS bounds + `EVP_PBE_scrypt` + `CRYPTO_memcmp` |
+| `Crypto.sha256(data)` | primitive | `CRYPTO_SHA256` | pure-Rust `sha2::Sha256` |
+| `Crypto.hmac_sha256(key, data)` | primitive | `CRYPTO_HMAC_SHA256` | pure-Rust `hmac` + `sha2::Sha256` |
+| `Crypto.constant_time_eq?(a, b)` | primitive | `CRYPTO_CONSTANT_TIME_EQ` | `subtle::ConstantTimeEq` without early exit on equal-length inputs |
+| `Crypto.seal_raw(key, nonce, plaintext, aad)` | primitive | `CRYPTO_SEAL_RAW` | `aes_gcm::Aes256Gcm` returning ciphertext plus 16-byte tag or error tag |
+| `Crypto.open_raw(key, nonce, ciphertext, aad)` | primitive | `CRYPTO_OPEN_RAW` | `aes_gcm::Aes256Gcm` verifying the 16-byte tag before releasing plaintext |
+| `Crypto.hash_password_raw(password, salt)` | primitive | `CRYPTO_HASH_PASSWORD_RAW` | pure-Rust `scrypt` (`ln=15,r=8,p=1`) producing a PHC string |
+| `Crypto.verify_password(password, encoded)` | primitive | `CRYPTO_VERIFY_PASSWORD` | strict PHC scrypt parser with DoS bounds + `scrypt` + `subtle::ConstantTimeEq` |
 | `Crypto.seal(key, nonce, plaintext, aad)` | Mo | `lib/crypto.mo` | wraps `seal_raw` into `Result(Bytes, CryptoError)` |
 | `Crypto.open(key, nonce, ciphertext, aad)` | Mo | `lib/crypto.mo` | wraps `open_raw` into `Result(Bytes, CryptoError)` |
 | `Crypto.hash_password(password, salt)` | Mo | `lib/crypto.mo` | wraps `hash_password_raw` into `Result(Text, CryptoError)` |

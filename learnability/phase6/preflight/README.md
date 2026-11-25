@@ -1,6 +1,6 @@
 # Intent and review door feasibility preflight
 
-The evidence behind [intent and the review door](../../../docs/design/intent.md).
+Historical preflight evidence for the retired Phase 6 review door (`docs/design/intent.md` in git history).
 Each prototype is throwaway: it changes no file under `src/` in the repository,
 and each `run.sh` rebuilds what it needs from a clean export of 02822786.
 Predictions were not written down before these runs; the README of each

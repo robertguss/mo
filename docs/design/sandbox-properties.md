@@ -1,409 +1,155 @@
-# Mo sandbox properties
+# Mo Sandbox Properties
 
-What the Mo toolchain guarantees about a program it loads and runs, where each guarantee is
-enforced, and what evidence backs it. The format follows Wasmtime's security documentation: one
-numbered property at a time, each with its enforcement point, its evidence, and what is not
-covered. A property with no enforcement or evidence is listed under "Gaps", not claimed.
+What the Mo toolchain guarantees about a program it loads and runs, where each guarantee is enforced, what evidence backs it, and what is explicitly outside scope. Following Wasmtime's security documentation style, every claim is stated as a numbered property with concrete enforcement points, evidence, and gaps.
 
-This document states facts that other documents define. Where they disagree, those win:
-`docs/design/bytecode.md` (section 9 for verification), `docs/design/architecture.md` (7 for
-capabilities, 8 for running, 11 for testing) and `docs/design/implementation.md` (the five
-conditions). Nothing here is new behaviour.
+This document summarizes facts defined by [`bytecode.md`](bytecode.md) (verification rules), [`architecture.md`](architecture.md) (capabilities, execution, and testing), and [`outside-world.md`](outside-world.md) (network, SQLite, and child confinement). Where they disagree, those specifications win.
 
-## The threat model
+---
 
-The untrusted input is a **bytecode file** (a program compiled from source, or one that arrives
-from elsewhere, as upgrade packages will in Phase 5) and the **Mo program it encodes**. The
-toolchain must not let either one read or write memory the VM did not give it, reach the outside
-world except through a capability it was handed, or use more stack, call depth or heap than the
-limits allow.
+## Threat model
 
-The **trusted code** is the C that implements the loader, the verifier, the VM, the primitives
-and the host (`src/bytecode`, `src/vm`, `src/prim`, `src/host`, `src/heap`, `src/base`).
-C is not memory safe, so for this code the five conditions of `implementation.md` replace a
-language guarantee: sanitizers, fuzzing, Tiger Style assertions, a small trusted core, and a
-verified bytecode format. The compiler (`syntax`, `check`, `lower`, `core`, `codegen`) is **not**
-trusted by the VM: the VM never sees source or Core, and the verifier checks the bytecode no
-matter what produced it (`bytecode.md` section 1).
+The untrusted input is a **bytecode file** (`.bc`, whether compiled locally or uploaded as a service upgrade) and the **Mo program it encodes**. The runtime must prevent a loaded program from:
 
-Out of scope: a host operating system that is already compromised, other processes changing the
-files a capability reaches while a lookup runs (P8), and timing or other side channels.
+1. reading or corrupting memory outside its isolated VM heap;
+2. reaching the outside world except through capabilities explicitly granted to it; or
+3. exceeding its configured stack, call-depth, heap, or work budgets.
+
+**Trusted computing base (TCB):** The pure-Rust runtime crates—`mo-def`, `mo-bytecode`, `mo-heap`, `mo-prim`, `mo-host`, `mo-vm`, and `mo-service`—plus the Rust standard library and their audited third-party dependencies (`rustls`/`ring`, RustCrypto `sha2`/`hmac`/`aes-gcm`/`scrypt`/`subtle`, `rustix`, `landlock`, and bundled SQLite via `rusqlite`). Every crate in `crates/` enforces `#![forbid(unsafe_code)]`, with zero OpenSSL and zero system `libsqlite3` dynamic linkage (audited in `ci/check_rust_frontend.py --audit-only`).
+
+The compiler front end (`mo-syntax`, `mo-check`, `mo-lower`, `mo-core`, `mo-codegen`) is **not** trusted by the VM for memory or capability safety: `mo-vm` never sees source or Core, and `mo-bytecode` verifies every loaded image regardless of what produced it.
+
+**Out of scope:** A compromised host operating system, concurrent external processes mutating directories during path lookup (P8), hardware faults, and timing or microarchitectural side channels.
+
+---
 
 ## Evidence kinds
 
-| Name | What it is | How it runs |
+| Evidence | What it is | How it runs |
 | --- | --- | --- |
-| Verifier | `src/bytecode/validate.c`, `verify.c`, `verify-instruction.c`, `verify-program.c`: refuses a file at load time | every load |
-| Assertion | `MO_ASSERT`, never compiled out (`implementation.md`, condition 3) | every run |
-| Unit test | `tests/test_*.c`, through public headers | `bash ci/check.sh gcc` |
-| Sanitizers | the unit tests under ASan and UBSan | `bash ci/check.sh sanitize` |
-| Fuzz target | `fuzz/fuzz_*.c` with seeds in `fuzz/corpus/` | `bash ci/check.sh fuzz`, by hand |
-| CBMC proof | bounded model checking of small functions, `cbmc/` (`cbmc/README.md`) | `make cbmc`, by hand |
-| Differential test | the C VM against the Lean evaluator of Mo Core, `ci/check_core_differential.py` | `bash ci/check.sh lean` |
+| **Safe Rust (`#![forbid(unsafe_code)]`)** | Compiler-enforced memory safety across all 18 workspace crates; linkage audit forbids OpenSSL and system `libsqlite3`. | Every `cargo build` and `bash ci/check.sh rust` |
+| **Load-time verifier** | `crates/mo-bytecode/src/{read,validate,verify}.rs`: refuses malformed, ill-typed, ownership-invalid, or spec-leaking bytecode before execution. | Every image load |
+| **Workspace tests** | Rust unit and integration tests across `crates/*/src/*` and `crates/*/tests/*`, including VM/verifier property and fuzz-smoke tests. | `bash ci/check.sh rust` |
+| **Black-box drivers** | End-to-end tests of CLI, host confinement, live HTTP/TLS, SQLite, Command, services, upgrades, fetch, offline replay, and SIGKILL recovery. | `bash ci/check.sh drivers` |
+| **Lean 4 formal proofs** | Mechanized type-safety, saved-value round-trip, and replay-verdict theorems (`formal/`), plus Rust-vs-Lean Core differential tests. | `bash ci/check.sh lean` |
+| **TLA+ models** | Finite state-machine verification of export generations, failure capture, and live upgrade swaps with negative controls (`models/`). | `bash ci/check.sh models` |
 
-Only the unit tests (`bash ci/check.sh gcc`) are a routine pre-PR check, plus `drivers` and
-`static` when a change reaches them (`AGENTS.md`, "Checks and merging"). Nightly, fuzz and
-CBMC are in that same section. A property whose only
-evidence is a by-hand group is still backed, but nothing re-runs it for you.
-
-## Pair assertions
-
-Tiger Style asks that a fact be checked at the point it is established and again at the point it
-is used. For the sandbox, the verifier establishes a fact about the bytecode at load time, and
-the VM asserts the same fact where it relies on it. If the two ever disagree (a verifier bug, a
-VM bug, or memory corruption between load and run), the process stops at an assertion instead of
-carrying on with a broken invariant. The pairs, and where each half lives:
-
-| Fact | Verifier | VM |
-| --- | --- | --- |
-| An instruction's register operands exist | `validate.c` `operand()`; `verify.c` `step` asserts it for read operands | `execute.c` `read`, `write`, `consume` |
-| Move and dup keep the type | `verify-instruction.c` "move/dup type mismatch" | `execute.c` `MO_OP_MOVE`, `MO_OP_DUP` |
-| A constant or global named exists and has the register's type | `verify-instruction.c` `MO_OP_CONST`, `MO_OP_GLOBAL` | `execute.c` `MO_OP_CONST`, `MO_OP_GLOBAL` |
-| A global is stored only by an init function, once | `verify-instruction.c` "global store outside init", `verify-program.c` ranks | `execute.c` `MO_OP_SET_GLOBAL` |
-| Every global has exactly one initializer, so all are set after initialization | `verify-program.c` rank loop | `image.c` `initialize` |
-| Every block start is an instruction start inside the function | `validate.c` (`starts[]`, `MO_OPERAND_TARGET`); `verify.c` `graph` asserts the entry is a block | `execute.c` `MO_OP_JUMP`, `MO_OP_BRANCH`, `MO_OP_SWITCH` and the pc check |
-| A branch tests a Bool; a switch has one target per case | `verify-instruction.c` "branch needs Bool", "switch target count" | `execute.c` `MO_OP_BRANCH`, `MO_OP_SWITCH` |
-| A call's argument count, argument types, result type and target kind match its callee | `verify-instruction.c` `MO_OP_CALL`, `MO_OP_CALL_CLOSURE` | `execute.c` call cases |
-| A closure's environment sits after the parameters, and closure code is entered only as a closure | `verify.c` `ownership`, `verify-instruction.c` | `process.c` `mo_vm_enter` |
-| A return has the function's result type and leaves no owned reference | `verify-instruction.c` "return type", `verify.c` `step` | `execute.c` `MO_OP_RET`, `clean` |
-| A construct, reuse, make_case or make_closure has the layout, case and field count it names | `verify-instruction.c` | `execute.c` constructor cases |
-| A primitive or host operation is called with its table's arity and modes | `verify-instruction.c` "primitive arity", "host arity" | `execute.c` `MO_OP_PRIM`, `MO_OP_HOST` |
-| A register written is not an owned reference or token (no overwrite leaks) | `verify.c` `step` "write overwrites ownership or token" | `execute.c` `write` |
-| A consumed reference is owned, and a frame's owned count reaches zero at return | `verify.c` `step` "consume needs an owned reference", "return leaves ownership" | `execute.c` `consume`, `clean` |
+---
 
 ## Properties
 
 ### P1. A loaded file is well formed
 
-*A file the loader accepts has every count, index and offset inside its table and limit, valid
-UTF-8 strings, valid constants, and well-formed types and layouts.*
+*Every accepted bytecode image has every section count, table index, string offset, and constant within declared bounds (`crates/mo-def/defs/limits.h`), valid UTF-8 strings, and well-formed types and layouts.*
 
-- Enforced by: the reader (`src/bytecode/read.c`), `validate.c`, and the structure and type
-  checks of the verifier (`bytecode.md` section 9, items 1 and 2). A refusal carries a reason
-  and an offset inside the input.
-- Evidence: CBMC proves the reader memory safe, integer safe and assertion free for every input
-  up to `MO_CBMC_INPUT` bytes (`cbmc/reader.c`); `fuzz/fuzz_bytecode_io.c` and
-  `fuzz/fuzz_bytecode_text.c` run larger inputs; `tests/test_bytecode_io.c`,
-  `tests/test_bytecode_text.c`.
-- Not covered: the proof is bounded (32 bytes by default), and does not show the reader accepts
-  exactly the right inputs (`cbmc/README.md`, "What the proofs do not check").
+- **Enforced by:** `crates/mo-bytecode/src/read.rs` and `validate.rs` (`bytecode.md` §9). Refusals report a specific error and byte offset.
+- **Evidence:** `crates/mo-bytecode` unit tests, binary/text round-trip tests, and corpus fuzz tests (`fuzz/corpus/`).
+- **Not covered:** Bounded corpus fuzzing does not formally prove reader completeness.
 
-### P2. Every operand has the type its instruction needs
+### P2. Every operand has the static type its instruction requires
 
-*No register is read as a type other than the one it holds, and no field, case or layout is
-used out of range: a verified program has no type confusion.*
+*No register is read at a mismatched type, and no field, choice case, layout, primitive, or host operation index is out of range.*
 
-- Enforced by: `mo_verify_instruction` (`verify-instruction.c`), using `prims.def` and
-  `hostops.def` signatures and ability checks (`bytecode.md` section 9, item 4). The VM does
-  not branch on a value's kind; it relies on this, and asserts the kinds of the few operands it
-  reads by kind (`kind_of` in `execute.c`).
-- Evidence: CBMC `instruction` proof: for any one instruction of any opcode, the function reads
-  only inside the file's tables, never fails an assertion (as of the last CBMC run; see below), and accepts only when the counts
-  later passes and the VM index with (arguments, fields, switch targets, captures) match their
-  tables (`cbmc/verify.c`). `tests/test_bytecode_verify.c`; `fuzz/fuzz_bytecode_verify.c`.
-  The VM's pair assertions (table above) check the same facts as it runs. This change added
-  assertions to `mo_verify_instruction` and `step`; the `instruction` and `step` proofs were not
-  re-run with it (CBMC was unavailable), so they are pending a run of `make cbmc`.
-- Not covered: CBMC shows what the check accepts has the right counts, not that it accepts
-  exactly the right programs; it may refuse more than it should. Type agreement of operands is
-  tested and fuzzed, not proved.
+- **Enforced by:** `crates/mo-bytecode/src/verify.rs` checking every instruction against `crates/mo-def/defs/{opcodes.def,prims.def,hostops.def}` and runtime type layouts.
+- **Evidence:** `crates/mo-bytecode` verifier tests, `crates/mo-vm` tests (including `fuzz_tests.rs`), and Lean 4 Core type-safety proofs (`formal/MoCore/Theorems.lean`) paired with differential runs (`ci/check.sh lean`).
+- **Not covered:** Type-checking rules in `mo-bytecode` are tested and fuzzed rather than mechanically proved in Lean against the bytecode semantics.
 
-### P3. Memory use is safe: no use after free, double free, leak or read of an undefined register
+### P3. Memory use is safe and reference counts balance
 
-*A verified program frees each reference exactly once, never uses one after consuming it, and
-never reads a register that is undefined or moved.*
+*A verified program frees every owned reference exactly once, never reads an undefined or moved register, never double-frees or leaks at return, and cannot corrupt host memory.*
 
-- Enforced by: the ownership dataflow (`verify.c` `ownership` and `step`; `bytecode.md`
-  sections 4.2 and 9, item 5). Every read and consume follows the ownership states; states agree
-  at every join; `ret` and tail calls leave nothing owned. `stop` and `fail` may leave owned
-  registers because the process heap is freed whole when a process ends (`architecture.md`
-  section 8).
-- Evidence: CBMC `step` proof of one instruction's ownership transfer from any register states:
-  it accepts only when the rules hold and leaves the states the rules give, and the undo log
-  restores every slot (`cbmc/verify.c`). `tests/test_bytecode_verify.c`. `fuzz_bytecode_verify.c`
-  loads arbitrary and mutated files, and for each accepted file runs only its zero-parameter,
-  non-closure, non-init functions (`verifier_fuzz_select_entries`), at most
-  `VERIFIER_FUZZ_MAX_CALLS` of them, under an instruction budget, and asserts that no object
-  remains in the heap after a call that returns; `fuzz_vm.c` does the same for
-  generated valid bytecode. The VM asserts the states as it runs (`read`, `consume`, `write`,
-  `clean` in `execute.c`). The unit tests also run under ASan and UBSan.
-- Evidence for count updates: `cbmc/refcount.c` proves duplication and drop's enqueue transition
-  on every nonzero 32-bit count, including immortal saturation and enqueueing exactly on the
-  transition from one to zero. It covers immediate, reference and four choice payload shapes.
-  It does not prove the destructor's child walk, allocation, release or reuse.
-- Not covered: `graph`, `cases` and `ownership`, the passes that drive `step`, are not
-  CBMC-proved (their loops exceed the memory CBMC has); they are tested and fuzzed. The claim
-  holds "given a correct VM, primitives and host" (`bytecode.md` section 9): a bug in the C
-  runtime can still corrupt memory, which is what sanitizers and fuzzing are for.
+- **Enforced by:**
+  1. `#![forbid(unsafe_code)]` across the entire `mo-heap` / `mo-vm` / `mo-prim` / `mo-host` runtime—preventing raw-pointer UAF, buffer overflows, and memory corruption by construction.
+  2. Ownership dataflow verification in `crates/mo-bytecode/src/verify.rs` (`bytecode.md` §§4.2, 9): tracks `Undefined`, `Value`, `Owned`, `Borrowed`, and reuse-token states across every block join and requires zero owned registers on `RET` and tail calls (`STOP`/`FAIL` discard the process heap whole).
+- **Evidence:** `crates/mo-bytecode` ownership verification tests, `crates/mo-heap` and `crates/mo-vm` Perceus reuse and leak-check tests (`fuzz_tests.rs`), and `ci/check.sh drivers`.
+- **Not covered:** Logic bugs in reference-count accounting can still manifest as safe runtime panics or budget errors rather than memory unsafety.
 
 ### P4. Control flow stays inside the function
 
-*Every jump, branch and switch lands on the first word of an instruction in the same function;
-no path falls off the end; every instruction is reachable.*
+*Every `JUMP`, `BRANCH`, and `SWITCH` targets the start of an instruction within the same function; no path falls off the end; unreachable instructions are rejected.*
 
-- Enforced by: `validate.c` and `graph` in `verify.c` (`bytecode.md` section 9, item 3). Infinite
-  loops are allowed: this is not a termination check (see P9).
-- Evidence: `tests/test_bytecode_verify.c`, `fuzz_bytecode_verify.c`. Pair assertions in `graph`
-  and in the VM's jump, branch, switch and instruction-fetch sites.
-- Not covered: not CBMC-proved (same reason as P3).
+- **Enforced by:** `crates/mo-bytecode/src/{validate.rs,verify.rs}` (`bytecode.md` §9).
+- **Evidence:** `crates/mo-bytecode` CFG verification tests and `crates/mo-vm` fuzz tests.
+- **Not covered:** Infinite loops are permitted by the verifier (see P9 for work bounds).
 
-### P5. Loading is bounded in time and memory
+### P5. Verification is bounded in time and memory
 
-*The verifier refuses, rather than runs away on, a file that needs too much work or scratch
-space.*
+*The verifier rejects pathological inputs that exceed verification work or scratch-memory ceilings rather than exhausting host CPU or RAM.*
 
-- Enforced by: `MO_LIMIT_FUNCTION_REGISTER_BLOCKS` (registers times blocks, at most 2^22),
-  `MO_LIMIT_VERIFY_WORK_PER_WORD` (128 steps per code or register word plus a header),
-  `MO_LIMIT_VERIFY_BYTES_PER_WORD` (2,048 scratch bytes per word), explicit stacks in every
-  graph walk, and linear-time ability and initialization summaries (`bytecode.md` section 9).
-  Exceeding a ceiling is a load error at the instruction where it is crossed.
-- Evidence: the "verifier work" scaling checks in `tests/test_bytecode_verify.c` (for example the
-  65,535-register unused-choice regression), `fuzz_bytecode_verify.c`.
-- Not covered: the limits are checked by tests, not proved.
+- **Enforced by:** Named ceilings in `crates/mo-def/defs/limits.h` (`MO_LIMIT_FUNCTION_REGISTER_BLOCKS`, `MO_LIMIT_VERIFY_WORK_PER_WORD`, `MO_LIMIT_VERIFY_BYTES_PER_WORD`), explicit worklists (no unbounded recursion), and linear-time ability and initialization summaries in `crates/mo-bytecode/src/verify.rs`.
+- **Evidence:** Verifier scaling regression tests in `crates/mo-bytecode` and `fuzz/corpus/`.
+- **Not covered:** Bounds are checked empirically and by unit tests rather than formally proved.
 
-### P6. Globals are initialized once, in dependency order
+### P6. Globals are initialized once in dependency order
 
-*Every global has exactly one initializer, no initializer reads a global that is not yet set
-(directly or through direct calls), and only initialization runs `init` code.*
+*Every global has exactly one initializer function, no initializer reads an uninitialized global through direct calls, and non-init code never calls an `init` function.*
 
-- Enforced by: `verify-program.c` (rank per global, summaries over the call graph), the
-  `set_global` and read checks in `step` (`bytecode.md` section 9, item 6, and 3.2), and the
-  rule that no code calls an `init` function.
-- Evidence: `tests/test_bytecode_verify.c`; the VM asserts a global is set once and that every
-  global is set after initialization (`execute.c`, `image.c`).
-- Not covered: reads reached through unknown closure calls are not charged by the verifier. The
-  VM keeps a runtime guard for them: an unset global read stops the process with an internal
-  error (`bytecode.md` section 9). That guard is a stop, not a refusal at load.
+- **Enforced by:** Global rank summaries in `crates/mo-bytecode/src/verify.rs` and single-assignment initialization in `crates/mo-vm`.
+- **Evidence:** `crates/mo-bytecode` and `crates/mo-vm` tests.
+- **Not covered:** Indirect reads through higher-order closures are not statically ranked by the verifier; `mo-vm` retains a runtime guard that stops cleanly on an uninitialized global read.
 
-### P7. The outside world is reachable only through capabilities
+### P7. The outside world is reachable only through explicit capabilities
 
-*A program can read files, print, read the clock, draw random numbers, read arguments and
-the environment, or open a network connection only through a capability value it was given,
-and `main` receives only the capabilities it declares.*
+*A program can perform I/O, networking, database access, randomness, clock reads, or subprocess execution only through capability values passed to it; production code can never invoke spec code or forge fake capabilities.*
 
-- Enforced by: the language has no other way to name an effect; every effect is a `host`
-  instruction through a capability object's operation table (`architecture.md` section 7;
-  `src/base/hostops.def`). Real capabilities are made once by the runtime for `main`
-  (`mo_call_main`, `src/vm/process.c`); fake constructors, `printed`, `printed_errors` and
-  `fail` are accepted only in spec code, and non-spec code cannot call, tail-call, make a
-  closure of, or load a closure constant of spec code (`bytecode.md` section 9, item 6). So
-  `main` and what it reaches cannot make a fake, even in an image that contains tests.
-  `Files.within`, `read_only`, `Command.within` and `Command.allow_programs` only narrow a capability.
-  `Connection` comes only from `connect` on a `Network`, and `Sqlite.Database` comes only from
-  `open` on a `Sqlite`: `main` cannot list either, and a service holds no capability at all.
-  A fake network opens no socket, a fake `Sqlite` touches no file, and a fake `Command` spawns no process.
-- Evidence: `tests/test_host.c`, `tests/test_fakes.c`, `tests/test_network.c`,
-  `tests/test_sqlite.c`, `tests/test_command.c`, `tests/test_bytecode_verify.c`; `fuzz/fuzz_host.c`,
-  `fuzz/fuzz_host_real.c`, `fuzz/fuzz_network.c`, `fuzz/fuzz_network_fake.c`,
-  `fuzz/fuzz_sqlite.c` and `fuzz/fuzz_command.c`. The `Http` client is Mo code in
-  `lib/http.mo`: it reaches the network only through the `Network` a program passes to `send`,
-  and `fuzz/fuzz_http_client.c` runs its reader on arbitrary bytes.
-- Not covered: the primitives (`src/prim`) are trusted C that the VM calls directly; that they
-  perform no I/O is by construction and review, not a mechanical check. The host operations are
-  trusted C. Console and entropy sources are process-wide: `mo_host_start` ignores `SIGPIPE`
-  for the whole process (`architecture.md` section 7). On `Sqlite.Database`, per-call authorizer
-  checks block `ATTACH`, `DETACH`, `VACUUM INTO`, `PRAGMA temp_store*` and extension loading, and
-  temporary storage stays in memory, though SQL statements can still read the wall clock via
-  `datetime('now')` and draw pseudo-random values via `random()` without `Clock` or `Random`
-  (`docs/design/outside-world.md`).
+- **Enforced by:**
+  - All host effects dispatch exclusively through `HOST` instructions (`crates/mo-def/defs/hostops.def`) on capability handles instantiated by `mo-cli`/`mo-service` for `main` or `api` declarations.
+  - `crates/mo-bytecode/src/verify.rs` forbids non-spec functions from calling, tail-calling, or capturing spec functions, fake capability constructors, `printed`/`printed_errors`, or `fail`.
+  - Narrowing operations (`Files.within`, `ReadFiles.within`, `Files.read_only`, `Network.allow_hosts`, `Command.within`, `Command.allow_programs`) are strictly monotonic.
+  - `Connection`, `Sqlite.Database`, and `Files.File` handles can only be minted by `Network`, `Sqlite`, and `Files`; durable `service` blocks receive no capabilities at all.
+  - `Sqlite.Database` installs a per-connection SQLite authorizer blocking `ATTACH`, `DETACH`, `VACUUM INTO`, `PRAGMA temp_store*`, and extension loading, keeping temporary storage in memory.
+- **Evidence:** `crates/mo-host`, `crates/mo-bytecode`, and `crates/mo-vm` tests; `ci/check_network.py`, `ci/check_golden.py`, `ci/check_programs.py`.
+- **Not covered:** SQL statements inside an already-granted `Sqlite.Database` can still call SQLite built-ins such as `datetime('now')` or `random()` without `Clock` or `Random`.
 
-### P8. File and SQLite capabilities cannot reach outside their folder
+### P8. File, SQLite, and Command capabilities cannot escape their granted directory
 
-*A `Files`, `ReadFiles` or `Sqlite` handle resolves paths beneath the directory object it holds, and
-nothing else, through `..` or links.*
+*`Files`, `ReadFiles`, `Files.File`, `Sqlite`, and `Command` resolve paths strictly beneath the directory handle they hold, rejecting `..` escapes, absolute paths, and escaping symlinks.*
 
-- Enforced by: lexical normalization that refuses absolute paths, empty components and a `..`
-  that leaves the root; then `openat2` with `RESOLVE_BENEATH` where available, or a
-  component-at-a-time `openat` with `O_NOFOLLOW` and link expansion bounded by
-  `MO_LIMIT_PATH_LINKS` and `MO_LIMIT_PATH_STEPS`; identity checks of the resolved object before
-  I/O (D236; `architecture.md` section 7, "Files"). For `Sqlite.open`, parent folders are resolved
-  with the same `mo_host_resolve`, and the database leaf and its `-journal`, `-wal` and `-shm`
-  sidecar names are checked with `AT_SYMLINK_NOFOLLOW` and opened with `SQLITE_OPEN_NOFOLLOW`.
-- Evidence: CBMC `normalize` proof: `mo_host_normalize` accepts exactly the contained relative
-  paths of up to 6 bytes over `{'.', '/', 'a'}`, and a refusal is a containment failure
-  (`cbmc/path.c`). `resolve_portable` and `resolve_kernel` prove memory/arithmetic safety,
-  root-derived descriptor use, no-follow/beneath-root flags and temporary-descriptor cleanup
-  with an eight-byte path buffer, two links, eight work steps and three temporary descriptors
-  under modelled syscalls (`cbmc/README.md`). `tests/test_host_resolver.c`, `tests/test_host.c`
-  and `tests/test_sqlite.c` cover real lookups (including hostile links);
-  `fuzz/fuzz_host_real.c` (path resolution never resolves outside the folder, `architecture.md`
-  section 11).
-- Not covered: another process renaming an intermediate directory during a lookup can make the
-  lookup follow that object to its new location; Mo's guarantee is directory-object authority,
-  as in Capsicum, WASI and cap-std, and does not make the namespace an atomic snapshot
-  (`architecture.md` section 7). The resolver proofs do not cover production-size limits,
-  arbitrary descriptor numbers, OS/libc internals or unbounded `EINTR`. They check calls and
-  cleanup, not an actual filesystem graph or exact lookup outcomes.
+- **Enforced by:** Lexical path normalization plus kernel-enforced `openat2` with `RESOLVE_BENEATH` on Linux (falling back to component-by-component `openat` with `O_NOFOLLOW` and bounded link/step limits on other Unix hosts) in `crates/mo-host/`. `Sqlite.open` resolves parent directories through the same confined resolver and verifies database and `-journal`/`-wal`/`-shm` sidecars with `O_NOFOLLOW`/`SQLITE_OPEN_NOFOLLOW`.
+- **Evidence:** `crates/mo-host` path-confinement and hostile-symlink unit/integration tests and golden tests (`tests/golden/cap-files-within-escape/`, `tests/golden/cap-files-links/`).
+- **Not covered:** Another process concurrently renaming an intermediate directory outside Mo during a lookup (directory-object authority, as in Capsicum/WASI/`cap-std`, rather than an atomic filesystem snapshot).
 
-### P9. Stack, call depth and heap are bounded
+### P9. Stack, call depth, and heap are bounded
 
-*A process uses at most `--max-stack` bytes of stack (default 8 MiB), `--max-depth` calls in
-progress (default 10,000) and `--max-heap` bytes of heap (default 1 GiB). Past a limit, the
-process stops with a defect report naming it. It does not crash or grow without bound.*
+*Every VM process enforces `--max-stack` (default 8 MiB), `--max-depth` (default 10,000), `--max-heap` (default 1 GiB), and per-value ceilings (`MO_LIMIT_VALUE_BYTES`). Exceeding any limit stops cleanly with a defect report.*
 
-- Enforced by: `mo_vm_reserve` and the call path in `execute.c` and `process.c`; the heap's own
-  accounting (`src/heap`); `MO_LIMIT_VALUE_BYTES` for a single value
-  (`architecture.md` section 7). Frame sizes are computed from `register_count`, itself limited by
-  `MO_LIMIT_FUNCTION_REGISTERS`. Arenas, not scattered `malloc`, hold compiler and verifier data
-  (D207).
-- Evidence: `tests/test_vm.c`, `tests/test_vm_faults.c` (allocation faults injected by
-  compile-time renaming), `tests/test_heap.c`, `tests/test_limits.c`; `fuzz/fuzz_vm.c` (an
-  outcome, never a crash); CBMC proves the arena hands out blocks of the size asked, overlapping
-  none, and fails without changing anything (`cbmc/arena.c`).
-- Not covered: **time**. Verification does not check termination, and a default `mo run` has no
-  instruction or wall-clock limit. An embedder can bound a run with `mo_process_instruction_limit`
-  or stop it from outside with `mo_call_controlled`'s `keep_running` callback (used for
-  promises and in `src/tools/builders.c`); the fuzz targets use the instruction budget. Native memory outside the heap (the
-  stack buffer's `realloc`) can still fail; that case stops with "running out of memory".
+- **Enforced by:** `mo-vm` stack/depth checks and `mo-heap` `HeapBudget` accounting. Service handlers, `api` requests, queries, and tests additionally enforce instruction budgets (`MO_LIMIT_SERVICE_WORK`, `--max-work`).
+- **Evidence:** `crates/mo-heap`, `crates/mo-vm`, `crates/mo-service`, and `ci/check_cli.py` limit tests.
+- **Not covered:** Default `mo run` enforces no wall-clock or instruction limit (halting is undecidable; embedders, services, and `mo query` set explicit work budgets).
 
-### P10. A verified program that goes wrong stops cleanly
+### P10. Defects stop cleanly with isolated heaps
 
-*Overflow, a division by zero, an index outside a list, and similar are defects: the process
-stops, prints a report from state that is still readable, and frees its heap whole.*
+*Arithmetic overflow, division by zero, `stop`, and budget exhaustion terminate only the failing VM process, render a defect report from readable registers only, and reclaim the process heap whole.*
 
-- Enforced by: `mo_vm_stop` and `defect.c`; the report prints only registers that are value,
-  owned or borrowed at the stopping instruction, found by re-running the verifier's dataflow
-  (`bytecode.md` section 9), so it never reads a consumed register.
-- Evidence: `tests/test_vm.c`; `fuzz_vm.c` `replay()` compares the VM's states with the readable
-  mask, only at a non-returning stop and only on the top frame; `fuzz_bytecode_io.c`
-  `check_readable` checks, at every instruction, that the streaming visit agrees with a
-  single-instruction replay (verifier against verifier, not against VM states); the Lean
-  differential test compares outcomes, including stop messages, with Mo Core's evaluator (`ci/check_core_differential.py`).
-- Not covered: the differential test runs generated programs without capabilities.
+- **Enforced by:** `crates/mo-vm` stop handling and `mo-bytecode` readability replay; per-request `mo_process` isolation in `mo-service` (`api` workers roll back open SQLite transactions automatically on stop; `service` handlers roll back uncommitted state and capture a bounded failure record).
+- **Evidence:** `crates/mo-vm` defect tests, `ci/check_offline.py`, `ci/check_offline_core.py`, and Lean 4 differential checks (`ci/check.sh lean`).
+- **Not covered:** Differential tests against Lean exercise pure and fake-capability Core programs, not live multi-threaded socket workloads.
 
-### P11. Restored saved-state bytes are validated before a handler sees them
+### P11. Restored saved-state and export bytes are schema-validated before execution
 
-*Loading a snapshot or replaying a log validates each restored value against the service's
-state type, and each saved message against its handler's input type, before any handler sees
-it. Invalid tags, lengths, links or field values refuse the load.*
+*Loading a service snapshot, replaying a recovery log, accepting an actor cross-heap message, or opening an exported `.moex` artifact validates every encoded tag, length, collection distinctness invariant, and type schema before any handler sees the value.*
 
-- Enforced by: `heap/saved.c` (`mo_value_decode`) against trusted runtime type descriptors;
-  `host/store.c` SQLite snapshot and log records; `vm/service.c` uses only validated values.
-- Evidence: `tests/test_service_store.c`; `fuzz/fuzz_saved_state.c`, `fuzz/fuzz_service_log.c`,
-  `fuzz/fuzz_service_snapshot.c`.
-- Not covered: Phase 5 migrations; `mo run` does not start a service.
+- **Enforced by:** `crates/mo-heap` saved-value codec (`MOSV`), `crates/mo-service` store/export verification (generation ID, sequence coverage, page checksums, schema digest, trailing SHA-256), and `crates/mo-upgrade` offline checks.
+- **Evidence:** Lean 4 proofs of saved-state round-trip and schema refusal (`formal/MoCore/Saved.lean`) and replay-verdict soundness (`formal/MoCore/Verdict.lean`), TLA+ export/capture/swap models (`models/`), `ci/check_export.py`, `ci/check_fetch.py`, `ci/check_offline.py`, and `ci/check_kill_loop.py`.
+- **Not covered:** `formal/MoCore/Saved.lean` models the format and proves schema checks at the specification level; byte-for-byte Rust-vs-Lean equivalence rests on test suites rather than a verified extraction.
 
-## What the trusted base is
+---
 
-A property above holds "given a correct VM, primitives and host". Those are the parts a memory
-bug could break, so they are the parts the other evidence aims at:
+## Control-plane and upgrade boundaries
 
-| Part | Size and kind | Evidence |
-| --- | --- | --- |
-| Loader and verifier | `src/bytecode`, C | CBMC (reader, `instruction`, `step`, `lookup`; `instruction` and `step` not re-run after MO-58's new assertions), fuzzing, tests, sanitizers |
-| VM | `src/vm`, C | Pair assertions, fuzzing (`fuzz_vm.c`), differential test against Lean, sanitizers. **No CBMC proof of the interpreter loop.** |
-| Heap and arena | `src/heap`, `src/base/arena.c`, C | CBMC (arena, local reference count updates, bounded hash-table probing and compaction), `fuzz_heap.c`, sanitizers |
-| Primitives | `src/prim`, C | CBMC (arithmetic and UTF-8), `fuzz_prim.c`, oracles in `tests/test_prim.c` |
-| Host | `src/host`, C | CBMC (lexical normalization, bounded portable and Linux resolution under modelled syscalls), `fuzz_host.c`, `fuzz_host_real.c`, resolver tests |
-| Standard library | `lib/`, Mo | memory safe by construction (condition 4) |
+- **Unix-socket administration (`--admin-socket`):** Public HTTP listeners serve only application routes—never operator views or code uploads. Live introspection (`mo-overview` through `mo-failures`), `mo fetch`, `mo query`, and `mo push` bind exclusively to an opt-in mode-`0600` Unix domain socket protected by OS filesystem permissions.
+- **No unattended LLM live deploys:** Runtime self-healing happens at the process/supervision boundary; code fixes are verified offline (`mo replay --fix`, `mo diff`, `mo rehearse`) and reviewed by a human before deployment.
+- **Confined upgrade compiler & `Command` children:** Live-upgrade compilation runs in a separate child process with an empty environment, no store file descriptors, resource limits, and Linux Landlock + seccomp confinement where supported (hosts without Landlock refuse live upgrades unless explicitly started with `--unconfined`). `Command` children likewise run without a shell under `allow_programs`, folder confinement, scrubbed environments, timeouts, and Linux Landlock + seccomp.
+- **Write access to `--data DIR`:** Anyone with filesystem write access to a service's data folder holds full state and upgrade authority over that service.
+
+---
 
 ## Gaps
 
-These are not guaranteed today.
+These are explicitly not guaranteed today:
 
-1. **No termination or time bound by default.** See P9.
-2. **No proof of the VM loop, the verifier's drivers, or the whole heap.** CBMC covers the reader,
-   the arena, the verifier's per-instruction functions, the
-   arithmetic and UTF-8 primitives, local reference count updates, bounded hash-table probing
-   and compaction, and lexical path containment (`mo_host_normalize`). The table proofs use
-   eight slots, with a separate 256-slot probe-limit case and compaction of up to two entries
-   (`cbmc/README.md`). Bounded resolver proofs add call/cleanup checks under modelled syscalls,
-   not a proof of the OS or a filesystem graph. The heap's destructor walk and allocation remain
-   unproved. The rest has tests, fuzzing, sanitizers and (for the VM) the Lean differential test.
-3. **Fuzzing and CBMC do not run on their own.** They run only when someone
-   runs them (`AGENTS.md`, "Checks and merging"). A regression in them is
-   found when they next run.
-4. **Operating-system confinement covers only child processes.** The children that
-   `mo serve` starts for upgrades (`src/host/compile.c`) and subprocesses started through the
-   `Command` capability (`src/host/command.c`, `src/host/confine.c`) run under Landlock and a
-   seccomp filter where the Linux kernel supports Landlock ABI 3 or later
-   ([outside-world.md](outside-world.md#confinement-of-the-children)): `Command` children use
-   `command_seccomp`, which allows local `AF_UNIX` `socketpair` IPC, connected `send` and signals
-   within the child subtree (additionally kernel-scoped by `LANDLOCK_SCOPE_SIGNAL` on ABI 6+) while
-   denying external sockets and signals to the parent or init. On hosts without Landlock (such as
-   macOS), `Command` enforces `allow_programs`, `RESOLVE_BENEATH`-equivalent working-folder
-   containment, scrubbed environments, closed descriptors, `rlimit` bounds and process-group
-   timeouts without an OS filesystem/syscall sandbox. `mo serve` itself,
-   `mo run` and `mo test` are not confined. A bug in the C runtime there is not contained, and
-   capabilities are the only boundary. On a host that cannot confine, `mo serve` accepts no
-   remote upgrade unless it was started with `--unconfined`, and then it says so at start and in
-   every upgrade report.
-5. **Concurrency checking (`make tsan`).** Three subsystems use POSIX threads, checked on demand
-   under ThreadSanitizer (`make tsan`):
-   - `Network.connect` runs each name lookup on a detached helper thread (`resolve` in
-     `src/host/real-network.c`), because `getaddrinfo` has no timeout and the connection's
-     deadline covers the lookup. It shares one slot of a static table of `MO_LIMIT_LOOKUPS`
-     lookups under one mutex, touches no heap value or capability, blocks signals, and communicates
-     through a close-on-exec pipe (`tests/test_network.c`, `tests/test_host_faults.c`).
-   - Declarative `api` servers (`src/tools/api-server.c`) run a bounded worker pool
-     (`MO_LIMIT_API_WORKERS` threads) pulling accepted sockets from a mutex-guarded queue
-     (`MO_LIMIT_API_QUEUE` slots) and creating an isolated `mo_process` and `mo_heap` per HTTP
-     request (`tests/test_api_server.c`, `fuzz/fuzz_api_server.c`). Error output shares one
-     `log_mutex`.
-   - In-process `actor` capabilities (`struct mo_live_actor` in `src/vm/simulation.c`) serialize
-     state transitions under per-actor mutexes, copying arguments and replies across heaps via the
-     saved-value codec so actor and caller heaps share no mutable cells (`tests/test_api_server.c`).
-6. **Concurrent changes to the filesystem** are outside P8.
-7. **The upgrade credential reaches the compiler.** A live upgrade compiles network input in a
-   child process under CPU, memory and wall limits and the confinement of gap 4, and loads its
-   output through the verifier. The child has an empty environment and no descriptor on the
-   store. It reads the compiler, its library and its inputs, and writes only its own folder. A
-   memory-safety exploit of the compiler front end can still forge the child's own output, so
-   the verifier and the checks stay the bound on what it produces; long front-end fuzz runs are
-   the evidence. Under `--unconfined` the child also reaches every file the service's user can,
-   and the credential's authority is then bounded only by the compiler's memory safety.
-   Write access to a data folder also equals upgrade authority, since the folder records the
-   program a restart runs. The upload page reader (`src/base/upload.c`) is untrusted-input code
-   with CBMC proofs and a fuzz target.
-8. **Verified file, not verified compiler.** A compiler bug produces a program that the verifier
-   accepts but that does not mean what its source says. That is a correctness bug, not a
-   sandbox escape; the Lean differential test and the golden corpus look for it.
-9. **Assertions are evidence of intent, not proof.** A pair assertion stops the process when a
-   fact is false at run time. It does not show the fact is always true, and it costs a check
-   per use. The cost was measured once, on `tests/test_vm.c` at `-O0` (0.47 s before, 0.48 s
-   after); it was not measured with optimization.
-
-## Keeping this document true
-
-A change that adds or removes an instruction, a limit, a capability operation, a fuzz target or a
-proof updates the property it affects. The facts here are checkable: the pair-assertion table
-names functions in `src`, the evidence rows name files in `tests/`, `fuzz/` and `cbmc/`.
-
-## Private host-local state fetch
-
-The fetch command restricts URL syntax before reading the named credential environment variable.
-It resolves the selected host and rejects any non-loopback result, then checks the connected peer
-before formatting or transmitting Authorization on each page. Direct POSIX sockets bypass proxy
-configuration; the embedded response reader accepts only HTTP 200 with bounded explicit length,
-JSON content type and a successful MCP envelope. It never follows Location.
-
-The reader bounds page arithmetic through the producer's shared `mo_export_page_bounds` helper.
-Generation, both sequence fields, exact coverage, page checksums, complete artifact framing,
-embedded schema digest and trailing SHA-256 must agree before publication. These checks detect
-inconsistency; they are not cryptographic authentication of a malicious local service.
-
-An exclusive no-follow mode-0600 temporary file and non-overwriting hard-link publication protect
-the destination. Signal cancellation and ordinary failure remove the temporary name. A machine
-crash or SIGKILL can leave an unpublished private temporary name; cleanup cannot execute then.
-The monotonic deadline starts at entry, arms before destination lookup and remains active through
-filesystem completion/publication. Numeric-only resolution avoids DNS/NSS. Its signal interrupts
-interruptible POSIX calls; uninterruptible kernel waits and scheduler starvation remain OS
-assumptions. Successive page starts are paced at the service call rate. VM parser
-work and heap have separate limits. Actual coverage and measurement results belong to the phase
-introspection design evidence; finite page arithmetic proofs do not prove socket or file syscalls.
-
-## Whole-program upgrades and local administration
-
-Whole-program upgrades are implemented as [the upgrade design](upgrades.md)
-describes. Activation atomically records the source bundle, migrated snapshot and
-program identities in a version-2 folder that older readers refuse. The upgrade
-operator tools change the service and require a separate credential, or local
-filesystem access to `mo serve --admin-socket`
-([post-phase7-direction.md](post-phase7-direction.md)). A compiler child limits
-crashes and stalls, and where the host can confine it reaches only the compiler,
-its library, its inputs and its own folder. A child taken over can still forge
-its own output, so its compiler is part of the upgrade credential's trusted base.
-Write access to the data folder confers the authority to replace the running
-program. The earlier Phase 6 external approval file (`mo intent`, recorded in
-[intent.md](intent.md)) was retired in favor of `mo diff` and code-first
-non-vacuous `promise` checks.
+1. **Bundled C dependency (SQLite).** While all 18 Mo crates enforce `#![forbid(unsafe_code)]` with zero OpenSSL, SQLite itself is C code compiled into `rusqlite` (`bundled` feature), and `ring` contains assembly/C cryptographic primitives.
+2. **OS-level confinement is child-only and Linux-specific.** Landlock + seccomp confine `Command` subprocesses and live-upgrade compiler children on Linux kernels with Landlock ABI 3+. On macOS and other non-Landlock hosts, `Command` enforces `allow_programs`, working-directory confinement, scrubbed environments, closed descriptors, and process-group timeouts without a kernel filesystem/syscall sandbox. `mo run`, `mo test`, and `mo serve` parent processes rely on Mo's capability boundary and safe-Rust runtime rather than OS sandboxing.
+3. **No default CPU/time limit on `mo run`.** See P9.
+4. **Verified bytecode, not verified compiler.** A bug in `mo-check`, `mo-lower`, or `mo-codegen` can produce verified bytecode that miscompiles the source semantics (a correctness bug, not a sandbox escape); the Lean differential suite and golden corpus guard against this.
+5. **Process-kill tests do not prove power-loss durability.** SIGKILL recovery drills validate crash consistency across process death with an intact OS page cache, not arbitrary disk firmware reordering.
+6. **Concurrent external filesystem mutations** are outside P8.

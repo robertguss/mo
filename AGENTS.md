@@ -18,10 +18,10 @@ The documents that define correct behaviour, in order of authority:
 
 - `docs/reference/README.md`: the Mo Language Reference v0.1. It is embedded into the binary
   (`mo guide --reference`) by `crates/mo-cli/build.rs`, as is `docs/agent-guide.md`.
-- `docs/design/architecture.md`: how the toolchain is built (sections 2, module boundaries, and
-  11, testing strategy, are the ones to know). `docs/design/bytecode.md` is the bytecode spec.
+- `docs/design/architecture.md`: how the pure-Rust toolchain is built (crate boundaries and
+  testing strategy). `docs/design/bytecode.md` is the bytecode spec.
 - `docs/design/library.md`: where each library function is implemented.
-- `docs/status/sample-blockers.md`: sample status (currently clear).
+- `docs/design/sandbox-properties.md`: runtime security properties, threat model, and gaps.
 
 ## Commands
 
@@ -90,7 +90,7 @@ nohup timeout --kill-after=30 3600 bash ci/check.sh rust >build/check-results.tx
 ```
 
 `rm -f` keeps an earlier run's marker out of this run's file. `timeout` ends a hung run, which then
-reads as failed, so raise its 3600 seconds for a longer run such as `cbmc`. Then, in a separate
+reads as failed, so raise its 3600 seconds for a longer run. Then, in a separate
 call:
 
 ```sh
@@ -152,8 +152,7 @@ Four shared contracts live in `crates/mo-def/defs/` (and are parsed at build tim
   otherwise.
 - `tests/golden/` is the golden corpus: whole programs with their exact stdout, stderr and exit
   status (format in `ci/check_golden.py`). Write the expected output by hand from the reference; a
-  wrong-looking result is a bug to fix or list in `docs/status/golden-gaps.md`, never a new
-  expectation.
+  wrong-looking result is a bug to fix, never a new expectation.
 - `docs/agent-guide.md` (`mo guide`) tells agents what this build does. A change to what a `mo`
   command does, or to which forms are unfinished, updates the guide in the same PR;
   `guide_claims` in `ci/cli_guide.py` runs the guide's program and checks each claim it makes.
@@ -164,9 +163,3 @@ Four shared contracts live in `crates/mo-def/defs/` (and are parsed at build tim
 
 The PR template asks what changes, which tests prove it, and what `bash ci/check.sh rust` said.
 A one-line fix keeps each to a sentence; it still gets a test.
-
-`docs/status/agent-mistakes.md` is the ledger of mistake classes agents have repeated here. Read it
-before C work; it is reviewed at phase boundaries, not bumped in every PR.
-
-`docs/solutions/` holds learnings from past work: the problem, why it happened and what to do,
-with `module` and `tags` in each file's frontmatter. Search it before working in an area it covers.

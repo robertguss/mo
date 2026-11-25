@@ -44,10 +44,8 @@ reader, `jobs`, because `Queue` is opaque. No check compares the two files: that
 sample edit a change to the served program, which refuses its saved data. A logic fix in one is
 made in the other by hand.
 
-The queue is exercised on the development machine by its simulation tests, its recovery check
-in `mo test` and the kill loop, which SIGKILLs a real `mo serve`. It was once deployed on an
-exe.dev VM (D258); that deployment was retired, and `docs/ops/task-queue.md` and
-`docs/status/phase3-run.md` record it.
+The queue is exercised by its simulation tests, its recovery check in `mo test`,
+and the kill loop (`ci/check_kill_loop.py`), which SIGKILLs a real `mo serve`.
 
 ## 4. The service model
 
@@ -127,9 +125,8 @@ on every handler. A read-only tool such as `count` has the signature
 
 The service selects a local overload by its first parameter's exact state type. The selected
 tool or timer signature must contain no unresolved generic parameters. Generic helpers remain
-usable through concrete wrapper functions; Phase 3 adds no explicit generic-specialization
-syntax at this boundary. Robert approved this D301 follow-up on 25 Oct in the
-[approval conversation](https://ampcode.com/threads/T-01a1705d-1274-74f9-8fcf-0bf58e6f89b8).
+usable through concrete wrapper functions; there is no explicit generic-specialization
+syntax at this boundary.
 
 The clauses have a strict order (D312): exactly one `state`, exactly one `tools`
 naming at least one function, zero or more `every` clauses, and exactly one `token` last.
@@ -173,8 +170,8 @@ validation.
 
 ## 7. Access
 
-Mo checks an access token itself (D264), so the service is not tied to exe.dev's proxy and the
-same mechanism works for services that run elsewhere. The token reaches the service as a secret
+Mo checks an access token itself, so the service is not tied to any reverse proxy and the
+same mechanism works anywhere a service runs. The token reaches the service as a secret
 value that never appears in printed output or logs.
 
 ## 8. Failures
@@ -189,7 +186,7 @@ A supervisor restarts the service from its snapshot and log after 5 failed messa
 person starts it. Every failure, restart and stop is logged with its reason. Mo does not restart
 on every failed message, since the last good state is still available.
 
-[D308](https://app.notion.com/p/403700320c458174865ee7815f59aa4f) defines a failed message as
+A failed message is defined as
 "a handler that crashed or went over budget". A normally returned `Error(...)` is an
 application rejection, not a supervisor failure. It leaves the state unchanged without
 advancing the failure count.
@@ -216,11 +213,9 @@ These decisions define the Phase 3 build plan.
    no fixes. `mo fix` applies neither alternative.
    Every other result shape is read-only, including
    `List(State)`, `Option(State)` and records containing `State`. The runtime neither logs nor
-   saves these messages. The [D310 ruling](https://app.notion.com/p/404700320c45811da3a7deef66d2b37f)
-   requires the diagnostic code and exact wording under "For Robert" in the MO-155 PR.
-   [D313](https://app.notion.com/p/404700320c45815eb7d4fdd3858b31ee) refuses `Result(State, E)`
-   because the queue's `heartbeat`, `acknowledge` and `fail` return `Result(Queue, QueueError)`.
-   Direct wrappers must not silently treat accepted updates as read-only replies.
+   saves these messages. `Result(State, E)` is also refused with `E0101`
+   because update wrappers must return `(State, Reply)` or `Result((State, Reply), E)` rather
+   than silently treating accepted updates as read-only replies.
 3. **Durations (D303).** All five existing units accept singular spellings: `1.second`,
    `1.millisecond`, `1.minute`, `1.hour`, and `1.day`. The syntax-only formatter normalizes
    only direct integer-literal receivers, singular for numeric value 1 and plural otherwise.
@@ -228,10 +223,9 @@ These decisions define the Phase 3 build plan.
    (reference 3.9). Native signatures map each alias to the existing plural identity, so
    lowering, Core, bytecode and the VM need no new operations. Formatter recognition stays
    local to syntax; the independent test contract equates only literal-receiver aliases.
-4. **Budgets (D304).** Per-message VM instructions, per-message memory and mailbox length have
-   fixed runtime defaults, named in `src/base/limits.h`. A message over budget fails only that
-   message. A full mailbox refuses new messages immediately with a busy tool error. Phase 3
-   adds no limit syntax.
+4. **Budgets.** Per-message VM instructions, per-message memory and mailbox length have
+   fixed runtime defaults, named in `crates/mo-def/defs/limits.h`. A message over budget fails only that
+   message. A full mailbox refuses new messages immediately with a busy tool error.
 5. **Timers (D305).** A due tick is an ordinary mailbox message. At most one tick per timer is
    waiting at a time. Ticks missed while the service was down are not replayed; each timer runs
    once at startup. Simultaneous ticks follow the source order of the `every` clauses (D312).
@@ -248,13 +242,9 @@ These decisions define the Phase 3 build plan.
    snapshot and log. After 3 restarts within 10 minutes it stops until a person starts it.
    Every failure, restart and stop is logged with its reason.
 
-### MO-155 diagnostics and fixes
+### Service handler diagnostics and fixes
 
-[D312](https://app.notion.com/p/404700320c45814188abd07e6534971a) records the approved
-rules from the [approval conversation](https://ampcode.com/threads/T-01a1705d-1274-74f9-8fcf-0bf58e6f89b8).
-[D313](https://app.notion.com/p/404700320c45815eb7d4fdd3858b31ee) records the later refinement
-from the latest approval relayed into the
-[execution conversation](https://ampcode.com/threads/T-01a16ff1-e184-7194-808d-d6d0112ba4a4).
+The rules below govern `E0100`, `E0101`, `E0104`, `E0105`, and `E0106` on service tools and timers:
 Both records paraphrase the approval rather than quote Robert's words.
 
 For a bare-State tool eligible for fixes, E0101 uses these strings:
@@ -434,9 +424,8 @@ rather than replace, MO-158's transaction and snapshot fault injection.
 The test-only TaskQueue fixture wraps the unchanged `examples/job-queue.mo`.
 Its submit/crash/restart/lease test exercises real recovery; ignoring an accepted
 reply and retrying after recovery produces two jobs. The MO-162 service,
-networking and deployment are outside this change. Generated sequences against
-a service came later as the recovery check below, and promises an author writes
-over a service's sequences later still (`intent.md`, "Service promises").
+networking and deployment are outside simulation. Generated sequences against
+a service drive both the automatic recovery check below and service `promise` checks.
 
 ### Recovery check
 
@@ -521,7 +510,7 @@ not a generated step.
 **Budget and limits.** The check runs its whole plan: `--calls` sequences, 200
 by default, each seeded by its ordinal, so a verdict never depends on machine
 speed. `--seconds` does not apply. Every sequence ends in a restart, so a pass
-always compared one. The named limits in `src/base/limits.h`:
+always compared one. The named limits in `crates/mo-def/defs/limits.h`:
 
 | Limit | Value | Meaning |
 | --- | --- | --- |
@@ -750,10 +739,10 @@ timers remain unaffected. Both checks follow E0101 across all services (D328).
 
 ### MO-161 mo serve
 
-`mo serve FILE --port N --data DIR` (D331) runs the entry module's service. It
-compiles, initializes and checks anchors as `mo run` does, then
-`src/tools/serve.c` opens the listener and the store and polls the server. The
-flags are `--port`, `--data` and `--allow-host NAME`. It binds 127.0.0.1 and
+`mo serve FILE --port N --data DIR` runs the entry module's service. It
+compiles, initializes, and runs the service loop in `crates/mo-service/`,
+opening the listener and the SQLite store. The
+flags include `--port`, `--data`, `--allow-host NAME`, and `--admin-socket PATH`. It binds 127.0.0.1 and
 allows the authorities `127.0.0.1:PORT` and `localhost:PORT`, using the bound
 port, plus `NAME` when given, for a proxy that forwards its public name.
 `HttpAuthority.check` refuses a malformed `NAME` as a configuration refusal.
@@ -871,20 +860,13 @@ queue with one deliberate crash, which itself replaced 24 hours under synthetic 
 dropped because it was one sample of crash behaviour, mostly exercised systemd, SQLite, the proxy
 and the VM rather than Mo, and needed agents to take work from the queue that Robert starts himself.
 
-## Whole-program upgrades and the review door
+## Whole-program upgrades and local administration
 
 Whole-program upgrades are implemented as [the upgrade design](upgrades.md)
-describes. Activation atomically records the source bundle, migrated snapshot and
-program identities in a version-2 folder that older readers refuse. The upgrade
-operator tools change the service and require a separate credential. A compiler
-child limits crashes and stalls but shares the host identity, files and secrets:
-its compiler is part of the upgrade credential's trusted base. Write access to
-the data folder confers the authority to replace the running program.
-
-Phase 6's approved design adds [the review door](intent.md), not yet implemented: a third
-secret, the approval credential, held only on the service's host; a second
-child that runs the candidate's checks there under limits but without
-operating-system confinement; and a version-3 folder holding approvals. Write
-access to the data folder then confers approval authority too, and a
-memory-safety defect in the compiler or the VM that pushed source can reach is a
-way around the door without a shell.
+describes. Activation atomically records the source bundle, migrated snapshot, and
+program identities in the SQLite data folder. Operator views and live upgrades
+bind to an opt-in mode-`0600` local Unix domain socket (`--admin-socket PATH`),
+and candidate compilation runs in a confined child process. Write access to
+the data folder or admin socket confers the authority to replace the running program.
+An earlier external approval door (`mo intent`/`mo review`) was retired in favor of
+`mo diff` and code-first non-vacuous `promise` blocks.

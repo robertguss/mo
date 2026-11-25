@@ -350,8 +350,7 @@ other integer literals. It leaves other receivers and qualified function names
 as written: `n.minute`, `record.seconds`, `(1).minutes`, `(-1).second`, and
 `Int.minute`. In `-1.seconds`, the receiver is the literal 1, so it writes
 `-1.second`. The formatter uses syntax, not types; this boundary avoids renaming
-unrelated fields or functions (D303,
-[wording approval](https://ampcode.com/threads/T-01a1705d-1274-74f9-8fcf-0bf58e6f89b8)).
+unrelated fields or functions.
 
 <!-- mo-example: fragment -->
 ```mo
@@ -2437,7 +2436,7 @@ test "a fake command capability enforces folder and program narrowing"
 end
 ```
 
-**Crypto**, with `use Crypto`, wraps OpenSSL 3 cryptographic primitives:
+**Crypto**, with `use Crypto`, provides pure-Rust cryptographic primitives:
 `Crypto.sha256(data: Bytes) : Bytes`, `Crypto.hmac_sha256(key: Bytes, data: Bytes) : Bytes`,
 `Crypto.constant_time_eq?(a: Bytes, b: Bytes) : Bool`,
 `Crypto.seal(key: Bytes, nonce: Bytes, plaintext: Bytes, aad: Bytes) : Result(Bytes, Crypto.CryptoError)`

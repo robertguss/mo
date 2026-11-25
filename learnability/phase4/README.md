@@ -8,7 +8,7 @@ original experiment, kept as a historical record; its baseline and comparison we
 ## Scored results and scenario history
 
 The [diagnostic results](evaluation/results.md) report 14 of 16 correct and a passing gate.
-All 16 slots ran once; both misses are preserved. The [run record](../../docs/status/phase4-run.md)
+All 16 slots ran once; both misses are preserved. The archived Phase 4 run record (`docs/status/phase4-run.md` in git history)
 states the limits and verification inventory. Robert approved v0.1.0 and the squash merge of PR #308 on 2026-11-07.
 
 The committed scenario history through `fda0ce0` is published in the
