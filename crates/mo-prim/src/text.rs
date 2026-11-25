@@ -544,7 +544,7 @@ pub fn call(
                 return Ok(heap.make_option(types, result_ty, None)?);
             }
             let mut out = Vec::with_capacity(bytes.len() / 2);
-            for pair in bytes.chunks_exact(2) {
+            for pair in bytes.as_chunks::<2>().0 {
                 let (Some(hi), Some(lo)) = (hex_nibble(pair[0]), hex_nibble(pair[1])) else {
                     return Ok(heap.make_option(types, result_ty, None)?);
                 };
@@ -568,7 +568,7 @@ pub fn call(
                 )))?;
             check_value_bytes_fit(out_len)?;
             let mut out = String::with_capacity(out_len);
-            for chunk in bytes[..full * 3].chunks_exact(3) {
+            for chunk in bytes.as_chunks::<3>().0 {
                 let v =
                     (u32::from(chunk[0]) << 16) | (u32::from(chunk[1]) << 8) | u32::from(chunk[2]);
                 out.push(TABLE[((v >> 18) & 0x3f) as usize] as char);
@@ -598,7 +598,7 @@ pub fn call(
             let full = bytes.len() / 4;
             let out_len = full * 3 + if rem == 0 { 0 } else { rem - 1 };
             let mut out = Vec::with_capacity(out_len);
-            for chunk in bytes[..full * 4].chunks_exact(4) {
+            for chunk in bytes.as_chunks::<4>().0 {
                 let (Some(v0), Some(v1), Some(v2), Some(v3)) = (
                     b64url_value(chunk[0]),
                     b64url_value(chunk[1]),
