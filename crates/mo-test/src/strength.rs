@@ -4,6 +4,8 @@
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use mo_base::{
     DiagBag, Diagnostic, RenderWriter, SourceMap, Span, TerminalEncoding, render_version_json,
@@ -15,7 +17,7 @@ use mo_check::{
 use mo_def::ErrorCode;
 use mo_def::limits::{
     MO_CLI_CHECK_SIZE, MO_CLI_DIAGNOSTIC_SIZE, MO_LIMIT_FILE_SIZE, MO_LIMIT_PATH_SIZE,
-    MO_LIMIT_STRENGTH_VERSIONS,
+    MO_LIMIT_STRENGTH_VERSIONS, MO_SOURCE_STACK_SIZE,
 };
 use mo_syntax::{ModuleSyntax, NodeId, SyntaxKind, SyntaxTree, parse_module};
 use sha2::{Digest, Sha256};
@@ -818,6 +820,38 @@ fn select_checks(
     Some(selection)
 }
 
+struct StrengthContext<'a> {
+    config: &'a TestConfig,
+    strength_dir: &'a str,
+    library: &'a LibraryMode,
+    program: &'a CheckedProgram,
+    sources: &'a SourceMap,
+    baseline_digests: &'a [[u8; 32]],
+    counted_file: bool,
+}
+
+fn measure_version(ctx: &StrengthContext<'_>, base: &Version) -> Version {
+    let mut v = Version {
+        name: base.name.clone(),
+        sha256: base.sha256,
+        listed: base.listed,
+        outcome: Outcome::Invalid,
+        reason: String::new(),
+    };
+    let counted = !ctx.counted_file || v.listed;
+    measure_one(
+        ctx.config,
+        ctx.strength_dir,
+        ctx.library,
+        ctx.program,
+        ctx.sources,
+        ctx.baseline_digests,
+        &mut v,
+        counted,
+    );
+    v
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "matches C measure_one signature directly"
@@ -1052,6 +1086,105 @@ fn render_strength(
     w.finish().ok()
 }
 
+fn write_strength_events(
+    output: &mut dyn Write,
+    strength_dir: &str,
+    set: &VersionSet,
+    original: bool,
+) -> bool {
+    let mut counts = [0u64; OUTCOMES];
+    let mut killed = 0u64;
+    let mut any = 0u64;
+    let mut scored = 0u64;
+    if original {
+        for v in &set.versions {
+            counts[v.outcome as usize] += 1;
+            let kill = matches!(
+                v.outcome,
+                Outcome::KilledByPromise | Outcome::KilledByExample | Outcome::KilledByBoth
+            );
+            let kill_any = kill || v.outcome == Outcome::KilledByTest;
+            let is_scored = kill_any
+                || v.outcome == Outcome::Survived
+                || (v.listed && matches!(v.outcome, Outcome::ChangesIntent | Outcome::Invalid));
+            if kill {
+                killed += 1;
+            }
+            if kill_any {
+                any += 1;
+            }
+            if is_scored {
+                scored += 1;
+            }
+
+            let mut cw = RenderWriter::new(
+                MO_CLI_DIAGNOSTIC_SIZE as usize,
+                TerminalEncoding::Utf8,
+                UNICODE16_METRICS,
+            );
+            cw.text("{\"record\":\"strength_case\",\"event\":\"strength_case\",\"set\":");
+            cw.json_str(strength_dir);
+            cw.text(",\"name\":");
+            cw.json_str(&v.name);
+            cw.text(",\"sha256\":\"");
+            cw.text(&hex_sha256(&v.sha256));
+            cw.text("\",\"outcome\":\"");
+            cw.text(OUTCOME_NAMES[v.outcome as usize]);
+            cw.text("\",\"killed\":");
+            cw.text(if kill { "true" } else { "false" });
+            cw.text(",\"killed_any\":");
+            cw.text(if kill_any { "true" } else { "false" });
+            cw.text(",\"scored\":");
+            cw.text(if is_scored { "true" } else { "false" });
+            if v.outcome == Outcome::Invalid {
+                cw.text(",\"reason\":");
+                cw.json_str(&v.reason);
+            }
+            cw.text("}\n");
+            let Ok(buf) = cw.finish() else {
+                return false;
+            };
+            if output.write_all(&buf).is_err() || output.flush().is_err() {
+                return false;
+            }
+        }
+    }
+
+    let kill_rate = if scored == 0 {
+        "null".to_string()
+    } else {
+        format!("{:.4}", (killed as f64) / (scored as f64))
+    };
+    let partial = !(original && counts[Outcome::Unfinished as usize] == 0);
+
+    let mut sw = RenderWriter::new(
+        MO_CLI_DIAGNOSTIC_SIZE as usize,
+        TerminalEncoding::Utf8,
+        UNICODE16_METRICS,
+    );
+    sw.text("{\"record\":\"strength_summary\",\"event\":\"strength_summary\",\"set\":");
+    sw.json_str(strength_dir);
+    sw.text(",\"original\":");
+    sw.text(if original { "\"passed\"" } else { "\"failed\"" });
+    sw.text(",\"scored\":");
+    sw.u64_dec(scored);
+    sw.text(",\"killed\":");
+    sw.u64_dec(killed);
+    sw.text(",\"killed_any\":");
+    sw.u64_dec(any);
+    sw.text(",\"survived\":");
+    sw.u64_dec(counts[Outcome::Survived as usize]);
+    sw.text(",\"kill_rate\":");
+    sw.text(&kill_rate);
+    sw.text(",\"partial\":");
+    sw.text(if partial { "true" } else { "false" });
+    sw.text("}\n");
+    let Ok(buf) = sw.finish() else {
+        return false;
+    };
+    output.write_all(&buf).is_ok() && output.flush().is_ok()
+}
+
 fn emit_unfinished(diags: &mut DiagBag, detail: &str) {
     let _ = diags.push(
         Diagnostic::new(
@@ -1110,22 +1243,74 @@ pub fn run_strength(
         totals.failed == 0 && totals.stopped == 0 && diags.len() == before && diags.dropped() == 0;
     if original {
         let counted_file = set.counted;
-        for v in &mut set.versions {
-            let counted = !counted_file || v.listed;
-            measure_one(
-                config,
+        let mut serial_cfg = config.clone();
+        serial_cfg.jobs = 1;
+        let workers = config.jobs.max(1).min(set.versions.len().max(1));
+        if workers <= 1 || set.versions.len() <= 1 {
+            for v in &mut set.versions {
+                let counted = !counted_file || v.listed;
+                measure_one(
+                    &serial_cfg,
+                    strength_dir,
+                    library,
+                    program,
+                    sources,
+                    &baseline_digests,
+                    v,
+                    counted,
+                );
+            }
+        } else {
+            let ctx = StrengthContext {
+                config: &serial_cfg,
                 strength_dir,
                 library,
                 program,
                 sources,
-                &baseline_digests,
-                v,
-                counted,
-            );
+                baseline_digests: &baseline_digests,
+                counted_file,
+            };
+            let len = set.versions.len();
+            let next_idx = AtomicUsize::new(0);
+            let slots: Mutex<Vec<Option<Version>>> = Mutex::new((0..len).map(|_| None).collect());
+            let base_versions = &set.versions;
+            let work_loop = || {
+                loop {
+                    let idx = next_idx.fetch_add(1, Ordering::Relaxed);
+                    if idx >= len {
+                        break;
+                    }
+                    let measured = measure_version(&ctx, &base_versions[idx]);
+                    if let Ok(mut guard) = slots.lock() {
+                        guard[idx] = Some(measured);
+                    }
+                }
+            };
+            std::thread::scope(|s| {
+                for _ in 1..workers {
+                    let _ = std::thread::Builder::new()
+                        .name("mo-strength-worker".to_string())
+                        .stack_size(MO_SOURCE_STACK_SIZE as usize)
+                        .spawn_scoped(s, work_loop);
+                }
+                work_loop();
+            });
+            let collected = match slots.into_inner() {
+                Ok(v) => v,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            for (dst, slot) in set.versions.iter_mut().zip(collected) {
+                if let Some(m) = slot {
+                    *dst = m;
+                }
+            }
         }
     }
-    let written = render_strength(strength_dir, config.json, &set, original)
+    let mut written = render_strength(strength_dir, config.json, &set, original)
         .is_some_and(|buf| output.write_all(&buf).is_ok() && output.flush().is_ok());
+    if written && config.json {
+        written = write_strength_events(output, strength_dir, &set, original);
+    }
     if !written {
         test_report_error(
             diags,

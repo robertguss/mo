@@ -1507,6 +1507,7 @@ map of the requests it answers (section 14); `Sqlite.fake()` and
 `Sqlite.in_memory()`, an in-memory SQLite capability (section 14);
 `Command.fake(replies)`, from a map of encoded command exchanges (section 14);
 `Simulation.start(module, at)` for a test service; and
+`ApiTest.start(Module, ...)` (returning a reusable `ApiTest.App` handle),
 `ApiTest.send(Module, request, ...)` or `ApiTest.run_job(Module, name, payload,
 ...)` to dispatch an `Api.Request` or a declared background job directly
 against `Module`'s `api` block in memory with optional fake capabilities
@@ -1724,13 +1725,13 @@ exposed signature, `api` route and `cors`, and service tool changes, state schem
 authority expands or a contract fails or stops. `mo emit FILE -o OUT` checks the program as `mo check` does
 and writes its bytecode to `OUT`; `-o` is required, and a library module has no
 main to emit (E0079). `mo install FILE [--name NAME] [--bin-dir DIR] [--root DIR] [--state-dir DIR]` compiles a main program to verified bytecode and installs an executable launcher in `DIR` (`~/.local/bin` by default). `mo serve FILE --port N --data DIR [--allow-host NAME]
-[--admin-socket PATH]` runs the service `FILE` declares (section 11.5) over MCP
+[--admin-socket PATH] [--ready-file PATH]` runs the service `FILE` declares (section 11.5) over MCP
 on 127.0.0.1, with its saved state in the folder `DIR`, which must exist;
 `--allow-host` also accepts requests that give `NAME` as their host, as a proxy
 in front of it does, and `mo serve FILE [--port N] [--bind HOST] [--workers N]
-[--watch] [--data DIR]` runs an `api` server `FILE` declares (section 11.6)
+[--watch] [--data DIR] [--ready-file PATH]` runs an `api` server `FILE` declares (section 11.6)
 over concurrent HTTP/1.1 keep-alive (defaulting to `127.0.0.1`, `8` workers
-from `1` to `64`, the `api` block's `port` and `.` for `--data`), logging
+from `1` to `64`, the `api` block's `port` or an ephemeral OS port when `--port 0` is given, and `.` for `--data`; `--ready-file PATH` atomically writes JSON with `url`, `port`, `pid`, `data_dir` and `started_at` once the listener is bound and ready), logging
 sanitized request lines, pooling per-worker SQLite connections with automatic
 rollback on defect, running declared `api` background jobs (periodic `every`
 ticks and durable `arvo_jobs` queue rows with exponential-backoff retry and
@@ -1767,7 +1768,7 @@ number (section 12.5). `--only NAME` runs the one with that full name, and can b
 than once; `--in MODULE` runs one module's, still checking the whole program;
 and `--list` prints the full names without running anything. `--strength DIR`
 measures how many of the wrong versions in `DIR` the program's promises and
-examples kill, and how many any of its checks kills; it takes no `--only`, `--in`, `--list` or `--calls`. A selection that
+examples kill, and how many any of its checks kills; it takes no `--only`, `--in`, `--list` or `--calls`. `--jobs N` (`1` to `256`, by default the host's available cores; `--jobs 1` runs serially) parallelizes `--mutants` and `--strength` across worker threads while preserving deterministic output order. A selection that
 matches nothing is a mistake in the command.
 
 Each promise runs up to `--calls` generated inputs, 200 by default, and stops
@@ -1818,7 +1819,7 @@ in the command; `mo query` exits 70 when its function stops with a bug
 `mo check --json`, `mo test --json`, `mo diff --json`, and `--json` on `mo
 replay`, `mo query` and `mo history` write one JSON object per line to standard
 output: first the format's version, then one for each error and for each
-example, promise and test run or each outcome reported, and last the totals and
+example, promise and test run or each outcome reported (including `mutant_killed`, `mutant_survived` and `mutant_summary` on `mo test --json --mutants`, and `strength_case` and `strength_summary` on `mo test --json --strength DIR`), and last the totals and
 the exit status. Within a major version of the format, every field keeps its
 name, type and meaning, and an error's code keeps its meaning; new fields and
 new kinds of object may be added, so a reader skips what it doesn't know. A
@@ -2127,7 +2128,7 @@ starts with the same lines, the first line that differs. A `send` after the
 first `receive` gives `Error(Network.Closed)`. A fake opens no connection, runs
 no TLS and reads no clock: `within` is ignored, and a fake's connections don't
 count toward the limit. The `Network` that `mo test` makes for a promise has no
-peers.
+peers. `Network.fake_scripted(scripts: List((Text, Text, List(Network.FakeReply)))) : Network` scripts an ordered queue of `Network.FakeReply` outcomes matched by `(method, url_prefix)` (`Network.Respond(response: Http.Response)`, `Network.Fail(error: NetworkError)` and `Network.TruncateAfter(bytes: Int)` closing the response stream mid-body after `bytes` payload bytes), obeying `allow_hosts` narrowing, repeating a target's final reply once exhausted, and returning `Error(Network.Refused(host: host, port: port))` for unmatched targets, and `Network.recorded_calls(network: Network) : List(Network.RecordedCall)` returns the `Network.RecordedCall(method: Text, url: Text, headers: List((Text, Text)), body: Bytes)` entries sent on a fake `Network` in order.
 
 <!-- mo-example: fragment -->
 ```mo
@@ -2370,7 +2371,7 @@ in-memory SQLite capability that touches
 no file. Opening the same path twice on one fake shares the same database, while
 distinct fakes share nothing, and escaping paths give
 `Error(Sqlite.OutsideFolder(path: path))` as on a real `Sqlite`. The `Sqlite`
-that `mo test` makes for a promise starts empty.
+that `mo test` makes for a promise starts empty. In tests, examples and promises, `db.stats() : Sqlite.QueryStats` returns `Sqlite.QueryStats(query_count: Int, exec_count: Int, statements: List(Text))` counting `query` and `run`/`execute` calls on a fake `Sqlite.Database` and recording parameterized SQL statement templates without bound parameter values, and `db.reset_stats() : Unit` clears those counters.
 
 <!-- mo-example: fragment -->
 ```mo
@@ -2408,7 +2409,7 @@ Int, location: Text)` (`301`, `302`, `303`, `307` or `308`) and
 response has `with_header(name: Text, value: Text)`, `add_header(name: Text,
 value: Text)`, `ok? : Bool`, `header(name: Text) : Option(Text)`,
 `headers_named(name: Text) : List(Text)`, `text : Text` and
-`json : Result(Json, Json.JsonError)`.
+`json : Result(Json, Json.JsonError)`. In tests, examples and promises, `ApiTest.start(Module, ...caps) : ApiTest.App` starts an opaque test capability handle for `Module`'s `api` block (synthesizing empty fakes for omitted capabilities and sharing those fake capabilities across copies and helpers), with `app.send(req: Api.Request) : Api.Response`, `app.run_job(name: Text, payload: Json) : Result(Unit, Text)`, `app.routes() : List(ApiTest.RouteSpec)` (`RouteSpec(method: Text, path_template: Text, auth_mode: Text, has_json_body?: Bool, job_names: List(Text))`) and `app.openapi_json() : Text`.
 
 **Command**, with `use Command`, runs confined external programs without a
 shell: `command.run(program: Text, args: List(Text), within: Duration) : Result(Command.Output, Command.CommandError)`
@@ -2426,10 +2427,11 @@ Landlock and seccomp. `Output(status: Int, stdout: Text, stderr: Text)` has
 the working folder by `Files`'s containment rules, and
 `command.allow_programs(programs: List(Text)) : Command` monotonically
 intersects allowed program basenames so disallowed or path-bearing names fail
-with `Error(Command.NotPermitted(program: program))`. In tests, examples and
+with `Error(Command.NotPermitted(program: program))`,
+`command.allow_loopback() : Command` permits loopback-only TCP (`127.0.0.1` and `::1`) inside Linux Landlock and seccomp confinement while keeping all non-loopback network connections blocked, and `command.spawn(program: Text, args: List(Text)) : Result(Command.Process, Command.CommandError)` starts a supervised child process capability (up to 32 open at once) supporting `proc.pid : Int`, `proc.alive? : Bool`, `proc.kill() : Result(Unit, Command.CommandError)` and `proc.wait(within: Duration) : Result(Command.Output, Command.CommandError)`, automatically killing and reaping any still-running child process tree when the last copy of `proc` is dropped. In tests, examples and
 promises, `Command.fake(Command.replies(exchanges)) : Command` answers `(Spec, Output)`
 pairs built with `Command.spec(program: Text, args: List(Text)) : Spec` and
-`spec.in_folder(folder: Text) : Spec` without spawning a process; the `Command`
+`spec.in_folder(folder: Text) : Spec` without spawning a process (for both `run` and `spawn`); the `Command`
 that `mo test` makes for a promise starts with no replies.
 
 <!-- mo-example: fragment -->

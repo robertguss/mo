@@ -94,8 +94,8 @@ The compiler front end (`mo-syntax`, `mo-check`, `mo-lower`, `mo-core`, `mo-code
 - **Enforced by:**
   - All host effects dispatch exclusively through `HOST` instructions (`crates/mo-def/defs/hostops.def`) on capability handles instantiated by `mo-cli`/`mo-service` for `main` or `api` declarations.
   - `crates/mo-bytecode/src/verify.rs` forbids non-spec functions from calling, tail-calling, or capturing spec functions, fake capability constructors, `printed`/`printed_errors`, or `fail`.
-  - Narrowing operations (`Files.within`, `ReadFiles.within`, `Files.read_only`, `Network.allow_hosts`, `Command.within`, `Command.allow_programs`) are strictly monotonic.
-  - `Connection`, `Sqlite.Database`, and `Files.File` handles can only be minted by `Network`, `Sqlite`, and `Files`; durable `service` blocks receive no capabilities at all.
+  - Narrowing operations (`Files.within`, `ReadFiles.within`, `Files.read_only`, `Network.allow_hosts`, `Command.within`, `Command.allow_programs`) are strictly monotonic; `Command` blocks all network sockets by default, while `Command.allow_loopback` permits strictly loopback TCP (`127.0.0.1` / `::1`) inside Linux Landlock and seccomp confinement and keeps non-loopback TCP and UDP blocked.
+  - `Connection`, `Sqlite.Database`, `Files.File`, and `Command.Process` handles can only be minted by `Network`, `Sqlite`, `Files`/`ReadFiles`, and `Command` (and live `Command.Process` handles kill and reap their child tree when dropped); durable `service` blocks receive no capabilities at all.
   - `Sqlite.Database` installs a per-connection SQLite authorizer blocking `ATTACH`, `DETACH`, `VACUUM INTO`, `PRAGMA temp_store*`, and extension loading, keeping temporary storage in memory.
 - **Evidence:** `crates/mo-host`, `crates/mo-bytecode`, and `crates/mo-vm` tests; `ci/check_network.py`, `ci/check_golden.py`, `ci/check_programs.py`.
 - **Not covered:** SQL statements inside an already-granted `Sqlite.Database` can still call SQLite built-ins such as `datetime('now')` or `random()` without `Clock` or `Random`.

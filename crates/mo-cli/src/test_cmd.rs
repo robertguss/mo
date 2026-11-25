@@ -19,6 +19,11 @@ use crate::identity::MO_VERSION;
 /// Builds a [`TestConfig`] from parsed CLI options.
 #[must_use]
 pub fn test_config_from_cli(cli: &Cli) -> TestConfig {
+    let jobs = if cli.jobs == 0 {
+        std::thread::available_parallelism().map_or(1, usize::from)
+    } else {
+        cli.jobs as usize
+    };
     TestConfig {
         json: cli.json,
         only: cli.only.clone(),
@@ -26,6 +31,7 @@ pub fn test_config_from_cli(cli: &Cli) -> TestConfig {
         calls: u64::from(cli.calls),
         seconds: u64::from(cli.seconds),
         sequences: u64::from(cli.sequences),
+        jobs,
         limits: cli.limits,
         door_plan: cli.door_plan,
         gated: false,
