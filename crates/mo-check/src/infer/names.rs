@@ -446,6 +446,24 @@ impl<'a> InferState<'a> {
                 }
             }
             let Some(target) = target_mod else {
+                if self.node_text(pref) == b"ApiTest" && self.node_text(name) == b"RouteSpec" {
+                    for i in 0..self.interfaces.len() {
+                        if !self.work() {
+                            return None;
+                        }
+                        let mid = ModuleId(i as u32);
+                        let lib = self.interfaces.scope(mid);
+                        if !lib.library || lib.name.as_deref() != Some("Api") {
+                            continue;
+                        }
+                        if let Some((found_ref, cnt)) = self.find_symbol_in(mid, name)
+                            && self.interfaces.symbol(found_ref).exported
+                        {
+                            return Some((found_ref, cnt));
+                        }
+                    }
+                    return None;
+                }
                 let ty_def = self.definition(pref, None);
                 if self.failed {
                     return None;
@@ -986,7 +1004,7 @@ impl<'a> InferState<'a> {
             if pref_bytes == b"Actor" {
                 return self.actor_call(node, None);
             }
-            if pref_bytes == b"ApiTest" {
+            if pref_bytes == b"ApiTest" && self.node_text(node) != b"RouteSpec" {
                 return self.apitest_call(node, None);
             }
         }

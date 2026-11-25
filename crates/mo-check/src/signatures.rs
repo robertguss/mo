@@ -508,6 +508,18 @@ impl<'a, 'd> Preparation<'a, 'd> {
         None
     }
 
+    fn api_library_symbol(&self, member: &[u8]) -> Option<SymRef> {
+        for (i, lib) in self.interfaces.scopes.iter().enumerate() {
+            if !lib.library || lib.name.as_deref() != Some("Api") {
+                continue;
+            }
+            let idx = lib.find_symbol_index(member)?;
+            let sym = lib.symbol(idx);
+            return sym.exported.then_some(SymRef::new(ModuleId(i as u32), idx));
+        }
+        None
+    }
+
     fn module_member(
         &mut self,
         scope: &ModuleScope,
@@ -515,6 +527,9 @@ impl<'a, 'd> Preparation<'a, 'd> {
         prefix: &[u8],
         member: &[u8],
     ) -> Result<Option<SymRef>, ()> {
+        if prefix == b"ApiTest" && member == b"RouteSpec" {
+            return Ok(self.api_library_symbol(b"RouteSpec"));
+        }
         let Some(used) = scope.find_alias(prefix) else {
             if prefix == b"Sqlite" {
                 return Ok(self.sqlite_library_symbol(member));
@@ -818,6 +833,8 @@ impl<'a, 'd> Preparation<'a, 'd> {
                 };
             } else if lhs == b"Files" && rhs == b"File" {
                 ty_name = Some("Files.File".to_owned());
+            } else if lhs == b"ApiTest" && rhs == b"App" {
+                ty_name = Some("ApiTest.App".to_owned());
             }
         }
 

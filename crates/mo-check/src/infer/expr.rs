@@ -833,7 +833,8 @@ impl<'a> InferState<'a> {
         let c0_bytes = self.node_text(c0);
         let simulation = qualified && c0_bytes == b"Simulation";
         let actor_op = qualified && c0_bytes == b"Actor";
-        let apitest = qualified && c0_bytes == b"ApiTest";
+        let apitest =
+            qualified && c0_bytes == b"ApiTest" && self.node_text(name_nid) != b"RouteSpec";
         let start_call_args = children
             .get(start)
             .copied()
@@ -1019,6 +1020,7 @@ impl<'a> InferState<'a> {
                         if let (Some(args_nid), Some(site_nid)) = (args, site)
                             && self.node(args_nid).children.is_empty()
                             && self.receiver_only(method_ty)
+                            && !self.allows_empty_dot_parens(&method)
                             && !self.empty_dot_call(site_nid)
                         {
                             return InferValue::none();

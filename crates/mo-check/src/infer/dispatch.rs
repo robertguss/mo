@@ -61,6 +61,7 @@ impl<'a> InferState<'a> {
             && arguments.is_some()
             && count == 0
             && self.receiver_only(selected_ty)
+            && !self.allows_empty_dot_parens(&selected)
             && let Some(site) = call_nid
         {
             return self.empty_dot_call(site);

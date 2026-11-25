@@ -585,6 +585,105 @@ impl<'a> InferState<'a> {
                 }
                 return InferValue::none();
             }
+            if ty_name == "ApiTest.App" {
+                let op_info = match nbytes {
+                    b"send" => Some(("ApiTest.App.send", 3usize)),
+                    b"run_job" => Some(("ApiTest.App.run_job", 4usize)),
+                    b"routes" => Some(("ApiTest.App.routes", 2usize)),
+                    b"openapi_json" => Some(("ApiTest.App.openapi_json", 2usize)),
+                    _ => None,
+                };
+                if let Some((native_name, fn_arity)) = op_info {
+                    let Some(fn_term) = self.make_type(TermShape {
+                        kind: SourceTypeKind::Function,
+                        name: "fn".to_string(),
+                        module: None,
+                        owner: TypeOwner::None,
+                        arity: fn_arity,
+                    }) else {
+                        return InferValue::none();
+                    };
+                    if let Some(args_mut) = self.terms[fn_term.index()].arguments.as_mut() {
+                        args_mut[0] = ty;
+                    }
+                    match nbytes {
+                        b"send" => {
+                            let Some(req_src) = self.find_lib_type("Api", "Request") else {
+                                return InferValue::none();
+                            };
+                            let Some(res_src) = self.find_lib_type("Api", "Response") else {
+                                return InferValue::none();
+                            };
+                            let Some(req_term) = self.annotation(req_src, None, 0) else {
+                                return InferValue::none();
+                            };
+                            let Some(res_term) = self.annotation(res_src, None, 0) else {
+                                return InferValue::none();
+                            };
+                            if let Some(args_mut) = self.terms[fn_term.index()].arguments.as_mut() {
+                                args_mut[1] = req_term;
+                                args_mut[2] = res_term;
+                            }
+                        }
+                        b"run_job" => {
+                            let Some(json_src) = self.find_lib_type("Json", "Json") else {
+                                return InferValue::none();
+                            };
+                            let Some(text_term) = self.native("Text", 0) else {
+                                return InferValue::none();
+                            };
+                            let Some(unit_term) = self.native("Unit", 0) else {
+                                return InferValue::none();
+                            };
+                            let Some(json_term) = self.annotation(json_src, None, 0) else {
+                                return InferValue::none();
+                            };
+                            let Some(res_term) = self.native("Result", 2) else {
+                                return InferValue::none();
+                            };
+                            if let Some(r_args) = self.terms[res_term.index()].arguments.as_mut() {
+                                r_args[0] = unit_term;
+                                r_args[1] = text_term;
+                            }
+                            if let Some(args_mut) = self.terms[fn_term.index()].arguments.as_mut() {
+                                args_mut[1] = text_term;
+                                args_mut[2] = json_term;
+                                args_mut[3] = res_term;
+                            }
+                        }
+                        b"routes" => {
+                            let Some(rs_src) = self.find_lib_type("Api", "RouteSpec") else {
+                                return InferValue::none();
+                            };
+                            let Some(rs_term) = self.annotation(rs_src, None, 0) else {
+                                return InferValue::none();
+                            };
+                            let Some(list_term) = self.native("List", 1) else {
+                                return InferValue::none();
+                            };
+                            if let Some(l_args) = self.terms[list_term.index()].arguments.as_mut() {
+                                l_args[0] = rs_term;
+                            }
+                            if let Some(args_mut) = self.terms[fn_term.index()].arguments.as_mut() {
+                                args_mut[1] = list_term;
+                            }
+                        }
+                        _ => {
+                            let Some(text_term) = self.native("Text", 0) else {
+                                return InferValue::none();
+                            };
+                            if let Some(args_mut) = self.terms[fn_term.index()].arguments.as_mut() {
+                                args_mut[1] = text_term;
+                            }
+                        }
+                    }
+                    let out = self.graph(InferValue::with_type(fn_term), 0);
+                    if let Some(gid) = out.graph {
+                        self.emitted[gid.index()].native = Some(native_name.to_string());
+                    }
+                    return out;
+                }
+            }
             let module = if ty_name == "Sqlite.Database" {
                 "Sqlite"
             } else if ty_name == "Files.File" {
@@ -752,6 +851,11 @@ impl<'a> InferState<'a> {
                     "Simulation operations are called through the module, as in \
                      Simulation.crash(sim), not as dot calls (reference 12.4).",
                 );
+            } else if self.named(ty, "ApiTest.App") {
+                habit = Some(
+                    "ApiTest.App's operations are app.send(req), app.run_job(name, payload), \
+                     app.routes() and app.openapi_json().",
+                );
             }
             let span = self.node(name).span;
             let _ = self.problem(
@@ -865,6 +969,23 @@ impl<'a> InferState<'a> {
         !t.variable && t.shape.kind == SourceTypeKind::Function && t.shape.arity == 2
     }
 
+    pub(crate) fn allows_empty_dot_parens(&self, resolved: &InferValue) -> bool {
+        let Some(gid) = resolved.graph else {
+            return false;
+        };
+        matches!(
+            self.emitted[gid.index()].native.as_deref(),
+            Some(
+                "ApiTest.App.routes"
+                    | "ApiTest.App.openapi_json"
+                    | "Sqlite.stats"
+                    | "Sqlite.reset_stats"
+                    | "Command.allow_loopback"
+                    | "Command.kill"
+            )
+        )
+    }
+
     pub(crate) fn empty_dot_call(&mut self, site: NodeId) -> bool {
         let span = self.node(site).span;
         let _ = self.problem(
@@ -959,6 +1080,7 @@ impl<'a> InferState<'a> {
         if let (Some(args_nid), Some(site_nid)) = (args, site)
             && self.node(args_nid).children.is_empty()
             && self.receiver_only(res_ty)
+            && !self.allows_empty_dot_parens(&resolved)
             && !self.empty_dot_call(site_nid)
         {
             return InferValue::none();
@@ -1793,16 +1915,18 @@ impl<'a> InferState<'a> {
 
     pub(crate) fn apitest_call(&mut self, name: NodeId, args: Option<NodeId>) -> InferValue {
         let nbytes = self.node_text(name);
+        let is_start = nbytes == b"start";
         let is_send = nbytes == b"send";
         let is_job = nbytes == b"run_job";
-        if !is_send && !is_job {
+        if !is_start && !is_send && !is_job {
             let span = self.node(name).span;
             let _ = self.problem(
                 ErrorCode::NameUnknown,
                 span,
                 UNKNOWN_MEMBER_MSG,
                 Some(
-                    "ApiTest's operations are send(Module, req, ...capabilities) and \
+                    "ApiTest's operations are start(Module, ...capabilities), \
+                     send(Module, req, ...capabilities) and \
                      run_job(Module, name, payload, ...capabilities).",
                 ),
                 None,
@@ -1814,12 +1938,16 @@ impl<'a> InferState<'a> {
             let _ = self.problem(
                 ErrorCode::CallArguments,
                 span,
-                if is_send {
+                if is_start {
+                    "ApiTest.start needs a direct call"
+                } else if is_send {
                     "ApiTest.send needs a direct call"
                 } else {
                     "ApiTest.run_job needs a direct call"
                 },
-                Some(if is_send {
+                Some(if is_start {
+                    "Call ApiTest.start(Module) directly."
+                } else if is_send {
                     "Call ApiTest.send(Module, req) directly."
                 } else {
                     "Call ApiTest.run_job(Module, name, payload) directly."
@@ -1842,7 +1970,13 @@ impl<'a> InferState<'a> {
             );
             return InferValue::none();
         }
-        let min_args = if is_job { 3usize } else { 2usize };
+        let min_args = if is_job {
+            3usize
+        } else if is_send {
+            2usize
+        } else {
+            1usize
+        };
         let arg_children = self.node(args_nid).children.clone();
         let arg_count = arg_children.len();
         if arg_count < min_args {
@@ -1850,12 +1984,16 @@ impl<'a> InferState<'a> {
             let _ = self.problem(
                 ErrorCode::CallArguments,
                 span,
-                if is_send {
+                if is_start {
+                    "ApiTest.start needs a module"
+                } else if is_send {
                     "ApiTest.send needs a module and a Request"
                 } else {
                     "ApiTest.run_job needs a module, job name and Json payload"
                 },
-                Some(if is_send {
+                Some(if is_start {
+                    "Write ApiTest.start(Module) with optional fake capabilities."
+                } else if is_send {
                     "Write ApiTest.send(Module, req) with optional fake capabilities."
                 } else {
                     "Write ApiTest.run_job(Module, \"job.name\", payload) with optional fake \
@@ -1915,7 +2053,9 @@ impl<'a> InferState<'a> {
             let _ = self.problem(
                 ErrorCode::ApiBlock,
                 span,
-                if is_send {
+                if is_start {
+                    "ApiTest.start must name an api module"
+                } else if is_send {
                     "ApiTest.send must name an api module"
                 } else {
                     "ApiTest.run_job must name an api module"
@@ -1932,7 +2072,35 @@ impl<'a> InferState<'a> {
             return InferValue::none();
         }
 
-        let mut out = if is_send {
+        let mut out = if is_start {
+            if self.find_lib_type("Api", "Request").is_none()
+                || self.find_lib_type("Api", "Response").is_none()
+                || self.find_lib_type("Api", "RouteSpec").is_none()
+                || self.find_lib_type("Json", "Json").is_none()
+            {
+                let span = self.node(name).span;
+                let _ = self.problem(
+                    ErrorCode::ImportMissing,
+                    span,
+                    "ApiTest.start needs the Api and Json library modules",
+                    Some("Load the program with the standard library enabled."),
+                    None,
+                );
+                return InferValue::none();
+            }
+            let Some(app_term) = self.native("ApiTest.App", 0) else {
+                return InferValue::none();
+            };
+            let o = self.graph(InferValue::with_type(app_term), arg_count - 1);
+            if o.ty.is_none() {
+                return o;
+            }
+            if let Some(gid) = o.graph {
+                self.emitted[gid.index()].native = Some("ApiTest.start".to_string());
+                self.emitted[gid.index()].service = Some(CheckedServiceId(api_idx as u32));
+            }
+            o
+        } else if is_send {
             let Some(req_src) = self.find_lib_type("Api", "Request") else {
                 let span = self.node(name).span;
                 let _ = self.problem(

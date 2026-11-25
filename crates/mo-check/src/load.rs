@@ -1860,6 +1860,9 @@ impl<'s, 'd> Loader<'s, 'd> {
                     }
                 }
             }
+            if self.items[i].name != "Api" && syntax_mentions_apitest(&module.tree) {
+                has_api = true;
+            }
             if self.items[i].name != "Sqlite" && syntax_mentions_sqlite(&module.tree) {
                 has_sqlite = true;
             }
@@ -2264,6 +2267,17 @@ pub fn load_program_sources(
     let set = if ok { loader.parse_modules() } else { None };
     diags.sort();
     set
+}
+
+fn syntax_mentions_apitest(tree: &SyntaxTree) -> bool {
+    for idx in 0..tree.node_count() {
+        let nid = NodeId(idx as u32);
+        let node = tree.node(nid);
+        if node.kind == SyntaxKind::CapName && tree.node_text(nid) == Some(b"ApiTest") {
+            return true;
+        }
+    }
+    false
 }
 
 fn syntax_mentions_sqlite(tree: &SyntaxTree) -> bool {

@@ -72,6 +72,53 @@ fn applied_name(p: &mut Lowering<'_>, mut name: String, types: &[TyId]) -> Lower
     p.concat_text(&name, ")", "")
 }
 
+pub(crate) fn lower_api_app_parts(p: &mut Lowering<'_>) -> LowerResult<[TyId; 4]> {
+    let req_src = crate::apis::lib_data_source(p, "Api", "Request")?;
+    let res_src = crate::apis::lib_data_source(p, "Api", "Response")?;
+    let rs_src = crate::apis::lib_data_source(p, "Api", "RouteSpec")?;
+    let json_src = crate::apis::lib_data_source(p, "Json", "Json")?;
+    let rs_ty = lower_type(p, rs_src, None)?;
+    let _ = lower_ctors(p, rs_ty)?;
+
+    let text_src = p.types_overlay.builtin("Text");
+    let unit_src = p.types_overlay.builtin("Unit");
+    let res_unit_text_src = p
+        .types_overlay
+        .builtin_applied("Result", vec![unit_src, text_src]);
+    let list_rs_src = p.types_overlay.builtin_applied("List", vec![rs_src]);
+
+    let make_fn_src = |p: &mut Lowering<'_>, args: Vec<TypeId>| -> TypeId {
+        let mut h = 0u32;
+        for &a in &args {
+            let ah = p.source_type(a).height;
+            if h <= ah {
+                h = ah + 1;
+            }
+        }
+        p.types_overlay.alloc(SourceType {
+            kind: SourceTypeKind::Function,
+            name: "fn".to_string(),
+            module: None,
+            owner: mo_check::TypeOwner::None,
+            arguments: args,
+            height: h,
+            parameters: 0,
+        })
+    };
+
+    let send_src = make_fn_src(p, vec![req_src, res_src]);
+    let job_src = make_fn_src(p, vec![text_src, json_src, res_unit_text_src]);
+    let routes_src = make_fn_src(p, vec![list_rs_src]);
+    let openapi_src = make_fn_src(p, vec![text_src]);
+
+    Ok([
+        lower_type(p, send_src, None)?,
+        lower_type(p, job_src, None)?,
+        lower_type(p, routes_src, None)?,
+        lower_type(p, openapi_src, None)?,
+    ])
+}
+
 fn make_type(p: &mut Lowering<'_>, source_id: TypeId, args: &[TyId]) -> LowerResult<TyId> {
     p.charge_alloc(1, 96, 8)?;
     let source = p.source_type(source_id).clone();
@@ -108,6 +155,10 @@ fn make_type(p: &mut Lowering<'_>, source_id: TypeId, args: &[TyId]) -> LowerRes
                 let qual = p.concat_text(&mod_name, ".", &source.name)?;
                 let full = applied_name(p, qual, args)?;
                 (Ty::Data(full.clone()), full)
+            } else if source.name == "ApiTest.App" {
+                let parts = lower_api_app_parts(p)?.to_vec();
+                let full = applied_name(p, String::new(), &parts)?;
+                (Ty::Tuple(parts), full)
             } else {
                 let base_name = p.copy_text(&source.name)?;
                 let full = applied_name(p, base_name, args)?;
@@ -186,7 +237,15 @@ fn make_type(p: &mut Lowering<'_>, source_id: TypeId, args: &[TyId]) -> LowerRes
 
     let is_data = matches!(ty, Ty::Data(_));
     let mut height = 0u32;
-    if !is_data {
+    if let Ty::Tuple(ref tuple_parts) = ty {
+        for &part in tuple_parts {
+            p.work(1)?;
+            let part_h = p.core_types[part.0 as usize].height;
+            if height <= part_h {
+                height = part_h + 1;
+            }
+        }
+    } else if !is_data {
         for &arg in args {
             p.work(1)?;
             let arg_h = p.core_types[arg.0 as usize].height;

@@ -2,6 +2,7 @@
 module Api
 expose Request(..),
 Response(..),
+RouteSpec(..),
 request,
 get,
 post,
@@ -83,6 +84,15 @@ struct Response
   status: Int
   headers: List((Text, Text))
   body: Bytes
+end
+
+## Metadata describing one declared route on an `api` block.
+struct RouteSpec
+  method: Text
+  path_template: Text
+  auth_mode: Text
+  has_json_body?: Bool
+  job_names: List(Text)
 end
 
 fn hex_nibble(b: Int) : Option(Int)

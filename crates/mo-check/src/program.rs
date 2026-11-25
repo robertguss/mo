@@ -967,7 +967,7 @@ fn check_program_inner(
             for (j, &cap_name) in CAPABILITY_NAMES.iter().enumerate() {
                 if !matches!(
                     cap_name,
-                    "Simulation" | "Connection" | "Sqlite.Database" | "Files.File"
+                    "Simulation" | "Connection" | "Sqlite.Database" | "Files.File" | "ApiTest.App"
                 ) && pt.is_builtin_named(cap_name)
                 {
                     cap_bit = 1u32 << j;

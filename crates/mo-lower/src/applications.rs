@@ -21,7 +21,7 @@ use crate::abilities::{
     lower_compare, lower_from_json, lower_json_decode_call, lower_json_schema,
     lower_sqlite_decode_call, lower_to_json,
 };
-use crate::apis::{lower_apitest_run_job, lower_apitest_send};
+use crate::apis::{lower_apitest_run_job, lower_apitest_send, lower_apitest_start};
 use crate::context::{LowerResult, UNSET_EXPR};
 use crate::cps::{BodyLowerer, ContinuationKind};
 use crate::scalar::{lower_error_text, lower_operator, lower_to_text};
@@ -342,16 +342,39 @@ pub(crate) fn lower_cps_application(
 
     // 2. Native / built-in operations
     if let Some(native) = r.native.as_deref() {
-        // ApiTest.send / ApiTest.run_job
-        if native == "ApiTest.send" || native == "ApiTest.run_job" {
+        // ApiTest.start / ApiTest.send / ApiTest.run_job / ApiTest.App.*
+        if native == "ApiTest.start" || native == "ApiTest.send" || native == "ApiTest.run_job" {
             let arg_types: Vec<mo_check::TypeId> =
                 r.operands.iter().map(|&op| b.row(op).ty).collect();
             let api_idx = r.service.map_or(0, |s| s.0 as usize);
-            return if native == "ApiTest.send" {
+            return if native == "ApiTest.start" {
+                let caller_name = b.meta_name.clone();
+                lower_apitest_start(b.p, api_idx, args, &arg_types, &caller_name)
+            } else if native == "ApiTest.send" {
                 lower_apitest_send(b.p, api_idx, args, &arg_types)
             } else {
                 lower_apitest_run_job(b.p, api_idx, args, &arg_types)
             };
+        }
+        if let Some(app_op) = native.strip_prefix("ApiTest.App.") {
+            let slot = match app_op {
+                "send" => 0,
+                "run_job" => 1,
+                "routes" => 2,
+                "openapi_json" => 3,
+                _ => {
+                    return b
+                        .p
+                        .refuse(ErrorCode::LowerUnfinished, "unknown ApiTest.App operation");
+                }
+            };
+            let func = b.p.expr_proj(args[0], slot)?;
+            let call_args = args[1..].to_vec();
+            b.p.charge_alloc(call_args.len(), 8, 8)?;
+            return b.p.alloc_expr(Expr::App {
+                func,
+                args: call_args,
+            });
         }
 
         // Simulation.*
