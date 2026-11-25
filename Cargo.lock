@@ -505,6 +505,7 @@ dependencies = [
  "mo-service",
  "mo-syntax",
  "mo-test",
+ "mo-upgrade",
  "mo-vm",
  "rustix",
  "sha2",
@@ -673,6 +674,28 @@ dependencies = [
  "mo-syntax",
  "mo-vm",
  "sha2",
+]
+
+[[package]]
+name = "mo-upgrade"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "mo-base",
+ "mo-bytecode",
+ "mo-check",
+ "mo-codegen",
+ "mo-core",
+ "mo-def",
+ "mo-heap",
+ "mo-host",
+ "mo-lower",
+ "mo-prim",
+ "mo-service",
+ "mo-syntax",
+ "mo-test",
+ "mo-vm",
+ "rustix",
 ]
 
 [[package]]

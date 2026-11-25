@@ -12,7 +12,7 @@ use mo_base::{
     render_diagnostic_default,
 };
 use mo_def::ErrorCode;
-use mo_def::limits::MO_LIMIT_UPGRADE_COMPILE_WALL_US;
+use mo_def::limits::{MO_LIMIT_CHECK_WALL_US, MO_LIMIT_UPGRADE_COMPILE_WALL_US};
 
 const UNICODE_METRICS: DisplayMetrics = DisplayMetrics {
     next_grapheme: mo_prim::unicode16::next_grapheme_bytes,
@@ -111,14 +111,23 @@ pub fn confine_self_for_bundle(work_dir: &Path, library: Option<&Path>) {
     }
 }
 
-/// Nonblocking background compilation job spawned by live upgrade commit (`struct compile_job`).
+/// Nonblocking background compilation (+ optional door-check) job spawned by live upgrade
+/// (`struct compile_job`).
 pub struct CompileJob {
     work_dir: PathBuf,
+    executable: PathBuf,
+    library: Option<PathBuf>,
+    source_path: PathBuf,
+    old_path: Option<PathBuf>,
+    ctx_path: Option<PathBuf>,
     output_bc: PathBuf,
     output_ctx: PathBuf,
     diag_file: PathBuf,
+    check_diag_file: PathBuf,
     child: Child,
     deadline: Instant,
+    run_checks: bool,
+    checking: bool,
     bundle: Vec<u8>,
     build_digest: [u8; 32],
     ordinal: u64,
@@ -126,17 +135,18 @@ pub struct CompileJob {
 
 /// Poll state of a running [`CompileJob`].
 pub enum CompilePoll {
-    /// Still compiling.
+    /// Still compiling or running door checks.
     Running,
-    /// Finished with either a compiled [`UpgradeImage`] or an error message/code.
-    Finished(Box<Result<UpgradeImage, (u16, String, String)>>),
+    /// Finished with either a compiled [`UpgradeImage`] or `(code, class, message)`.
+    Finished(Box<Result<UpgradeImage, (u16, &'static str, String)>>),
 }
 
 impl CompileJob {
-    /// Starts an asynchronous child compile (`<exe> emit --bundle ...`) in a private temp dir.
+    /// Starts an asynchronous child compile (`<exe> emit --bundle ...`) in a private temp dir,
+    /// followed by `<exe> test --bundle ...` when `run_checks` is `true`.
     #[expect(
         clippy::too_many_arguments,
-        reason = "spawning a compile child requires executable, library, bundle, old/migration/context inputs, and identity"
+        reason = "spawning a compile child requires executable, library, bundle, old/migration/context inputs, check flag, and identity"
     )]
     pub fn start(
         executable: &Path,
@@ -145,6 +155,7 @@ impl CompileJob {
         old_bundle: Option<&[u8]>,
         migration: Option<&str>,
         context: Option<&[u8]>,
+        run_checks: bool,
         build_digest: [u8; 32],
         ordinal: u64,
     ) -> Result<Self, String> {
@@ -160,6 +171,7 @@ impl CompileJob {
         let output_bc = work_dir.join("candidate.bc");
         let output_ctx = work_dir.join("candidate.bc.context");
         let diag_file = work_dir.join("diagnostics.txt");
+        let check_diag_file = work_dir.join("check-diagnostics.txt");
 
         let mut cmd = Command::new(executable);
         cmd.arg("emit")
@@ -170,19 +182,25 @@ impl CompileJob {
         if let Some(lib) = library {
             cmd.arg("--lib").arg(lib);
         }
-        if let Some(old) = old_bundle {
-            let old_path = work_dir.join("old.mosb");
-            fs::write(&old_path, old).map_err(|e| format!("write old bundle: {e}"))?;
-            cmd.arg("--old-bundle").arg(&old_path);
-        }
+        let old_path = if let Some(old) = old_bundle {
+            let p = work_dir.join("old.mosb");
+            fs::write(&p, old).map_err(|e| format!("write old bundle: {e}"))?;
+            cmd.arg("--old-bundle").arg(&p);
+            Some(p)
+        } else {
+            None
+        };
         if let Some(mig) = migration.filter(|m| !m.is_empty()) {
             cmd.arg("--migrate").arg(mig);
         }
-        if let Some(ctx) = context {
-            let ctx_path = work_dir.join("context.mocc");
-            fs::write(&ctx_path, ctx).map_err(|e| format!("write context: {e}"))?;
-            cmd.arg("--context").arg(&ctx_path);
-        }
+        let ctx_path = if let Some(ctx) = context {
+            let p = work_dir.join("context.mocc");
+            fs::write(&p, ctx).map_err(|e| format!("write context: {e}"))?;
+            cmd.arg("--context").arg(&p);
+            Some(p)
+        } else {
+            None
+        };
         let err_handle =
             fs::File::create(&diag_file).map_err(|e| format!("create diag file: {e}"))?;
         cmd.stdin(Stdio::null())
@@ -195,89 +213,168 @@ impl CompileJob {
         let deadline = Instant::now() + Duration::from_micros(MO_LIMIT_UPGRADE_COMPILE_WALL_US);
         Ok(Self {
             work_dir,
+            executable: executable.to_path_buf(),
+            library: library.map(Path::to_path_buf),
+            source_path,
+            old_path,
+            ctx_path,
             output_bc,
             output_ctx,
             diag_file,
+            check_diag_file,
             child,
             deadline,
+            run_checks,
+            checking: false,
             bundle,
             build_digest,
             ordinal,
         })
     }
 
-    /// Nonblocking poll of the child compiler process.
+    fn start_check_stage(&mut self) -> Result<(), String> {
+        let mut cmd = Command::new(&self.executable);
+        cmd.arg("test").arg(&self.source_path).arg("--bundle");
+        if let Some(ref lib) = self.library {
+            cmd.arg("--lib").arg(lib);
+        }
+        if let Some(ref old_p) = self.old_path {
+            cmd.arg("--old-bundle").arg(old_p);
+        }
+        if let Some(ref ctx_p) = self.ctx_path {
+            cmd.arg("--context").arg(ctx_p);
+        }
+        let err_handle = fs::File::create(&self.check_diag_file)
+            .map_err(|e| format!("create check diag file: {e}"))?;
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::from(err_handle));
+        self.child = cmd.spawn().map_err(|e| format!("spawn check child: {e}"))?;
+        self.checking = true;
+        self.deadline = Instant::now() + Duration::from_micros(MO_LIMIT_CHECK_WALL_US);
+        Ok(())
+    }
+
+    /// Nonblocking poll of the child compiler/check process.
     pub fn poll(&mut self) -> CompilePoll {
         match self.child.try_wait() {
             Ok(None) => {
                 if Instant::now() >= self.deadline {
                     let _ = self.child.kill();
                     let _ = self.child.wait();
-                    return CompilePoll::Finished(Box::new(Err((
-                        ErrorCode::UpgradeCompileBudget as u16,
-                        "candidate compilation exceeded its time limit".to_string(),
-                        String::new(),
-                    ))));
+                    return if self.checking {
+                        CompilePoll::Finished(Box::new(Err((
+                            ErrorCode::PlanUnfinished as u16,
+                            "check",
+                            "the checks did not finish inside their limits".to_string(),
+                        ))))
+                    } else {
+                        CompilePoll::Finished(Box::new(Err((
+                            ErrorCode::UpgradeCompileBudget as u16,
+                            "budget",
+                            "candidate compilation exceeded its time limit".to_string(),
+                        ))))
+                    };
                 }
                 CompilePoll::Running
             }
             Ok(Some(status)) => {
-                let diag = fs::read_to_string(&self.diag_file).unwrap_or_default();
                 if !status.success() {
-                    let code = if status.code() == Some(70) {
-                        ErrorCode::UpgradeRecordedCompile as u16
+                    let diag_path = if self.checking {
+                        &self.check_diag_file
+                    } else {
+                        &self.diag_file
+                    };
+                    let raw = fs::read_to_string(diag_path).unwrap_or_default();
+                    let detail = raw.trim();
+                    if self.checking {
+                        let code = if detail.contains("E1433:") {
+                            ErrorCode::ChecksFailed as u16
+                        } else {
+                            ErrorCode::PlanUnfinished as u16
+                        };
+                        let msg = detail
+                            .strip_prefix("error E1433: ")
+                            .or_else(|| detail.strip_prefix("error E1432: "))
+                            .unwrap_or(if detail.is_empty() {
+                                "the checks did not finish inside their limits"
+                            } else {
+                                detail
+                            });
+                        return CompilePoll::Finished(Box::new(Err((
+                            code,
+                            "check",
+                            msg.to_string(),
+                        ))));
+                    }
+                    let code = if detail.contains("E1422:") {
+                        ErrorCode::UpgradeMigrationSignature as u16
                     } else {
                         ErrorCode::UpgradeCompileDiagnostic as u16
                     };
-                    return CompilePoll::Finished(Box::new(Err((
-                        code,
-                        "candidate source failed to compile".to_string(),
-                        diag,
-                    ))));
+                    let msg = if detail.is_empty() {
+                        "compiler child failed or exceeded its budget".to_string()
+                    } else {
+                        detail.to_string()
+                    };
+                    return CompilePoll::Finished(Box::new(Err((code, "compile", msg))));
                 }
+
+                // Stage 1 succeeded; launch Stage 2 (`mo test --bundle`) if requested!
+                if self.run_checks && !self.checking {
+                    if let Err(msg) = self.start_check_stage() {
+                        return CompilePoll::Finished(Box::new(Err((
+                            ErrorCode::PlanUnfinished as u16,
+                            "check",
+                            msg,
+                        ))));
+                    }
+                    return CompilePoll::Running;
+                }
+
                 let Ok(wire) = fs::read(&self.output_bc) else {
                     return CompilePoll::Finished(Box::new(Err((
                         ErrorCode::UpgradeCompileDiagnostic as u16,
+                        "compile",
                         "compiled candidate bytecode could not be read".to_string(),
-                        diag,
                     ))));
                 };
                 let Ok(ctx_bytes) = fs::read(&self.output_ctx) else {
                     return CompilePoll::Finished(Box::new(Err((
                         ErrorCode::UpgradeCompileDiagnostic as u16,
+                        "compile",
                         "compiled candidate context could not be read".to_string(),
-                        diag,
                     ))));
                 };
                 let Some(ctx) = read_compile_context(&ctx_bytes) else {
                     return CompilePoll::Finished(Box::new(Err((
-                        ErrorCode::UpgradeInvalidValue as u16,
-                        "compiled candidate context is invalid".to_string(),
-                        diag,
+                        ErrorCode::UpgradeCompileDiagnostic as u16,
+                        "compile",
+                        "compiler context failed validation".to_string(),
                     ))));
                 };
                 let Some(meta_bytes) = ctx.metadata.as_deref() else {
                     return CompilePoll::Finished(Box::new(Err((
-                        ErrorCode::UpgradeInvalidValue as u16,
+                        ErrorCode::UpgradeCompileDiagnostic as u16,
+                        "compile",
                         "compiled candidate metadata is missing".to_string(),
-                        diag,
                     ))));
                 };
                 let Some(meta) = crate::binary::compile_context::read_compile_metadata(meta_bytes)
                 else {
                     return CompilePoll::Finished(Box::new(Err((
-                        ErrorCode::UpgradeInvalidValue as u16,
+                        ErrorCode::UpgradeCompileDiagnostic as u16,
+                        "compile",
                         "compiled candidate metadata is invalid".to_string(),
-                        diag,
                     ))));
                 };
                 let (image, service) = match load_service_image(&wire, mo_vm::Limits::default()) {
                     Ok(v) => v,
                     Err(msg) => {
                         return CompilePoll::Finished(Box::new(Err((
-                            ErrorCode::UpgradeRecordedCompile as u16,
+                            ErrorCode::UpgradeCompileDiagnostic as u16,
+                            "compile",
                             msg,
-                            diag,
                         ))));
                     }
                 };
@@ -301,8 +398,8 @@ impl CompileJob {
             }
             Err(e) => CompilePoll::Finished(Box::new(Err((
                 ErrorCode::UpgradeCompileDiagnostic as u16,
+                "compile",
                 format!("compiler child wait failed: {e}"),
-                String::new(),
             )))),
         }
     }
@@ -430,7 +527,11 @@ pub fn execute_emit_bundle(
 }
 
 /// Synchronously compiles a bundle in-process into an [`UpgradeImage`] (used by `mo serve`
-/// startup and `mo check --upgrade-from`).
+/// startup, `mo check --upgrade-from`, and `mo rehearse`).
+///
+/// Maps compiler diagnostic errors to `E1419` (`UpgradeCompileDiagnostic`), preserving
+/// `E1422` (`UpgradeMigrationSignature`), `E1427` (`UpgradeTimerInterval`), and `E1429`
+/// (`UpgradeRecordedCompile` for initializer failure) matching `src/tools/upgrade.c:243-261`.
 #[expect(
     clippy::too_many_arguments,
     reason = "synchronous bundle compile forwards all inputs and populates UpgradeReport"
@@ -458,14 +559,18 @@ pub fn compile_image_sync(
         &mut sources,
     );
     let Some(mut res) = compiled else {
-        let code = diags
-            .items()
-            .first()
-            .map_or(ErrorCode::UpgradeCompileDiagnostic as u16, |d| {
-                d.code as u16
-            });
         let mut detail = String::new();
+        let mut has_mig_sig = false;
+        let mut has_init_fail = false;
+        let mut has_timer_fail = false;
         for d in diags.items() {
+            if d.code == ErrorCode::UpgradeMigrationSignature {
+                has_mig_sig = true;
+            } else if d.code == ErrorCode::UpgradeRecordedCompile {
+                has_init_fail = true;
+            } else if d.code == ErrorCode::UpgradeTimerInterval {
+                has_timer_fail = true;
+            }
             if matches!(
                 d.code,
                 ErrorCode::UpgradeRecordedCompile | ErrorCode::UpgradeTimerInterval
@@ -479,8 +584,23 @@ pub fn compile_image_sync(
                 detail.push_str(&format!("error E{:04}: {}\n", d.code as u16, d.message));
             }
         }
+        let code = if has_init_fail {
+            ErrorCode::UpgradeRecordedCompile as u16
+        } else if has_timer_fail {
+            ErrorCode::UpgradeTimerInterval as u16
+        } else if has_mig_sig {
+            ErrorCode::UpgradeMigrationSignature as u16
+        } else {
+            ErrorCode::UpgradeCompileDiagnostic as u16
+        };
+        let summary = detail.trim();
+        let msg = if summary.is_empty() {
+            "candidate source failed to compile".to_string()
+        } else {
+            summary.to_string()
+        };
         report.detail = detail;
-        report.refuse(code, "compile", "candidate source failed to compile");
+        report.refuse(code, "compile", msg);
         return None;
     };
     res.program.ordinal = ordinal;
@@ -488,6 +608,6 @@ pub fn compile_image_sync(
         image: res.image,
         service: res.service_idx,
         program: res.program,
-        schema_synthesized: false,
+        schema_synthesized: res.schema_synthesized,
     })
 }

@@ -109,6 +109,7 @@ struct UpgradeState {
     stage: Option<UploadStage>,
     touched_us: u64,
     job: Option<CompileJob>,
+    compiled_result: Option<Result<crate::upgrade::UpgradeImage, (u16, &'static str, String)>>,
     waiting_conn: Option<usize>,
     waiting_req_id_json: Option<String>,
     executable: PathBuf,
@@ -200,6 +201,7 @@ impl ProtocolServer {
                     stage: None,
                     touched_us: now.monotonic_us,
                     job: None,
+                    compiled_result: None,
                     waiting_conn: None,
                     waiting_req_id_json: None,
                     executable: cfg.executable,
@@ -2040,20 +2042,26 @@ impl ProtocolServer {
                     self.send_upgrade_report(idx, proc, id_val, &report, None, true);
                     return;
                 };
+                // Check `already_active` BEFORE stale-base so retrying an already-landed push
+                // with its original `--base` returns `already_active` (`check_upgrade_live.py:456`).
+                if active.source == cand {
+                    report.already_active = true;
+                    report.activated = true;
+                    report.class = "compatible".to_string();
+                    report.message = "candidate source is already active".to_string();
+                    self.send_upgrade_report(idx, proc, id_val, &report, None, false);
+                    return;
+                }
                 if active.source != base {
                     report.refuse(
                         ErrorCode::UpgradeStaleBase as u16,
                         "stale_base",
-                        "base source digest does not match the active program",
+                        format!(
+                            "base is not the active program {}",
+                            hex_encode(&active.source)
+                        ),
                     );
                     self.send_upgrade_report(idx, proc, id_val, &report, None, true);
-                    return;
-                }
-                if active.source == cand {
-                    report.already_active = true;
-                    report.activated = true;
-                    report.message = "candidate is already the active program".to_string();
-                    self.send_upgrade_report(idx, proc, id_val, &report, None, false);
                     return;
                 }
                 let Some(stage) = UploadStage::open(total) else {
@@ -2074,6 +2082,7 @@ impl ProtocolServer {
                 up.candidate = cand;
                 up.migration = mig.clone();
                 up.stage = Some(stage);
+                up.compiled_result = None;
                 up.touched_us = now_us;
 
                 let json = format!(
@@ -2120,8 +2129,31 @@ impl ProtocolServer {
                         up.touched_us = now_us;
                         let recvd = stage.received();
                         let total = stage.expected_total();
+                        let complete = stage.is_complete();
+                        if complete && up.job.is_none() && up.compiled_result.is_none() {
+                            let bundle = stage.bytes().to_vec();
+                            if sha256_bytes(&bundle) == up.candidate
+                                && let Some(ref active) = up.active_program
+                            {
+                                let old_bundle =
+                                    up.migration.as_ref().map(|_| active.bundle.as_slice());
+                                if let Ok(job) = CompileJob::start(
+                                    &up.executable,
+                                    up.library.as_deref(),
+                                    bundle,
+                                    old_bundle,
+                                    up.migration.as_deref(),
+                                    Some(active.context.as_slice()),
+                                    true,
+                                    self.service.build_digest(),
+                                    active.ordinal + 1,
+                                ) {
+                                    up.job = Some(job);
+                                }
+                            }
+                        }
                         let json = format!(
-                            "{{\"version\":1,\"status\":\"accepted\",\"slot\":\"{slot_s}\",\"received\":\"{recvd}\",\"total\":\"{total}\"}}"
+                            "{{\"version\":1,\"status\":\"accepted\",\"slot\":\"{slot_s}\",\"received\":\"{recvd}\",\"total\":\"{total}\",\"complete\":{complete}}}"
                         );
                         let text = format!("received {recvd}/{total} bytes");
                         self.send_upgrade_raw(idx, proc, id_val, &json, &text, false);
@@ -2147,7 +2179,7 @@ impl ProtocolServer {
                     self.send_upgrade_report(idx, proc, id_val, &report, None, true);
                     return;
                 }
-                if up.job.is_some() {
+                if up.waiting_conn.is_some() {
                     report.refuse(
                         ErrorCode::UpgradeBusy as u16,
                         "busy",
@@ -2166,6 +2198,10 @@ impl ProtocolServer {
                     return;
                 };
                 if !stage.is_complete() {
+                    up.slot = None;
+                    up.stage = None;
+                    up.migration = None;
+                    up.compiled_result = None;
                     report.refuse(
                         ErrorCode::UpgradeInvalidValue as u16,
                         "bundle",
@@ -2179,6 +2215,10 @@ impl ProtocolServer {
                 let actual_digest = sha256_bytes(&bundle);
                 report.candidate = Some(actual_digest);
                 if actual_digest != up.candidate {
+                    up.slot = None;
+                    up.stage = None;
+                    up.migration = None;
+                    up.compiled_result = None;
                     report.refuse(
                         ErrorCode::UpgradeInvalidValue as u16,
                         "bundle",
@@ -2188,6 +2228,10 @@ impl ProtocolServer {
                     return;
                 }
                 let Some(ref active) = up.active_program else {
+                    up.slot = None;
+                    up.stage = None;
+                    up.migration = None;
+                    up.compiled_result = None;
                     report.refuse(
                         ErrorCode::UpgradeSourceMismatch as u16,
                         "source",
@@ -2197,42 +2241,60 @@ impl ProtocolServer {
                     return;
                 };
                 if active.source != up.base {
+                    up.slot = None;
+                    up.stage = None;
+                    up.migration = None;
+                    up.compiled_result = None;
                     report.refuse(
                         ErrorCode::UpgradeStaleBase as u16,
                         "stale_base",
-                        "active program changed before commit",
+                        format!(
+                            "base is not the active program {}",
+                            hex_encode(&active.source)
+                        ),
                     );
                     self.send_upgrade_report(idx, proc, id_val, &report, mig_copy.as_deref(), true);
                     return;
                 }
 
-                // Spawn nonblocking compile child so primary requests stay responsive!
-                let old_bundle = up.migration.as_ref().map(|_| active.bundle.as_slice());
-                let job = match CompileJob::start(
-                    &up.executable,
-                    up.library.as_deref(),
-                    bundle,
-                    old_bundle,
-                    up.migration.as_deref(),
-                    Some(active.context.as_slice()),
-                    self.service.build_digest(),
-                    active.ordinal + 1,
-                ) {
-                    Ok(j) => j,
-                    Err(msg) => {
-                        report.refuse(ErrorCode::UpgradeCompileDiagnostic as u16, "compile", msg);
-                        self.send_upgrade_report(
-                            idx,
-                            proc,
-                            id_val,
-                            &report,
-                            mig_copy.as_deref(),
-                            true,
-                        );
-                        return;
-                    }
-                };
-                up.job = Some(job);
+                // Start compile job if not already started on last page (or consume ready result).
+                if up.job.is_none() && up.compiled_result.is_none() {
+                    let old_bundle = up.migration.as_ref().map(|_| active.bundle.as_slice());
+                    let job = match CompileJob::start(
+                        &up.executable,
+                        up.library.as_deref(),
+                        bundle,
+                        old_bundle,
+                        up.migration.as_deref(),
+                        Some(active.context.as_slice()),
+                        true,
+                        self.service.build_digest(),
+                        active.ordinal + 1,
+                    ) {
+                        Ok(j) => j,
+                        Err(msg) => {
+                            up.slot = None;
+                            up.stage = None;
+                            up.migration = None;
+                            report.refuse(
+                                ErrorCode::UpgradeCompileDiagnostic as u16,
+                                "compile",
+                                msg,
+                            );
+                            self.send_upgrade_report(
+                                idx,
+                                proc,
+                                id_val,
+                                &report,
+                                mig_copy.as_deref(),
+                                true,
+                            );
+                            return;
+                        }
+                    };
+                    up.job = Some(job);
+                }
+
                 up.waiting_conn = Some(idx);
                 up.waiting_req_id_json = self.connections[idx]
                     .as_ref()
@@ -2240,6 +2302,9 @@ impl ProtocolServer {
                 if let Some(c) = self.connections[idx].as_mut() {
                     c.phase = ConnPhase::UpgradeWait;
                     c.deadline_us = now_us.saturating_add(120_000_000);
+                }
+                if up.compiled_result.is_some() {
+                    self.poll_upgrade();
                 }
             }
             _ => self.send_fallback(idx, "invalid_arguments", "none"),
@@ -2253,6 +2318,7 @@ impl ProtocolServer {
                 return;
             };
             if up.job.is_none()
+                && up.compiled_result.is_none()
                 && up.slot.is_some()
                 && now_us.saturating_sub(up.touched_us) >= MO_LIMIT_UPGRADE_SLOT_IDLE_US
             {
@@ -2260,13 +2326,23 @@ impl ProtocolServer {
                 up.stage = None;
                 up.migration = None;
             }
-            let Some(ref mut job) = up.job else {
+            if let Some(ref mut job) = up.job {
+                match job.poll() {
+                    CompilePoll::Running => return,
+                    CompilePoll::Finished(res) => {
+                        up.job = None;
+                        up.compiled_result = Some(*res);
+                    }
+                }
+            }
+            // Wait until `mo-upgrade-commit` has attached a waiting connection before activating!
+            if up.waiting_conn.is_none() {
+                return;
+            }
+            let Some(res) = up.compiled_result.take() else {
                 return;
             };
-            match job.poll() {
-                CompilePoll::Running => return,
-                CompilePoll::Finished(res) => res,
-            }
+            Box::new(res)
         };
 
         // Take ownership of the finished job and waiting connection.
@@ -2300,9 +2376,8 @@ impl ProtocolServer {
         let mut activated_prog: Option<StoredProgram> = None;
 
         match *poll_res {
-            Err((code, msg, detail)) => {
-                report.detail = detail;
-                report.refuse(code, "compile", msg);
+            Err((code, class, msg)) => {
+                report.refuse(code, class, msg);
             }
             Ok(cand_img) => {
                 let Some(active) = active_prog else {
@@ -2341,6 +2416,8 @@ impl ProtocolServer {
                     migration.as_deref(),
                     old_state_type_name,
                     self.service.encoded_state(),
+                    true,
+                    cand_img.schema_synthesized,
                     &mut report,
                 ) {
                     let head = self.service.sequence();
@@ -2390,6 +2467,9 @@ impl ProtocolServer {
                         Ok(prepared) => match self.service.store_mut().activate(&activation) {
                             ActivationStatus::Activated => {
                                 self.service.finish_swap(prepared);
+                                // Clear pinned exports across image swap (`protocol-upgrade.c:584`).
+                                self.state_export = None;
+                                self.failure_export = None;
                                 // Rebuild cached MCP catalogs for the new program!
                                 if let Ok((ch, dty, dval, cp, ca)) = prepare_catalogs(
                                     &self.protocol,

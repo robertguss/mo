@@ -16,11 +16,12 @@ use mo_vm::{Image, Limits, Outcome, Process};
 
 use crate::binary::{hex_encode, push_json_string};
 use crate::fetch::AdminRpcClient;
+use crate::history::folder_error_message;
 use crate::listener::signals::install_signal_handlers;
 use crate::protocol::{Pf, ProtocolFunctions, build_protocol_image};
-use crate::store::history::read_program_from_file;
+use crate::store::history::{FolderStatus, read_program_from_file};
 
-use super::bundle::bundle_from_path;
+use super::bundle::{bundle_from_path, bundle_from_path_opts};
 use super::compile::compile_image_sync;
 use super::{UpgradeReport, compare_programs, program_metadata};
 
@@ -48,17 +49,28 @@ pub fn run_upgrade_check(
 ) -> i32 {
     let mut report = UpgradeReport::default();
 
-    // Load old program bundle (from data dir `service.sqlite` or `.mo` source path).
-    let old_sqlite = opts.old_path.join("service.sqlite");
-    let (old_bundle, old_ctx, old_recorded_prog) = if old_sqlite.is_file() {
+    // Distinguish data folder vs `.mo` source path using `is_dir()` (`src/tools/upgrade-commands.c:82`).
+    let is_folder = std::fs::metadata(opts.old_path).is_ok_and(|m| m.is_dir());
+    let (old_bundle, old_ctx) = if is_folder {
+        let old_sqlite = opts.old_path.join("service.sqlite");
+        let folder_str = opts.old_path.to_string_lossy();
         match read_program_from_file(&old_sqlite) {
-            Ok(Some(p)) => (p.bundle.clone(), Some(p.context.clone()), Some(p)),
-            _ => {
+            Ok(Some(p)) => (p.bundle, Some(p.context)),
+            Ok(None) => {
                 report.refuse(
                     ErrorCode::UpgradeSourceMismatch as u16,
-                    "source",
-                    "old data folder has no valid recorded program",
+                    "store",
+                    "this folder has no recorded program",
                 );
+                return emit_report(opts.json, opts.migration, &report, output, errors);
+            }
+            Err(status) => {
+                let code = if status == FolderStatus::Owned {
+                    ErrorCode::UpgradeBusy as u16
+                } else {
+                    ErrorCode::UpgradeInvalidValue as u16
+                };
+                report.refuse(code, "store", folder_error_message(&folder_str, status, 0));
                 return emit_report(opts.json, opts.migration, &report, output, errors);
             }
         }
@@ -66,95 +78,91 @@ pub fn run_upgrade_check(
         let mut s = SourceMap::new();
         let mut d = DiagBag::new();
         let raw = opts.old_path.as_os_str().as_encoded_bytes();
-        let Some((b, _)) = bundle_from_path(raw, opts.library, false, &mut d, &mut s) else {
-            report.refuse(
-                ErrorCode::UpgradeBundleFormat as u16,
-                "source",
-                "old source could not be bundled",
-            );
+        let Some((b, _)) = bundle_from_path_opts(raw, opts.library, false, false, &mut d, &mut s)
+        else {
+            refuse_from_bundle_diags(&d, "source bundling failed", &mut report);
             return emit_report(opts.json, opts.migration, &report, output, errors);
         };
-        (b, None, None)
+        (b, None)
     };
 
     let mut cand_sources = SourceMap::new();
     let mut cand_diags = DiagBag::new();
-    let Some((cand_bundle, cand_digest)) = bundle_from_path(
+    let Some((cand_bundle, cand_digest)) = bundle_from_path_opts(
         opts.candidate_path,
         opts.library,
         true,
+        false,
         &mut cand_diags,
         &mut cand_sources,
     ) else {
-        let mut detail = String::new();
-        for d in cand_diags.items() {
-            detail.push_str(&format!("error E{:04}: {}\n", d.code as u16, d.message));
-        }
-        report.detail = detail;
-        report.refuse(
-            ErrorCode::UpgradeCompileDiagnostic as u16,
-            "compile",
-            "candidate source failed to load",
-        );
+        refuse_from_bundle_diags(&cand_diags, "source bundling failed", &mut report);
         return emit_report(opts.json, opts.migration, &report, output, errors);
     };
+
+    report.base = Some(crate::binary::sha256_bytes(&old_bundle));
     report.candidate = Some(cand_digest);
 
-    let old_img = match old_recorded_prog {
-        Some(p) => {
-            report.base = Some(p.source);
-            p
-        }
-        None => {
-            let Some(img) = compile_image_sync(
-                &old_bundle,
-                None,
-                None,
-                old_ctx.as_deref(),
-                opts.library,
-                opts.build_digest,
-                0,
-                &mut report,
-            ) else {
-                return emit_report(opts.json, opts.migration, &report, output, errors);
-            };
-            report.base = Some(img.program.source);
-            img.program
-        }
-    };
-
-    let Some(next_img) = compile_image_sync(
-        &cand_bundle,
-        opts.migration.map(|_| old_bundle.as_slice()),
-        opts.migration,
-        old_ctx.as_deref(),
+    let Some(old_img) = compile_image_sync(
+        &old_bundle,
+        None,
+        None,
+        if is_folder { old_ctx.as_deref() } else { None },
         opts.library,
         opts.build_digest,
-        old_img.ordinal + 1,
+        0,
         &mut report,
     ) else {
         return emit_report(opts.json, opts.migration, &report, output, errors);
     };
 
-    let old_meta = program_metadata(&old_img);
+    // Pass `&old_bundle` unless `folder && migration.is_none()` (`src/tools/upgrade-commands.c:105`)
+    // so `use UpgradeOld` in candidate compiles cleanly and `compare_programs` emits `E1421` when
+    // `--migrate` was omitted.
+    let next_old = if is_folder && opts.migration.is_none() {
+        None
+    } else {
+        Some(old_bundle.as_slice())
+    };
+    let Some(next_img) = compile_image_sync(
+        &cand_bundle,
+        next_old,
+        opts.migration,
+        if is_folder { old_ctx.as_deref() } else { None },
+        opts.library,
+        opts.build_digest,
+        old_img.program.ordinal + 1,
+        &mut report,
+    ) else {
+        return emit_report(opts.json, opts.migration, &report, output, errors);
+    };
+
+    let old_meta = program_metadata(&old_img.program);
     let next_meta = program_metadata(&next_img.program);
     if compare_programs(
-        &old_img,
+        &old_img.program,
         old_meta.as_ref(),
         &next_img.program,
         next_meta.as_ref(),
         opts.migration,
         &mut report,
     ) {
-        report.already_active = old_img.source == cand_digest;
-        report.message = if report.already_active {
-            "candidate matches the base source".to_string()
-        } else {
-            "candidate is compatible with the base program".to_string()
-        };
+        report.message = "candidate is compatible with the base program".to_string();
     }
 
     emit_report(opts.json, opts.migration, &report, output, errors)
+}
+
+fn refuse_from_bundle_diags(diags: &DiagBag, fallback: &str, report: &mut UpgradeReport) {
+    let first = diags.items().first();
+    let code = first
+        .map(|d| d.code as u16)
+        .filter(|&c| (1414..=1431).contains(&c))
+        .unwrap_or(ErrorCode::UpgradeCompileDiagnostic as u16);
+    let msg = first
+        .map(|d| d.message.to_string())
+        .unwrap_or_else(|| fallback.to_string());
+    report.refuse(code, "compile", msg);
 }
 
 fn emit_report(
@@ -299,6 +307,17 @@ fn parse_overview_source(
 pub fn run_push(opts: &PushOptions<'_>, output: &mut dyn Write, errors: &mut dyn Write) -> i32 {
     let _ = install_signal_handlers();
 
+    if let Some(base) = opts.base_hex
+        && (base.len() != 64
+            || !base
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+    {
+        let _ = writeln!(errors, "mo push: --base must be 64 lowercase hex digits");
+        let _ = errors.flush();
+        return 2;
+    }
+
     let mut sources = SourceMap::new();
     let mut diags = DiagBag::new();
     let Some((bundle, cand_digest)) = bundle_from_path(
@@ -309,15 +328,7 @@ pub fn run_push(opts: &PushOptions<'_>, output: &mut dyn Write, errors: &mut dyn
         &mut sources,
     ) else {
         let mut report = UpgradeReport::default();
-        let code = diags
-            .items()
-            .first()
-            .map_or(ErrorCode::UpgradeBundleFormat as u16, |d| d.code as u16);
-        let msg = diags.items().first().map_or_else(
-            || "candidate source could not be bundled".to_string(),
-            |d| d.message.to_string(),
-        );
-        report.refuse(code, "bundle", &msg);
+        refuse_from_bundle_diags(&diags, "candidate source could not be bundled", &mut report);
         return emit_report(opts.json, opts.migration, &report, output, errors);
     };
 
@@ -336,20 +347,19 @@ pub fn run_push(opts: &PushOptions<'_>, output: &mut dyn Write, errors: &mut dyn
 
     let (proto, fns) = match build_protocol_image() {
         Ok(v) => v,
-        Err(msg) => {
-            let _ = writeln!(errors, "mo push: {msg}");
-            return 1;
-        }
+        Err(msg) => return push_failure(opts.json, &msg, output, errors),
     };
 
     let mut client =
         match AdminRpcClient::new(opts.admin_socket, Duration::from_micros(MO_LIMIT_FETCH_US)) {
             Ok(c) => c,
-            Err(msg) => {
-                let _ = writeln!(errors, "mo push: {msg}");
-                return 1;
-            }
+            Err(msg) => return push_failure(opts.json, &msg, output, errors),
         };
+
+    const BEFORE_COMMIT: &str =
+        "the service did not answer or refused the request before the commit; nothing was changed";
+    const AFTER_COMMIT: &str =
+        "the service did not answer after the commit request; check mo-overview before retrying";
 
     // Resolve base digest from --base or by querying mo-overview.
     let base_hex = match opts.base_hex {
@@ -357,10 +367,7 @@ pub fn run_push(opts: &PushOptions<'_>, output: &mut dyn Write, errors: &mut dyn
         None => loop {
             let wire = match client.call_tool("mo-overview", "{}") {
                 Ok(w) => w,
-                Err(msg) => {
-                    let _ = writeln!(errors, "mo push: {msg}");
-                    return 1;
-                }
+                Err(_) => return push_failure(opts.json, BEFORE_COMMIT, output, errors),
             };
             match parse_overview_source(&proto, &fns, &wire) {
                 Ok(Some(src)) => break src,
@@ -380,10 +387,7 @@ pub fn run_push(opts: &PushOptions<'_>, output: &mut dyn Write, errors: &mut dyn
                     std::thread::sleep(Duration::from_millis(120));
                     continue;
                 }
-                Err(msg) => {
-                    let _ = writeln!(errors, "mo push: {msg}");
-                    return 1;
-                }
+                Err(_) => return push_failure(opts.json, BEFORE_COMMIT, output, errors),
             }
         },
     };
@@ -402,10 +406,7 @@ pub fn run_push(opts: &PushOptions<'_>, output: &mut dyn Write, errors: &mut dyn
     let open_reply =
         match call_upgrade_tool(&mut client, &proto, &fns, "mo-upgrade-open", &open_args) {
             Ok(r) => r,
-            Err(msg) => {
-                let _ = writeln!(errors, "mo push: {msg}");
-                return 1;
-            }
+            Err(_) => return push_failure(opts.json, BEFORE_COMMIT, output, errors),
         };
     if open_reply.failed {
         return emit_push_reply(opts.json, &open_reply, output, errors);
@@ -428,10 +429,7 @@ pub fn run_push(opts: &PushOptions<'_>, output: &mut dyn Write, errors: &mut dyn
         let page_reply =
             match call_upgrade_tool(&mut client, &proto, &fns, "mo-upgrade-page", &page_args) {
                 Ok(r) => r,
-                Err(msg) => {
-                    let _ = writeln!(errors, "mo push: {msg}");
-                    return 1;
-                }
+                Err(_) => return push_failure(opts.json, BEFORE_COMMIT, output, errors),
             };
         if page_reply.failed {
             return emit_push_reply(opts.json, &page_reply, output, errors);
@@ -443,12 +441,25 @@ pub fn run_push(opts: &PushOptions<'_>, output: &mut dyn Write, errors: &mut dyn
     let commit_reply =
         match call_upgrade_tool(&mut client, &proto, &fns, "mo-upgrade-commit", &commit_args) {
             Ok(r) => r,
-            Err(msg) => {
-                let _ = writeln!(errors, "mo push: {msg}");
-                return 1;
-            }
+            Err(_) => return push_failure(opts.json, AFTER_COMMIT, output, errors),
         };
     emit_push_reply(opts.json, &commit_reply, output, errors)
+}
+
+fn push_failure(json: bool, message: &str, output: &mut dyn Write, errors: &mut dyn Write) -> i32 {
+    if json {
+        let mut line = String::from(
+            "{\"version\":1,\"status\":\"refused\",\"code\":null,\"class\":\"client\",\"message\":",
+        );
+        push_json_string(&mut line, message);
+        line.push_str("}\n");
+        let _ = output.write_all(line.as_bytes());
+        let _ = output.flush();
+    } else {
+        let _ = writeln!(errors, "mo push: {message}");
+        let _ = errors.flush();
+    }
+    1
 }
 
 #[cfg(unix)]

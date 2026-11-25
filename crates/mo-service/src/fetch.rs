@@ -276,6 +276,67 @@ pub struct FetchOptions<'a> {
     pub json: bool,
 }
 
+/// Fetches a live state or failure `MOEX\x01` export artifact into memory from an admin Unix domain
+/// socket (`src/tools/fetch.c:mo_fetch_live_export` parity, used by `mo query --admin-socket`).
+#[cfg(unix)]
+pub fn fetch_live_export(admin_socket: &Path, failure_id: Option<u64>) -> Result<Vec<u8>, String> {
+    let _ = install_signal_handlers();
+    let (proto, fns) = build_protocol_image()?;
+    let mut client = AdminRpcClient::new(admin_socket, Duration::from_micros(MO_LIMIT_FETCH_US))?;
+    let mut consumer = ExportConsumer::default();
+    let mut export_id_hex = String::new();
+    let mut offset = 0usize;
+    let page_sz = MO_LIMIT_EXPORT_PAGE_BYTES as usize;
+
+    loop {
+        let args_json = match (export_id_hex.is_empty(), failure_id.filter(|&id| id > 0)) {
+            (true, None) => "{\"kind\":\"state\",\"offset\":0}".to_string(),
+            (true, Some(fid)) => {
+                format!("{{\"kind\":\"failure\",\"failure\":{fid},\"offset\":0}}")
+            }
+            (false, None) => {
+                format!("{{\"kind\":\"state\",\"export\":\"{export_id_hex}\",\"offset\":{offset}}}")
+            }
+            (false, Some(fid)) => {
+                format!(
+                    "{{\"kind\":\"failure\",\"failure\":{fid},\"export\":\"{export_id_hex}\",\"offset\":{offset}}}"
+                )
+            }
+        };
+        let wire = client.call_tool("mo-export", &args_json)?;
+        match parse_fetch_page(&proto, &fns, &wire)? {
+            FetchPageReply::RateLimited => {
+                std::thread::sleep(Duration::from_millis(120));
+            }
+            FetchPageReply::Error(reason) => {
+                let msg = match reason.as_str() {
+                    "export_replaced" => "export replaced by a newer export",
+                    "export_released" => "export was released or expired before completion",
+                    other => other,
+                };
+                return Err(msg.to_string());
+            }
+            FetchPageReply::Page(page) => {
+                if export_id_hex.is_empty() {
+                    export_id_hex = crate::binary::hex_encode(&page.id);
+                }
+                let is_final = page.is_final;
+                if !consumer.accept(&page) {
+                    return Err("export page verification failed".to_string());
+                }
+                if is_final {
+                    break;
+                }
+                offset += page_sz;
+            }
+        }
+    }
+    if !consumer.complete {
+        return Err("incomplete export".to_string());
+    }
+    Ok(consumer.bytes)
+}
+
 /// Executes `mo fetch` (`src/tools/fetch.c:mo_fetch`).
 #[cfg(unix)]
 pub fn run_fetch(opts: &FetchOptions<'_>, output: &mut dyn Write, errors: &mut dyn Write) -> i32 {

@@ -35,6 +35,7 @@ mo-prim = { path = "../mo-prim" }
 mo-service = { path = "../mo-service" }
 mo-syntax = { path = "../mo-syntax" }
 mo-test = { path = "../mo-test" }
+mo-upgrade = { path = "../mo-upgrade" }
 mo-vm = { path = "../mo-vm" }
 sha2 = { version = "0.11", features = ["zeroize"] }
 thiserror = "2"

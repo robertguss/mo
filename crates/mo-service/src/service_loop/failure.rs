@@ -141,12 +141,23 @@ pub struct FailureBuildParams<'a> {
 /// Builds `(kind_string, encoded_v1_payload_bytes)` ready to pass to `ServiceStore::capture_failure`.
 #[must_use]
 pub fn build_failure_payload(params: FailureBuildParams<'_>) -> Option<(String, Vec<u8>)> {
-    let reason = truncate_str(&params.defect.reason, MO_LIMIT_FAILURE_KIND_BYTES as usize);
-    let limit = params
-        .defect
-        .limit_name
-        .map(|s| truncate_str(s, MO_LIMIT_FAILURE_KIND_BYTES as usize))
-        .unwrap_or_default();
+    let (reason, limit, limit_value) = if params.class == 1 {
+        (
+            "work limit".to_string(),
+            "MO_LIMIT_SERVICE_WORK".to_string(),
+            MO_LIMIT_SERVICE_WORK,
+        )
+    } else {
+        (
+            truncate_str(&params.defect.reason, MO_LIMIT_FAILURE_KIND_BYTES as usize),
+            params
+                .defect
+                .limit_name
+                .map(|s| truncate_str(s, MO_LIMIT_FAILURE_KIND_BYTES as usize))
+                .unwrap_or_default(),
+            params.defect.limit as u64,
+        )
+    };
 
     let (top_fn, top_file, top_start, top_end) = match params.defect.frames.first() {
         Some(f) => match f.span {
@@ -180,7 +191,7 @@ pub fn build_failure_payload(params: FailureBuildParams<'_>) -> Option<(String, 
         class: params.class,
         reason,
         limit,
-        limit_value: params.defect.limit as u64,
+        limit_value,
         function: top_fn,
         file: top_file,
         start: top_start,

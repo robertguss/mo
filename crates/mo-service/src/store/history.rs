@@ -194,6 +194,7 @@ fn open_offline(path: &Path, recover: bool) -> Result<(Connection, bool), Folder
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_FULL_MUTEX,
         )
         .map_err(|e| classify_sqlite_folder(&e, path))?;
+        let _ = conn.busy_timeout(std::time::Duration::ZERO);
         configure_defensive(&conn).map_err(store_to_folder)?;
         conn.execute_batch(&format!(
             "PRAGMA trusted_schema=OFF; PRAGMA temp_store=MEMORY; \
@@ -236,6 +237,7 @@ fn open_offline(path: &Path, recover: bool) -> Result<(Connection, bool), Folder
                 release_store_slot();
                 classify_sqlite_folder(&e, path)
             })?;
+            let _ = conn.busy_timeout(std::time::Duration::ZERO);
             if let Err(st) = configure_defensive(&conn).map_err(store_to_folder) {
                 release_store_slot();
                 return Err(st);
@@ -294,6 +296,202 @@ pub fn read_program_from_file(path: &Path) -> Result<Option<StoredProgram>, Fold
     let (conn, _recovered) = open_offline(path, false)?;
     let guard = OfflineGuard { conn };
     read_active_program_conn(&guard.conn).map_err(store_to_folder)
+}
+
+/// Result of looking up a retained program by `(image, build, schema)` in a stopped store
+/// (`mo_store_retained_program_read_file`).
+#[derive(Debug, Clone)]
+pub struct RetainedProgramMatch {
+    /// Matching program (if `matches > 0`).
+    pub program: Option<StoredProgram>,
+    /// Number of matching rows across `program` and `previous_programs`.
+    pub matches: u32,
+    /// `true` if matching rows had differing `source` or `context_digest`.
+    pub distinct: bool,
+}
+
+/// Searches `program` and `previous_programs` in a stopped store for rows matching
+/// `(image, build, schema)` without modifying the database (`mo_store_retained_program_read_file`).
+pub fn read_retained_program_from_file(
+    path: &Path,
+    image: u64,
+    build: &[u8; 32],
+    schema: &[u8; 32],
+) -> Result<RetainedProgramMatch, FolderStatus> {
+    let (conn, _recovered) = open_offline(path, false)?;
+    let guard = OfflineGuard { conn };
+
+    let mut result = RetainedProgramMatch {
+        program: None,
+        matches: 0,
+        distinct: false,
+    };
+
+    let mut consider = |p: StoredProgram| {
+        if p.image == image && &p.build == build && &p.schema == schema {
+            if let Some(ref first) = result.program {
+                if first.source != p.source || first.context_digest != p.context_digest {
+                    result.distinct = true;
+                }
+            } else {
+                result.program = Some(p);
+            }
+            result.matches = result.matches.saturating_add(1);
+        }
+    };
+
+    if let Some(cur) = read_active_program_conn(&guard.conn).map_err(store_to_folder)? {
+        consider(cur);
+    }
+
+    match table_state(&guard.conn, UPGRADE_TABLES[2].0, UPGRADE_TABLES[2].1) {
+        (TableState::Same, _) => {
+            let mut stmt = guard
+                .conn
+                .prepare(
+                    "SELECT ordinal,source,image,build,schema,bundle,context_digest,context \
+                     FROM previous_programs ORDER BY ordinal DESC",
+                )
+                .map_err(|e| store_to_folder(map_sqlite_error(&e)))?;
+            let mut rows = stmt
+                .query([])
+                .map_err(|e| store_to_folder(map_sqlite_error(&e)))?;
+            while let Some(row) = rows
+                .next()
+                .map_err(|e| store_to_folder(map_sqlite_error(&e)))?
+            {
+                let p = parse_program_row(row).ok_or(FolderStatus::Damaged)?;
+                consider(p);
+            }
+        }
+        (TableState::Absent, _) => {}
+        (TableState::Different, _) => return Err(FolderStatus::Damaged),
+        (TableState::Failed, st) => return Err(store_to_folder(st)),
+    }
+
+    Ok(result)
+}
+
+/// Offline failure record pair read from a stopped service store (`struct mo_store_history_pair`).
+#[derive(Debug, Clone)]
+pub struct HistoryPair {
+    /// Requested failure id.
+    pub id: u64,
+    /// `true` if a hot rollback journal was rolled back via `--recover`.
+    pub recovered: bool,
+    /// `true` if `failure` and `failure_state` tables exist in the store.
+    pub failure_tables: bool,
+    /// `true` if failure `id` was found.
+    pub found: bool,
+    /// Failure kind label (when `found`).
+    pub kind: String,
+    /// Whether this was the first failure of its kind (when `found`).
+    pub first: bool,
+    /// Pre-call state record (when `found`).
+    pub state: Option<StoreRecord>,
+    /// Failure message record (when `found`).
+    pub message: Option<StoreRecord>,
+    /// Retained failure ids in ascending order (populated when `!found && failure_tables`).
+    pub retained: Vec<u64>,
+}
+
+/// Reads a single failure pair `(state, message)` by `id` from a stopped service store
+/// (`mo_store_history_pair`).
+pub fn read_history_pair(path: &Path, recover: bool, id: u64) -> Result<HistoryPair, FolderStatus> {
+    let (conn, recovered) = open_offline(path, recover)?;
+    let guard = OfflineGuard { conn };
+
+    // Verify core tables: head, snapshot, log must exist with exact DDL.
+    for &(name, ddl) in &CORE_TABLES[..3] {
+        match table_state(&guard.conn, name, ddl) {
+            (TableState::Same, _) => {}
+            (TableState::Failed, st) => return Err(store_to_folder(st)),
+            _ => return Err(FolderStatus::Damaged),
+        }
+    }
+    let f0 = table_state(&guard.conn, CORE_TABLES[3].0, CORE_TABLES[3].1);
+    let f1 = table_state(&guard.conn, CORE_TABLES[4].0, CORE_TABLES[4].1);
+    let failure_tables = match (f0.0, f1.0) {
+        (TableState::Same, TableState::Same) => true,
+        (TableState::Absent, TableState::Absent) => false,
+        (TableState::Failed, _) => return Err(store_to_folder(f0.1)),
+        (_, TableState::Failed) => return Err(store_to_folder(f1.1)),
+        _ => return Err(FolderStatus::Damaged),
+    };
+
+    let mut out = HistoryPair {
+        id,
+        recovered,
+        failure_tables,
+        found: false,
+        kind: String::new(),
+        first: false,
+        state: None,
+        message: None,
+        retained: Vec::new(),
+    };
+    if !failure_tables {
+        return Ok(out);
+    }
+
+    if id != 0 && id <= i64::MAX as u64 {
+        let row: Option<(String, i64, Vec<u8>, Vec<u8>)> = guard
+            .conn
+            .query_row(
+                "SELECT f.kind,f.first,s.record,f.message \
+                 FROM failure f JOIN failure_state s ON f.id=s.id WHERE f.id=?1",
+                params![id as i64],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()
+            .map_err(|e| store_to_folder(map_sqlite_error(&e)))?;
+
+        if let Some((kind, first, state_blob, msg_blob)) = row {
+            if kind.is_empty()
+                || kind.len() as u64 > MO_LIMIT_FAILURE_KIND_BYTES
+                || (first != 0 && first != 1)
+            {
+                return Err(FolderStatus::Damaged);
+            }
+            let state = decode_frame(StoreRecordKind::FailureState, &state_blob)
+                .ok_or(FolderStatus::Damaged)?;
+            let message = decode_frame(StoreRecordKind::FailureMessage, &msg_blob)
+                .ok_or(FolderStatus::Damaged)?;
+            if state.sequence != message.sequence || state.image != message.image {
+                return Err(FolderStatus::Damaged);
+            }
+            out.found = true;
+            out.kind = kind;
+            out.first = first != 0;
+            out.state = Some(state);
+            out.message = Some(message);
+            return Ok(out);
+        }
+    }
+
+    // Not found: collect retained failure ids for diagnostics.
+    let limit_sql = format!(
+        "SELECT id FROM failure ORDER BY id LIMIT {}",
+        MO_LIMIT_FAILURE_RECORDS + 1
+    );
+    let mut stmt = guard
+        .conn
+        .prepare(&limit_sql)
+        .map_err(|e| store_to_folder(map_sqlite_error(&e)))?;
+    let mut rows = stmt
+        .query([])
+        .map_err(|e| store_to_folder(map_sqlite_error(&e)))?;
+    while let Some(row) = rows
+        .next()
+        .map_err(|e| store_to_folder(map_sqlite_error(&e)))?
+    {
+        let fid: i64 = row.get(0).map_err(|_| FolderStatus::Damaged)?;
+        if out.retained.len() as u64 >= MO_LIMIT_FAILURE_RECORDS || fid <= 0 {
+            return Err(FolderStatus::Damaged);
+        }
+        out.retained.push(fid as u64);
+    }
+    Ok(out)
 }
 
 /// Streams and validates a `MOST\x01` frame via SQLite incremental blob I/O without loading
@@ -666,9 +864,15 @@ pub fn read_history(path: &Path, recover: bool) -> Result<StoreHistory, (FolderS
             let cost = 96u64;
             if retained_bytes + cost <= budget {
                 retained_bytes += cost;
-                let retained = previous_programs
+                let mut retained = program
+                    .as_ref()
+                    .is_some_and(|cur| ordinal as u64 == cur.ordinal);
+                if previous_programs
                     .iter()
-                    .any(|p| p.ordinal + 1 == ordinal as u64 && p.source == old_source);
+                    .any(|p| p.ordinal == ordinal as u64 + 1 && p.source == new_source)
+                {
+                    retained = true;
+                }
                 upgrades.push(HistoryUpgrade {
                     ordinal: ordinal as u64,
                     head: uhead as u64,

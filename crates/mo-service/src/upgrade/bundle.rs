@@ -29,13 +29,28 @@ use super::find_entry_service;
 use super::types::{MetadataError, build_compile_metadata};
 
 /// Builds a canonical `MOSB\x01` bundle from an entry `.mo` file on disk
-/// (`mo_upgrade_bundle_with_library`).
+/// (`mo_upgrade_bundle_with_library`), requiring a service declaration in the entry module.
 ///
 /// Returns `(bundle_bytes, sha256_digest)` on success.
 pub fn bundle_from_path(
     entry_path: &[u8],
     library: Option<&Path>,
     allow_upgrade_old: bool,
+    diags: &mut DiagBag,
+    sources: &mut SourceMap,
+) -> Option<(Vec<u8>, [u8; 32])> {
+    bundle_from_path_opts(entry_path, library, allow_upgrade_old, true, diags, sources)
+}
+
+/// Builds a canonical `MOSB\x01` bundle from an entry `.mo` file on disk
+/// (`mo_upgrade_bundle_with_library`). When `require_service` is `false`, skips the upfront
+/// entry-service syntax check (matching `serving = false` in C `mo check --upgrade-from` and
+/// `mo replay`).
+pub fn bundle_from_path_opts(
+    entry_path: &[u8],
+    library: Option<&Path>,
+    allow_upgrade_old: bool,
+    require_service: bool,
     diags: &mut DiagBag,
     sources: &mut SourceMap,
 ) -> Option<(Vec<u8>, [u8; 32])> {
@@ -65,36 +80,51 @@ pub fn bundle_from_path(
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
 
-    // Check that the entry module declares a service (when not bundling an upgrade candidate
-    // that might still be checked by the upgrade pipeline). Actually, even for serve, checking
-    // the program here reports diagnostics with the real disk file path (`tests/errors/e1409`).
-    let entry_span = set.modules[0].syntax.span;
-    let mut has_service_node = false;
-    let root = set.modules[0].syntax.tree.node(set.modules[0].syntax.root);
-    if let Some(items_id) = root.children.get(1).copied().flatten() {
-        for child in set.modules[0]
-            .syntax
-            .tree
-            .node(items_id)
-            .children
-            .iter()
-            .flatten()
-        {
-            if set.modules[0].syntax.tree.node(*child).kind == mo_syntax::SyntaxKind::Service {
-                has_service_node = true;
+    if require_service {
+        let entry_span = set.modules[0].syntax.span;
+        let mut has_service_node = false;
+        let root = set.modules[0].syntax.tree.node(set.modules[0].syntax.root);
+        if let Some(items_id) = root.children.get(1).copied().flatten() {
+            for child in set.modules[0]
+                .syntax
+                .tree
+                .node(items_id)
+                .children
+                .iter()
+                .flatten()
+            {
+                if set.modules[0].syntax.tree.node(*child).kind == mo_syntax::SyntaxKind::Service {
+                    has_service_node = true;
+                }
             }
         }
+        if !has_service_node {
+            let _ = diags.push(
+                Diagnostic::new(
+                    ErrorCode::ToolServiceStart,
+                    entry_span,
+                    "this module has no service to start",
+                )
+                .with_primary_text("a service block declares one (reference 11.5)"),
+            );
+            return None;
+        }
     }
-    if !has_service_node {
-        let _ = diags.push(
-            Diagnostic::new(
-                ErrorCode::ToolServiceStart,
-                entry_span,
-                "this module has no service to start",
-            )
-            .with_primary_text("a service block declares one (reference 11.5)"),
-        );
-        return None;
+
+    // Reject reserved UpgradeOld declarations in candidate modules (`src/tools/upgrade-bundle.c:106`).
+    for (idx, m) in set.modules.iter().enumerate() {
+        if m.library {
+            continue;
+        }
+        let is_reserved = m.name == "UpgradeOld" || m.name.starts_with("UpgradeOld.");
+        if is_reserved && (idx == 0 || !allow_upgrade_old) {
+            let _ = diags.push(Diagnostic::new(
+                ErrorCode::UpgradeBundleFormat,
+                Span::NONE,
+                "candidate declares the reserved UpgradeOld namespace",
+            ));
+            return None;
+        }
     }
 
     let mut files: Vec<BundleFile> = Vec::new();
@@ -169,25 +199,39 @@ pub struct CompiledBundle {
     pub service_idx: u32,
     /// Canonical [`StoredProgram`] (ordinal set to `0` by caller if needed).
     pub program: StoredProgram,
+    /// `true` when `UpgradeOld` types were synthesized from binary schema fallback.
+    pub schema_synthesized: bool,
 }
 
-/// Compiles a `MOSB\x01` bundle (optionally against an `old_bundle_or_metadata` and `migration`,
-/// or a pre-recorded `compile_context`) into bytecode, initialized [`Image`], and canonical
-/// `MOCC\x01` context with embedded `MOCS\x01` metadata.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "bundle compilation takes bundle, optional old bundle, migration, context, library, identity, and diagnostics"
-)]
-pub fn compile_bundle(
+/// Result of loading and type-checking a `MOSB\x01` bundle via [`check_bundle_program`].
+pub struct CheckedBundleProgram {
+    /// Type-checked Mo program.
+    pub program: CheckedProgram,
+    /// SHA-256 digest of the canonical `MOSB\x01` bundle.
+    pub bundle_digest: [u8; 32],
+    /// Synthesized or retained `UpgradeOld` compile context files.
+    pub old_files: Vec<CompileFile>,
+    /// Selected or retained migration function name.
+    pub selected_migration: Option<String>,
+    /// `true` when `selected_migration` was inherited from an existing compile context.
+    pub is_retained: bool,
+    /// `true` when `UpgradeOld` was synthesized from a recorded schema fallback.
+    pub schema_synthesized: bool,
+}
+
+/// Loads and type-checks a `MOSB\x01` bundle (plus optional `old_bundle_or_meta` and
+/// `existing_context`) into a [`CheckedBundleProgram`] (`src/tools/upgrade-bundle.c:335-407`).
+///
+/// Shared by both `compile_bundle` and `mo test --bundle` door checks.
+pub fn check_bundle_program(
     bundle_bytes: &[u8],
     old_bundle_or_meta: Option<&[u8]>,
     migration: Option<&str>,
     existing_context: Option<&[u8]>,
     library: Option<&Path>,
-    build_digest: [u8; 32],
     diags: &mut DiagBag,
     sources: &mut SourceMap,
-) -> Option<CompiledBundle> {
+) -> Option<CheckedBundleProgram> {
     let parsed_bundle = match read_bundle(bundle_bytes) {
         Some(b) => b,
         None => {
@@ -208,15 +252,25 @@ pub fn compile_bundle(
         },
     };
 
-    // Determine UpgradeOld files to inject (from old_bundle_or_meta or existing_context).
     let mut old_files: Vec<CompileFile> = Vec::new();
-    let has_migration = migration.is_some_and(|m| !m.is_empty());
+    let mut retained_migration: Option<String> = None;
+    let mut schema_synthesized = false;
+
     if let Some(old_raw) = old_bundle_or_meta {
         if old_raw.starts_with(b"MOCS\x01") {
             let meta = read_compile_metadata(old_raw)?;
-            old_files = meta.types;
+            if meta.types.is_empty() {
+                let mut saved = Vec::with_capacity(9 + meta.schema.len());
+                saved.extend_from_slice(b"MOSV\x01");
+                saved.extend_from_slice(&(meta.schema.len() as u32).to_le_bytes());
+                saved.extend_from_slice(&meta.schema);
+                old_files = super::schema::synthesize_schema_sources(&saved)?;
+                schema_synthesized = true;
+            } else {
+                old_files = meta.types;
+            }
         } else {
-            // Compile old bundle to extract its UpgradeOld sources.
+            // Compile old bundle (with optional existing_context!) to extract its UpgradeOld sources.
             let old_parsed = read_bundle(old_raw)?;
             let mut old_sources = SourceMap::new();
             let mut old_diags = DiagBag::new();
@@ -227,6 +281,13 @@ pub fn compile_bundle(
             for f in &old_parsed.files {
                 if f.path != old_parsed.entry {
                     let _ = old_sources.add_bytes(f.path.as_bytes().to_vec(), f.content.clone());
+                }
+            }
+            if let Some(ctx_raw) = existing_context
+                && let Some(ctx) = read_compile_context(ctx_raw)
+            {
+                for f in &ctx.files {
+                    let _ = old_sources.add_bytes(f.path.as_bytes().to_vec(), f.source.clone());
                 }
             }
             let old_opts = LoadOptions {
@@ -248,6 +309,9 @@ pub fn compile_bundle(
         && let Some(ctx) = read_compile_context(ctx_raw)
     {
         old_files = ctx.files;
+        if !ctx.migration.is_empty() {
+            retained_migration = Some(ctx.migration);
+        }
     }
 
     if let Some(entry_f) = parsed_bundle
@@ -262,6 +326,7 @@ pub fn compile_bundle(
             let _ = sources.add_bytes(f.path.as_bytes().to_vec(), f.content.clone());
         }
     }
+    let candidate_file_count = sources.len();
     for f in &old_files {
         let _ = sources.add_bytes(f.path.as_bytes().to_vec(), f.source.clone());
     }
@@ -275,13 +340,90 @@ pub fn compile_bundle(
     if diags.has_any() {
         return None;
     }
-    let mut program: CheckedProgram = check_program(Some(sources), set, diags)?;
+    for m in &set.modules {
+        if m.syntax.span.file < candidate_file_count
+            && (m.name == "UpgradeOld" || m.name.starts_with("UpgradeOld."))
+        {
+            let _ = diags.push(Diagnostic::new(
+                ErrorCode::UpgradeBundleFormat,
+                Span::NONE,
+                "candidate declares the reserved UpgradeOld namespace",
+            ));
+            return None;
+        }
+    }
+    let program: CheckedProgram = check_program(Some(sources), set, diags)?;
     if diags.has_any() {
         return None;
     }
 
+    let (selected_migration, is_retained) = match migration.filter(|m| !m.is_empty()) {
+        Some(m) => (Some(m.to_string()), false),
+        None => (retained_migration, true),
+    };
+
+    Some(CheckedBundleProgram {
+        program,
+        bundle_digest: parsed_bundle.digest,
+        old_files,
+        selected_migration,
+        is_retained,
+        schema_synthesized,
+    })
+}
+
+/// Compiles a `MOSB\x01` bundle (optionally against an `old_bundle_or_metadata` and `migration`,
+/// or a pre-recorded `compile_context`) into bytecode, initialized [`Image`], and canonical
+/// `MOCC\x01` context with embedded `MOCS\x01` metadata.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "bundle compilation takes bundle, optional old bundle, migration, context, library, identity, and diagnostics"
+)]
+pub fn compile_bundle(
+    bundle_bytes: &[u8],
+    old_bundle_or_meta: Option<&[u8]>,
+    migration: Option<&str>,
+    existing_context: Option<&[u8]>,
+    library: Option<&Path>,
+    build_digest: [u8; 32],
+    diags: &mut DiagBag,
+    sources: &mut SourceMap,
+) -> Option<CompiledBundle> {
+    let CheckedBundleProgram {
+        mut program,
+        bundle_digest,
+        old_files,
+        mut selected_migration,
+        is_retained,
+        schema_synthesized,
+    } = check_bundle_program(
+        bundle_bytes,
+        old_bundle_or_meta,
+        migration,
+        existing_context,
+        library,
+        diags,
+        sources,
+    )?;
+
+    // For a retained migration inherited from `existing_context`, only check it if a function
+    // of that name is still present in the candidate (`src/tools/upgrade-bundle.c:408-422`).
+    if is_retained && let Some(ref sel) = selected_migration {
+        let present = program.functions.iter().any(|f| {
+            let sym = program.interfaces.symbol(f.symbol);
+            let mod_name = &program.modules.module(sym.module).name;
+            sym.name == *sel
+                || (sel.starts_with(mod_name.as_str())
+                    && sel.as_bytes().get(mod_name.len()) == Some(&b'.')
+                    && sel[mod_name.len() + 1..] == sym.name)
+        });
+        if !present {
+            selected_migration = None;
+        }
+    }
+
     let mut migration_fn_id = None;
-    if let Some(mig_name) = migration.filter(|m| !m.is_empty()) {
+    if let Some(ref mig_name) = selected_migration {
         // Extract old_state TypeId from synthesized UpgradeOld.upgrade_input(value: OldState) : OldState.
         let old_state = program
             .modules
@@ -400,17 +542,14 @@ pub fn compile_bundle(
     let parsed_meta = read_compile_metadata(&meta_bytes)?;
     let schema_digest = sha256_bytes(&parsed_meta.schema);
 
-    let mig_str = if has_migration {
-        migration.unwrap_or("")
-    } else {
-        ""
-    };
-    let ctx_files = if has_migration { &old_files[..] } else { &[] };
-    let (ctx_bytes, ctx_digest) = write_compile_context(mig_str, ctx_files, Some(&meta_bytes))?;
+    // Save all `UpgradeOld*.mo` files that were injected into `sources`, plus `selected_migration`
+    // (matching `src/tools/upgrade-bundle.c:save_context`).
+    let mig_str = selected_migration.as_deref().unwrap_or("");
+    let (ctx_bytes, ctx_digest) = write_compile_context(mig_str, &old_files, Some(&meta_bytes))?;
 
     let image_key = image.file().program_checksum ^ (u64::from(service_idx) << 32);
     let stored = StoredProgram {
-        source: parsed_bundle.digest,
+        source: bundle_digest,
         build: build_digest,
         schema: schema_digest,
         context_digest: ctx_digest,
@@ -425,5 +564,6 @@ pub fn compile_bundle(
         image,
         service_idx,
         program: stored,
+        schema_synthesized,
     })
 }

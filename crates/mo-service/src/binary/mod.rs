@@ -90,16 +90,43 @@ pub fn push_json_string(out: &mut String, s: &str) {
     out.push('"');
 }
 
-/// Sanitizes untrusted text for terminal output, matching `src/base/render.c:mo_render_terminal_text`.
+/// Sanitizes untrusted text for terminal output, matching `src/tools/render.c:mo_render_terminal_text`.
 #[must_use]
 pub fn sanitize_terminal_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
         let code = ch as u32;
-        if ch == '\t' || ch == '\n' {
-            out.push(ch);
-        } else if code < 0x20 || code == 0x7f || (0x80..=0x9f).contains(&code) {
-            let _ = write!(out, "\\u{{{code:x}}}");
+        if ch == '\n' {
+            out.push('\n');
+        } else if ch == '\t' {
+            out.push('\t');
+        } else if code < 0x20 || code == 0x7f {
+            let _ = write!(out, "\\x{code:02x}");
+        } else if (0x80..=0x9f).contains(&code)
+            || matches!(
+                code,
+                0x00ad
+                    | 0x061c
+                    | 0x180e
+                    | 0x200b..=0x200f
+                    | 0x2028..=0x202e
+                    | 0x2060..=0x2064
+                    | 0x2066..=0x206f
+                    | 0xfeff
+                    | 0xfff9..=0xfffb
+                    | 0xe0001
+                    | 0xe0020..=0xe007f
+            )
+        {
+            if code <= 0xfff {
+                let _ = write!(out, "\\u{{{code:03x}}}");
+            } else if code <= 0xffff {
+                let _ = write!(out, "\\u{{{code:04x}}}");
+            } else if code <= 0x000f_ffff {
+                let _ = write!(out, "\\u{{{code:05x}}}");
+            } else {
+                let _ = write!(out, "\\u{{{code:06x}}}");
+            }
         } else {
             out.push(ch);
         }

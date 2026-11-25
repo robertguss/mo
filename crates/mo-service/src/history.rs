@@ -116,7 +116,9 @@ pub fn run_history(
     }
 }
 
-fn render_offline_value(saved_bytes: &[u8]) -> Option<String> {
+/// Renders `MOSV\x01` saved value bytes using embedded `McpViews.offline_value` (`mo_offline_render`).
+#[must_use]
+pub fn render_offline_value(saved_bytes: &[u8]) -> Option<String> {
     let (proto, fns) = build_protocol_image().ok()?;
     let mut proc = Process::new(
         &proto,
@@ -136,7 +138,9 @@ fn render_offline_value(saved_bytes: &[u8]) -> Option<String> {
     }
 }
 
-fn folder_status_code(status: FolderStatus) -> &'static str {
+/// Returns the JSON folder status code (`mo_offline_folder_code`).
+#[must_use]
+pub fn folder_status_code(status: FolderStatus) -> &'static str {
     match status {
         FolderStatus::Ok => "ok",
         FolderStatus::Missing => "missing",
@@ -150,27 +154,124 @@ fn folder_status_code(status: FolderStatus) -> &'static str {
     }
 }
 
-fn folder_error_message(folder: &str, status: FolderStatus, damaged_seq: u64) -> String {
+/// Formats the canonical offline folder error message (`src/tools/offline-output.c:mo_offline_folder_message`).
+#[must_use]
+pub fn folder_error_message(folder: &str, status: FolderStatus, damaged_seq: u64) -> String {
+    let safe = sanitize_terminal_text(folder);
     match status {
-        FolderStatus::Missing => format!("{folder} has no saved service store"),
+        FolderStatus::Missing => format!("no saved data in {safe}"),
         FolderStatus::Owned => {
-            format!("{folder} is held by another process, such as a running mo serve")
+            format!("a running service owns {safe}; nothing was read, and nothing waited for it")
         }
         FolderStatus::Recovery => format!(
-            "{folder} has an unfinished write journal; rerun with --recover to roll it back"
+            "recovery required in {safe}: an unfinished write left a journal to roll back; run again as the folder's owner with --recover, which rolls it back by writing database pages but changes no record"
         ),
-        FolderStatus::Unreadable => format!("{folder}/service.sqlite is not readable"),
+        FolderStatus::Unreadable => format!("cannot read {safe}"),
         FolderStatus::Damaged => {
             if damaged_seq != 0 {
-                format!("{folder}/service.sqlite is damaged at log sequence {damaged_seq}")
+                format!("damaged saved data in {safe}: log record {damaged_seq} failed its check")
             } else {
-                format!("{folder}/service.sqlite is damaged or not a service store")
+                format!("damaged saved data in {safe}")
             }
         }
-        FolderStatus::Io => format!("could not read {folder}/service.sqlite"),
-        FolderStatus::Memory => "out of memory reading history".to_string(),
-        FolderStatus::Handles => "too many open service stores".to_string(),
+        FolderStatus::Io => format!("could not read {safe}"),
+        FolderStatus::Memory => "out of memory while reading saved data".to_string(),
+        FolderStatus::Handles => "too many open stores while reading saved data".to_string(),
         FolderStatus::Ok => String::new(),
+    }
+}
+
+/// Returns the build replayability refusal reason, or `None` if this build matches
+/// (`src/tools/offline-output.c:mo_offline_build_refusal`).
+#[must_use]
+pub fn build_refusal(
+    record_build: &[u8; 32],
+    record_label: &str,
+    current_build: &[u8; 32],
+) -> Option<&'static str> {
+    if *record_build == [0u8; 32] || record_label.is_empty() {
+        Some("the record does not identify the build that recorded it")
+    } else if record_build != current_build {
+        Some("recorded by another build")
+    } else {
+        None
+    }
+}
+
+/// Canonical failure signature fields shared across `mo history`, `mo replay`, and `mo query`
+/// (`struct mo_signature`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailureSignature {
+    /// Class code: `0` = defect, `1` = work, `2` = memory, `3` = state_size.
+    pub class: u8,
+    /// Human-readable reason (e.g. `"stop"`, `"out of work"`).
+    pub reason: String,
+    /// Limit name (e.g. `"MO_LIMIT_SERVICE_WORK"`, or empty).
+    pub limit: String,
+    /// Numeric limit value (`0` if none).
+    pub limit_value: u64,
+    /// Bytecode function index.
+    pub function: u32,
+    /// Source file index.
+    pub file: u32,
+    /// Source span start byte offset.
+    pub start: u32,
+    /// Source span end byte offset.
+    pub end: u32,
+}
+
+impl FailureSignature {
+    /// Returns the JSON class name (`mo_signature_class_name`).
+    #[must_use]
+    pub fn class_name(&self) -> &'static str {
+        match self.class {
+            0 => "defect",
+            1 => "work",
+            2 => "memory",
+            _ => "state_size",
+        }
+    }
+
+    /// Appends the canonical JSON object (`src/tools/offline-output.c:mo_offline_signature_json`).
+    pub fn push_json(&self, out: &mut String, version: u32) {
+        let _ = write!(
+            out,
+            "{{\"version\":{version},\"class\":\"{}\",\"reason\":",
+            self.class_name()
+        );
+        push_json_string(out, &self.reason);
+        out.push_str(",\"limit\":");
+        push_json_string(out, &self.limit);
+        let _ = write!(
+            out,
+            ",\"value\":\"{}\",\"function\":\"{}\",\"file\":\"{}\",\"start\":\"{}\",\"end\":\"{}\"}}",
+            self.limit_value, self.function, self.file, self.start, self.end
+        );
+    }
+
+    /// Formats the canonical terminal description (`src/tools/offline-output.c:mo_offline_signature_text`).
+    #[must_use]
+    pub fn to_text(&self) -> String {
+        let mut out = String::new();
+        out.push_str(self.class_name());
+        if !self.reason.is_empty() {
+            out.push_str(" \"");
+            out.push_str(&sanitize_terminal_text(&self.reason));
+            out.push('"');
+        }
+        if !self.limit.is_empty() {
+            out.push_str(" at ");
+            out.push_str(&sanitize_terminal_text(&self.limit));
+            let _ = write!(out, " = {}", self.limit_value);
+        }
+        if self.class == 0 {
+            let _ = write!(
+                out,
+                " in function {}, file {} bytes {}-{}",
+                self.function, self.file, self.start, self.end
+            );
+        }
+        out
     }
 }
 
@@ -321,34 +422,24 @@ fn push_failure_json(out: &mut String, f: &HistoryFailure, build_digest: [u8; 32
         f.state_bytes,
         f.message.bytes.len()
     );
-    let class_name = match r.class {
-        0 => "defect",
-        1 => "work",
-        2 => "memory",
-        _ => "state_size",
+    let sig = FailureSignature {
+        class: r.class,
+        reason: r.reason.clone(),
+        limit: r.limit.clone(),
+        limit_value: r.limit_value,
+        function: r.function,
+        file: r.file,
+        start: r.start,
+        end: r.end,
     };
-    let _ = write!(
-        out,
-        "{{\"version\":{},\"class\":\"{class_name}\",\"reason\":",
-        r.signature_version
-    );
-    push_json_string(out, &r.reason);
-    out.push_str(",\"limit\":");
-    push_json_string(out, &r.limit);
-    let _ = write!(
-        out,
-        ",\"limit_value\":\"{}\",\"function\":{},\"file\":{},\"start\":{},\"end\":{}}}",
-        r.limit_value, r.function, r.file, r.start, r.end
-    );
+    sig.push_json(out, u32::from(r.signature_version));
     out.push_str(",\"build_label\":");
     push_json_string(out, &r.label);
     let _ = write!(out, ",\"build\":\"{}\"", hex_encode(&r.build));
     let refusal = if !f.state_valid {
         Some(STATE_CHECK_NOTE)
-    } else if r.build != build_digest {
-        Some("recorded by a different mo build")
     } else {
-        None
+        build_refusal(&r.build, &r.label, &build_digest)
     };
     match refusal {
         None => out.push_str(",\"replayable_here\":true,\"not_replayable\":null}"),
@@ -484,19 +575,32 @@ fn format_history_text(
                 out.push_str("unreadable record (its message does not decode); not replayable\n");
                 continue;
             };
+            let sig = FailureSignature {
+                class: r.class,
+                reason: r.reason.clone(),
+                limit: r.limit.clone(),
+                limit_value: r.limit_value,
+                function: r.function,
+                file: r.file,
+                start: r.start,
+                end: r.end,
+            };
             let _ = write!(
                 out,
                 "{} ({}), {}\n     recorded by {} (sha256 {}); ",
                 sanitize_terminal_text(&r.name),
                 if r.timer { "timer" } else { "tool" },
-                sanitize_terminal_text(&r.reason),
+                sig.to_text(),
                 sanitize_terminal_text(&r.label),
                 hex_encode(&r.build)
             );
-            if !f.state_valid {
-                let _ = writeln!(out, "not replayable here: {STATE_CHECK_NOTE}");
-            } else if r.build != build_digest {
-                out.push_str("not replayable here: recorded by a different mo build\n");
+            let refusal = if !f.state_valid {
+                Some(STATE_CHECK_NOTE)
+            } else {
+                build_refusal(&r.build, &r.label, &build_digest)
+            };
+            if let Some(reason) = refusal {
+                let _ = writeln!(out, "not replayable here: {reason}");
             } else {
                 out.push_str("replayable here\n");
             }

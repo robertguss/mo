@@ -247,38 +247,91 @@ pub fn run_bundle_test(
     sources: &mut SourceMap,
     diags: &mut DiagBag,
 ) {
-    if !load_source_bundle(cli.file(0), sources, diags) {
-        return;
-    }
-    let candidate_count = sources.len();
-    let load_opts = LoadOptions {
-        library: library.clone(),
-        upgrade: false,
-        syntax_arena_limit: MO_CLI_CHECK_SIZE as usize,
-    };
-    let Some(set) = load_bundle_with_library(sources, &load_opts, diags) else {
-        return;
-    };
-    for m in &set.modules {
-        if m.syntax.span.file < candidate_count
-            && (m.name == "UpgradeOld" || m.name.starts_with("UpgradeOld."))
-        {
+    let program = if cli.old_bundle.is_some() || cli.compile_context.is_some() {
+        let Ok(bundle_bytes) = fs::read(bytes_to_path(cli.file(0)).as_ref()) else {
             let _ = diags.push(Diagnostic::new(
                 ErrorCode::UpgradeBundleFormat,
                 Span::NONE,
-                "candidate declares the reserved UpgradeOld namespace",
+                "source bundle is malformed or unreadable",
             ));
+            return;
+        };
+        let old_bytes = match cli.old_bundle.as_deref() {
+            Some(p) => match fs::read(bytes_to_path(p).as_ref()) {
+                Ok(b) => Some(b),
+                Err(_) => {
+                    let _ = diags.push(Diagnostic::new(
+                        ErrorCode::UpgradeBundleFormat,
+                        Span::NONE,
+                        "source bundle is malformed or unreadable",
+                    ));
+                    return;
+                }
+            },
+            None => None,
+        };
+        let ctx_bytes = match cli.compile_context.as_deref() {
+            Some(p) => match fs::read(bytes_to_path(p).as_ref()) {
+                Ok(b) => Some(b),
+                Err(_) => {
+                    let _ = diags.push(Diagnostic::new(
+                        ErrorCode::UpgradeBundleFormat,
+                        Span::NONE,
+                        "source bundle is malformed or unreadable",
+                    ));
+                    return;
+                }
+            },
+            None => None,
+        };
+        let lib_dir = cli.library.as_deref().map(bytes_to_path);
+        let Some(checked) = mo_service::upgrade::bundle::check_bundle_program(
+            &bundle_bytes,
+            old_bytes.as_deref(),
+            None,
+            ctx_bytes.as_deref(),
+            lib_dir.as_deref(),
+            diags,
+            sources,
+        ) else {
+            return;
+        };
+        checked.program
+    } else {
+        if !load_source_bundle(cli.file(0), sources, diags) {
+            return;
         }
-    }
-    if diags.has_any() {
-        return;
-    }
-    let Some(program) = check_program(Some(sources), set, diags) else {
-        return;
+        let candidate_count = sources.len();
+        let load_opts = LoadOptions {
+            library: library.clone(),
+            upgrade: false,
+            syntax_arena_limit: MO_CLI_CHECK_SIZE as usize,
+        };
+        let Some(set) = load_bundle_with_library(sources, &load_opts, diags) else {
+            return;
+        };
+        for m in &set.modules {
+            if m.syntax.span.file < candidate_count
+                && (m.name == "UpgradeOld" || m.name.starts_with("UpgradeOld."))
+            {
+                let _ = diags.push(Diagnostic::new(
+                    ErrorCode::UpgradeBundleFormat,
+                    Span::NONE,
+                    "candidate declares the reserved UpgradeOld namespace",
+                ));
+            }
+        }
+        if diags.has_any() {
+            return;
+        }
+        let Some(prog) = check_program(Some(sources), set, diags) else {
+            return;
+        };
+        if diags.has_any() {
+            return;
+        }
+        prog
     };
-    if diags.has_any() {
-        return;
-    }
 
     let mut run_diags = DiagBag::new();
     let mut results = Vec::new();

@@ -513,8 +513,7 @@ pub fn execute_cli(
     errors: &mut (dyn Write + Send),
 ) -> i32 {
     if cli.source_bundle {
-        if cli.command == Command::Test && cli.old_bundle.is_none() && cli.compile_context.is_none()
-        {
+        if cli.command == Command::Test {
             let mut sources = SourceMap::new();
             let mut diags = DiagBag::new();
             let load_opts = load_options_for(cli);
@@ -745,13 +744,109 @@ pub fn execute_cli(
             }
         }
         Command::Replay => {
-            return deferred_command_error(errors, "replay", "Slice 3E (crates/mo-upgrade)");
+            let data_dir = cli.data.as_deref().map(bytes_to_path);
+            let artifact = cli.artifact.as_deref().map(bytes_to_path);
+            let lib_dir = cli.library.as_deref().map(bytes_to_path);
+            let build_digest = runtime_identity_digest().unwrap_or([0u8; 32]);
+            let opts = mo_upgrade::ReplayOptions {
+                file: (!cli.files.is_empty()).then(|| cli.file(0)),
+                failure_id: cli.failure,
+                data_dir: data_dir.as_deref(),
+                artifact: artifact.as_deref(),
+                revised: cli.revised.as_deref(),
+                recover: cli.recover,
+                json: cli.json,
+                library: lib_dir.as_deref(),
+                version: MO_VERSION,
+                build_digest,
+            };
+            return run_on_source_stack(|| mo_upgrade::run_replay(&opts, output, errors))
+                .unwrap_or_else(|reason| {
+                    let _ = writeln!(
+                        errors,
+                        "mo replay: could not prepare pipeline stack: {reason}"
+                    );
+                    1
+                });
         }
         Command::Query => {
-            return deferred_command_error(errors, "query", "Slice 3E (crates/mo-upgrade)");
+            let Some(fn_raw) = cli.function.as_deref() else {
+                let _ = writeln!(errors, "mo query: missing query function name");
+                return 2;
+            };
+            let Ok(function) = std::str::from_utf8(fn_raw) else {
+                let _ = writeln!(errors, "mo query: function name is not valid UTF-8");
+                return 2;
+            };
+            let data_dir = cli.data.as_deref().map(bytes_to_path);
+            let artifact = cli.artifact.as_deref().map(bytes_to_path);
+            let admin_socket = cli.admin_socket.as_deref().map(bytes_to_path);
+            let lib_dir = cli.library.as_deref().map(bytes_to_path);
+            let build_digest = runtime_identity_digest().unwrap_or([0u8; 32]);
+            let opts = mo_upgrade::QueryOptions {
+                file: cli.file(0),
+                function,
+                failure_id: cli.failure,
+                data_dir: data_dir.as_deref(),
+                artifact: artifact.as_deref(),
+                admin_socket: admin_socket.as_deref(),
+                recover: cli.recover,
+                json: cli.json,
+                library: lib_dir.as_deref(),
+                limits: cli.limits,
+                max_work: cli.max_work,
+                version: MO_VERSION,
+                build_digest,
+            };
+            return run_on_source_stack(|| mo_upgrade::run_query(&opts, output, errors))
+                .unwrap_or_else(|reason| {
+                    let _ = writeln!(
+                        errors,
+                        "mo query: could not prepare pipeline stack: {reason}"
+                    );
+                    1
+                });
         }
         Command::Rehearse => {
-            return deferred_command_error(errors, "rehearse", "Slice 3E (crates/mo-upgrade)");
+            let (Some(art_raw), Some(old_raw), Some(cand_raw)) = (
+                cli.artifact.as_deref(),
+                cli.old_bundle.as_deref(),
+                cli.candidate.as_deref(),
+            ) else {
+                let _ = writeln!(
+                    errors,
+                    "usage: mo rehearse --artifact FILE --old-bundle FILE --candidate FILE [--migrate M] [--context FILE] [--json]"
+                );
+                return 2;
+            };
+            let artifact = bytes_to_path(art_raw);
+            let old_bundle = bytes_to_path(old_raw);
+            let candidate = bytes_to_path(cand_raw);
+            let migration = cli
+                .migration
+                .as_deref()
+                .and_then(|b| std::str::from_utf8(b).ok());
+            let compile_context = cli.compile_context.as_deref().map(bytes_to_path);
+            let lib_dir = cli.library.as_deref().map(bytes_to_path);
+            let build_digest = runtime_identity_digest().unwrap_or([0u8; 32]);
+            let opts = mo_upgrade::RehearseOptions {
+                artifact: artifact.as_ref(),
+                old_bundle: old_bundle.as_ref(),
+                candidate: candidate.as_ref(),
+                migration,
+                compile_context: compile_context.as_deref(),
+                library: lib_dir.as_deref(),
+                json: cli.json,
+                build_digest,
+            };
+            return run_on_source_stack(|| mo_upgrade::run_rehearse(&opts, output, errors))
+                .unwrap_or_else(|reason| {
+                    let _ = writeln!(
+                        errors,
+                        "mo rehearse: could not prepare pipeline stack: {reason}"
+                    );
+                    1
+                });
         }
         Command::History => {
             let folder_cow = String::from_utf8_lossy(cli.file(0));
@@ -766,7 +861,27 @@ pub fn execute_cli(
             return mo_service::history::run_history(&opts, output, errors);
         }
         Command::Diff => {
-            return deferred_command_error(errors, "diff", "Slice 3E (crates/mo-upgrade)");
+            let lib_dir = cli.library.as_deref().map(bytes_to_path);
+            let (old_file, new_file) = if cli.files.len() == 2 {
+                (Some(cli.file(0)), cli.file(1))
+            } else {
+                (None, cli.file(0))
+            };
+            let opts = mo_upgrade::DiffOptions {
+                old_file,
+                new_file,
+                json: cli.json,
+                library: lib_dir.as_deref(),
+                version: MO_VERSION,
+            };
+            return run_on_source_stack(|| mo_upgrade::run_diff(&opts, output, errors))
+                .unwrap_or_else(|reason| {
+                    let _ = writeln!(
+                        errors,
+                        "mo diff: could not prepare pipeline stack: {reason}"
+                    );
+                    1
+                });
         }
         Command::Version => {
             let ok = writeln!(output, "{}", version_line()).is_ok() && output.flush().is_ok();

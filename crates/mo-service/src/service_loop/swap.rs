@@ -1,16 +1,18 @@
 //! Live service image swap helpers (`src/vm/service-swap.c` parity).
 //!
-//! Designed so both `mo-service`'s live upgrade protocol and Slice 3E's `crates/mo-upgrade`
+//! Designed so both `mo-service`'s live upgrade protocol and `crates/mo-upgrade`
 //! can atomically swap a running service's image, state, timers, and schema without losing
 //! committed progress or failing half-way.
 
+use mo_def::limits::MO_LIMIT_SERVICE_WORK;
 use mo_heap::Heap;
 use mo_heap::saved::decode_value;
-use mo_vm::Image;
+use mo_host::HostContext;
+use mo_vm::{Image, Outcome, Process};
 
 use crate::binary::export::export_schema_digest;
 
-use super::{ServiceLoop, ServiceStatus, TimerSlot};
+use super::{ServiceLoop, ServiceStatus, TimerSlot, short_handler_name};
 
 /// Pre-validated candidate state prepared off the hot path before committing a live swap.
 pub struct PreparedSwap {
@@ -28,7 +30,7 @@ pub struct PreparedSwap {
     pub schema_digest: [u8; 32],
     /// New service image key (`program_checksum ^ ((service_idx as u64) << 32)`).
     pub image_key: u64,
-    /// Recomputed timer schedule for the new service.
+    /// Recomputed timer schedule for the new service (preserving phase by timer name).
     pub timers: Vec<TimerSlot>,
 }
 
@@ -55,12 +57,41 @@ impl ServiceLoop {
             export_schema_digest(&new_encoded_state).ok_or(ServiceStatus::Corrupt)?;
         let image_key = file.program_checksum ^ (u64::from(new_service_idx) << 32);
 
+        // Evaluate candidate timer intervals and preserve phase (`next_due_us`) for any timer
+        // whose short function name matches an existing timer (`src/vm/service-swap.c:132-148`).
+        let old_file = self.image.file();
+        let old_svc = &old_file.services[self.service_idx as usize];
         let mut timers = Vec::with_capacity(svc.timers.len());
         for t in &svc.timers {
-            let interval_us = u64::from(t.interval);
+            let mut proc = Process::new(
+                &new_image,
+                self.limits,
+                HostContext::stdio(Vec::new(), Vec::new()),
+            );
+            let (outcome, _) = proc.call_with_budget(t.interval, Vec::new(), MO_LIMIT_SERVICE_WORK);
+            let interval_us = match outcome {
+                Outcome::Returned(v) => {
+                    let us = v.as_duration();
+                    if us <= 0 {
+                        return Err(ServiceStatus::Invalid);
+                    }
+                    us as u64
+                }
+                Outcome::Failed(_) | Outcome::Stopped(_) => return Err(ServiceStatus::Failed),
+            };
+
+            let new_name = short_handler_name(file.function_name(t.function));
+            let preserved_due = old_svc
+                .timers
+                .iter()
+                .zip(self.timers.iter())
+                .find(|(ot, _)| short_handler_name(old_file.function_name(ot.function)) == new_name)
+                .map(|(_, slot)| slot.next_due_us);
+            let next_due_us =
+                preserved_due.unwrap_or_else(|| now_mono_us.saturating_add(interval_us));
             timers.push(TimerSlot {
                 interval_us,
-                next_due_us: now_mono_us.saturating_add(interval_us),
+                next_due_us,
             });
         }
 
