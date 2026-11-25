@@ -1,7 +1,7 @@
 # mo-harness: Confined Autonomous Coding Agent in Mo
 
 `mo-harness` is a self-contained coding-agent runtime written in Mo that exercises the full
-post-Phase-7 capability and actor stack ([post-phase7-direction.md](../../docs/design/post-phase7-direction.md)):
+capability and actor stack ([why-mo.md](../../docs/why-mo.md)):
 
 - **Workspace confinement by construction ([main.mo](main.mo)):** `confine_workspace` narrows the
   host `Files`, `Command`, and `Network` capabilities to a single target directory

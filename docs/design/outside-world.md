@@ -224,7 +224,7 @@ sets and maps of them.
 
 ### Limits
 
-Named in `src/base/limits.h`, with these starting values:
+Named in `crates/mo-def/defs/limits.h`, with these starting values:
 
 | Limit | Value | When passed |
 | --- | --- | --- |
@@ -276,10 +276,7 @@ below describe. These are the points the design left open, and what was built.
 - **`bytes.slice(from, to)` with `from` at or past `to` gives empty `Bytes`.**
 - **Lean types the four operations and stops at each.** `ci/check_host.py` names them in
   `OUTSIDE_MODEL`. The Core text version is 0.10.
-- **The code is four files in `src/host/`.** `network.c` holds the checks both networks share
-  and builds the results, `real-network.c` and `fake-network.c` hold the two networks, and
-  `network.h` is their shared internal header. Their tests are `tests/test_network.c`, and the
-  fake has a fuzz target of its own, `fuzz/fuzz_network_fake.c`.
+- **Implementation.** Real and fake `Network` implementations live in `crates/mo-host/` (with TLS 1.2+ via `rustls`).
 
 ## `Bytes` operations
 
@@ -294,9 +291,8 @@ needs two more, and the prototype measured them:
 Without them the same fetch copies each byte into a list. It takes 6.7 to 7.9 times the
 instructions and up to 2.0 times the heap.
 
-Both are primitives: rows in `src/base/prims.def`, rows in `docs/design/library.md`, and Lean
-counterparts with their safety proofs. They go at the end of `prims.def`, because primitive
-numbers are positions in that file and four of them are pinned in `src/prim/prim.c`.
+Both are primitives: rows in `crates/mo-def/defs/prims.def`, rows in `docs/design/library.md`, and Lean
+counterparts with their safety proofs.
 
 ## The HTTP client
 
@@ -544,9 +540,7 @@ decisions.
 
 ### How it is built
 
-The capability uses the SQLite already linked into every `mo`, and its code sits beside the
-service store in `src/host/`. It shares the store's allocator setup, which is made once for the
-process under one memory budget. A `Sqlite.Database` owns its database handle and closes it
+The capability uses bundled SQLite (`rusqlite`) inside `crates/mo-host/`. A `Sqlite.Database` owns its database handle and closes it
 when the program drops the last reference.
 
 A fake must keep a database between two opens of its path. The rule for a fake's state in
@@ -564,9 +558,7 @@ A query's rows are Mo values, so the program's heap limit bounds a result.
 
 ## Confinement of the children
 
-`mo serve` starts three child runs for each upgrade it is sent: the compile, the listing of intent
-items, and the checks. All three start in `spawn()` in `src/host/compile.c`. The confinement goes
-there, after the resource limits and before `execve`.
+Upgrade compiler children and `Command` children apply resource limits and Linux Landlock + seccomp confinement in `crates/mo-service/` and `crates/mo-host/src/command.rs`.
 
 **The mechanism is Landlock and a seccomp filter together.** The probe shows that the pair
 refuses every attempt on the development host and on a GitHub-hosted `ubuntu-24.04` runner,
@@ -698,9 +690,8 @@ documents spend their instructions.
 
 ## Where a capability is written down
 
-`src/base/hostops.def` gives each operation one row, which the checker, the code generator, the
-verifier, the VM and the host all read. A new capability type also touches the places below,
-which are kept by hand. The two capabilities edit the same places, so SQLite merges after HTTP.
+`crates/mo-def/defs/hostops.def` gives each operation one row, which the checker, the code generator, the
+verifier, the VM and the host all read.
 
 The new types take the numbers after `Simulation`: bytecode holds these numbers, so none that
 exists may change. Host capabilities are then no longer the unbroken range from `Args` to
@@ -720,7 +711,7 @@ bound, and still skips `Simulation`.
 | `host` | The count of private types and the fake-state union (`host.h`); the operation table, the fake constructors, the real capabilities and the restore, snapshot and drop of fakes (`host.c`); capability slots and private types (`types.c`); a counter and a release function for each handle that owns a descriptor, as `real-files.c` has for folders |
 | `tools` | The fake factories that promise generation uses (`fakes.h`, `fakes.c`); the list of types in `promises.c`, with the count beside it; what `mo run` prepares (`run.c`) |
 | Tests | `test_tables.c` (types, the rules for a row, the operation list), `test_heap.c`, `test_opcodes.c`, `test_fakes.c`, `test_types.c`, `test_bytecode_io.c`, `test_host.c`, `heap_fixture.h`, `host_fixture.h`, `vm_run.h` |
-| Fuzz and CBMC | `fuzz_host.c`, `fuzz_bytecode_io.c`, `fuzz_host_real.c`; `cbmc/verify.c` |
+| Tests & fuzzing | `crates/mo-host`, `crates/mo-bytecode`, `crates/mo-vm` unit/integration tests and `fuzz/corpus/` |
 | Lean | The capability and operation types, their names, signatures and the spec-only set (`Syntax.lean`); evaluation (`Prim.lean`); capability state (`Value.lean`); the text form (`Text/`) |
 | `ci` | `check_host.py`, `check_core_check.py`, `core_library_map.py`, `check_lower_source.py`, `library_map.sh` |
 | Documents | `bytecode.md` sections 2.1 and 7 and its count of capability names; the reference, sections 10.3, 11, 12.4, 13.4 and 14; `library.md`; `formal/TEXT.md` and `TRANSLATION.md`; `docs/agent-guide.md` |
@@ -786,23 +777,16 @@ built it for `NetworkError`.
 
 ## The threat model
 
-`docs/design/sandbox-properties.md` and `docs/design/intent.md` change when each part is built,
-and not before:
+See [`sandbox-properties.md`](sandbox-properties.md) for the current pure-Rust threat
+model and guarantees covering `Network`, `Sqlite`, `Command`, and confined child processes:
 
-- **Confinement** changes gap 4 (no operating-system confinement) and gap 7 (the upgrade
-  credential reaches the compiler). A memory-safety defect in a child is then contained to what
-  the table above allows. Forging its own output stays possible, and the text keeps saying so.
-- **The network capability** changes property P7. A program reaches the network only with a
-  `Network` that `main` lists. A program under `mo run` is not confined: it runs as its user, as
-  any script does.
-- **The SQLite capability** follows the same rule. A program opens a database only with a
-  `Sqlite` that `main` lists.
-- **A service still holds no capability.** It cannot call out, and it cannot open a database.
-- **Lean proves the capability promise on the model.** P7 has tests and fuzzing behind it
-  today, and no theorem. The phase adds theorems about Mo Core: a program changes the world
-  only through a capability it holds, and `main` holds only what it lists. Robert approves the
-  statements before any proof is written. The theorems are about the model. The C VM is still
-  compared with Lean by test, and SQLite and the real network stay outside the model.
+- **Confinement:** Upgrade compiler children and `Command` subprocesses run under resource
+  limits and Linux Landlock + seccomp confinement where supported.
+- **The network capability:** A program reaches the network only through a `Network`
+  capability explicitly passed to it (optionally narrowed with `allow_hosts`).
+- **The SQLite capability:** A program opens a database only through a `Sqlite`
+  capability confined to its granted folder with SQLite authorizer guards.
+- **Services:** A durable `service` holds no external capabilities.
 
 ## What this leaves out
 

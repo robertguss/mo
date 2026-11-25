@@ -1198,7 +1198,7 @@ GUIDE = [
     # The steps acceptance follows, in the guide's order.
     "first copy the whole stopped data folder, including any `service.sqlite-journal` beside the "
     "database.",
-    "`mo history` shows each record's build digest, and `sha256sum /opt/mo/*/build/gcc/debug/mo` "
+    "`mo history` shows each record's build digest, and `sha256sum /opt/mo/*/target/release/mo` "
     "finds the executable with that digest.",
     "To check a fix, copy the program's folder, edit the copy, and add `--fix COPY/main.mo`.",
 ]
@@ -1208,10 +1208,10 @@ def guide(binary):
     text = " ".join(mo(binary, ["guide"], 0).stdout.decode().split())
     for sentence in GUIDE:
         assert sentence in text, f"docs/agent-guide.md no longer says: {sentence}"
-    # The digest search must find an executable where docs/ops/task-queue.md installs it.
+    # The digest search must find an executable under a deployed /opt/mo/<sha>/ checkout.
     pattern = re.search(r"`sha256sum (/opt/mo/\S+)`", text).group(1)
     with tempfile.TemporaryDirectory(prefix="mo-guide-") as root:
-        executable = pathlib.Path(root + "/opt/mo/0123abcd/build/gcc/debug/mo")
+        executable = pathlib.Path(root + "/opt/mo/0123abcd/target/release/mo")
         executable.parent.mkdir(parents=True)
         executable.touch()
         assert glob.glob(root + pattern) == [str(executable)], pattern

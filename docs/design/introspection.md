@@ -1,30 +1,31 @@
-# Introspection and replay: the Phase 4 design
+# Introspection and Replay
 
-**Status: implemented; diagnostic gate passed on 2026-11-07 (14 of 16 correct). Robert approved v0.1.0 on 2026-11-07.**
-The [run record](../status/phase4-run.md) reports both misses and the limits of the evidence. Section 12 records the
-decisions made at approval, and "Approval and changes" at the end records every later change. A
-change to an interface, format or limit here is made in this document, with its reason, before
-the code that depends on it lands. The phase plan is
-`docs/plans/2026-11-03-1704-feat-phase4-see-inside-plan.md`; this document holds the interfaces,
-budgets, models and experiment results it asks for. The original evaluation protocol is `learnability/phase4/protocol.md`; its historical-status notice and the phase plan’s R20–R24 govern the 2026-11-05 evaluation amendment. The experiments this design rests on are in
-`learnability/phase4/preflight/`, with their results in its `README.md`.
+**Status: implemented.** Operator views, immutable state/failure exports (`mo fetch`),
+offline queries (`mo query`), stopped-folder inspection (`mo history`), and failure
+replay with original-first fix verification (`mo replay --fix`) are implemented in
+`crates/mo-service/` and `crates/mo-upgrade/`.
 
-## 1. What Phase 4 promises
+> **Note on control-plane isolation:** Operator views and live upgrade tools were moved
+> off public HTTP listeners onto an opt-in mode-`0600` local Unix domain socket
+> (`--admin-socket PATH`), and the earlier external approval door (`mo review`/`mo intent`)
+> was retired in favor of `mo diff`. The wire formats, failure-capture envelopes,
+> export framing, and offline replay semantics below remain the authoritative specification.
 
-An agent operating a running Mo service gets three instruments, each with a narrow promise.
+## 1. What introspection promises
 
-1. **Live views.** Built-in operator tools on the service's existing MCP endpoint show its state,
-   mailbox, timers, memory, supervisor events, retained failures and committed messages since the
-   last snapshot. A token holder can read them. They never change the service. The
-   exceptions are the live upgrade tools (`docs/design/upgrades.md`), which replace the program and
-   require a second credential the service token never stands in for, and the review door's
-   writing tools (`docs/design/intent.md`), which require a third.
+An operator inspecting a running Mo service gets three instruments, each with a narrow promise.
+
+1. **Live views.** Built-in operator tools on the service's `--admin-socket` MCP endpoint show its state,
+   mailbox, timers, memory, supervisor events, retained failures, and committed messages since the
+   last snapshot. They are read-only and never change the service. The
+   live upgrade tools (`docs/design/upgrades.md`) replace the program over the same local
+   admin socket.
 2. **Offline queries.** The service exports bounded, identified bytes of its state, or of one
-   retained failure, to a private file. The agent runs a pure Mo function over that file on its
-   own side. The service never runs caller-written code.
+   retained failure, to a private file (`mo fetch`). The operator runs a pure Mo function over that file on its
+   own side (`mo query`). The service never runs caller-written code.
 3. **Failure replay.** A handler failure that the supervisor counts leaves a diagnostic record
    when capture succeeds, or an explicit "record unavailable" with a reason when it does not.
-   Offline, the agent replays the record against the original compiled program and runtime
+   Offline, the operator replays the record against the original compiled program and runtime
    build, reads the stack and variables, and checks a revised handler against the reconstructed
    case.
 
@@ -33,7 +34,7 @@ What none of them promises:
 - **Live memory.** A replay reconstructs the handler's logical inputs: its state, arrival time
   and arguments, the program, the runtime, and the recorded limits. It does not reconstruct the
   live heap's other occupants. Queued mailbox arguments share the handler's heap
-  (`src/vm/service.c`, `MO_LIMIT_SERVICE_MESSAGE_MEMORY`), so a handler can run out of memory
+  (`MO_LIMIT_SERVICE_MESSAGE_MEMORY`), so a handler can run out of memory
   live and succeed offline under the same ceiling. Replay reports that as **not reproduced**.
 - **What a fix verdict covers.** A verified fix means the original failure reproduced offline
   and a compatible revised handler then succeeded under the same reconstructed conditions. It
@@ -43,19 +44,10 @@ What none of them promises:
 
 ## 2. Where the operating agent stands
 
-The live views need only the service's URL and token, so a client behind the exe.dev proxy can
-use them. Fetching an export, replaying and querying need more: the agent must run commands on
-the service's host, or on a machine holding the data folder, with the program's source and the
-runtime build that recorded it. A remote operator reaches the host over SSH, as the Phase 3
-runbook did (`docs/ops/task-queue.md`). No TLS client is added, and fetch refuses anything but
-loopback (section 5.3).
-
-The Phase 3 deployment host `turnpike-ferret` was deleted on 2026-11-03 (`docs/ROADMAP.md`), so
-there is no remote host to demonstrate access to. The evaluation therefore runs each service
-variant on the same machine as the agent session (`learnability/phase4/protocol.md`, "Where
-sessions run"). That machine meets the prerequisite by construction: the agent can read the
-source, run the pinned `mo`, and reach `127.0.0.1`. A remote, proxy-only deployment remains a
-documented limit: it gets the views and nothing else.
+Live operator views, `mo fetch`, live `mo query`, and `mo push` connect over the service's
+local `--admin-socket` Unix domain socket (or through an SSH Unix-socket forward). Offline
+replaying and stopped-folder querying run on a machine holding a copy of the data folder or
+fetched `.moex` export, with the exact program source and `mo` build that recorded it.
 
 ## 3. Operator tools on the MCP endpoint
 
@@ -78,7 +70,7 @@ paging (`runtime/mcp.mo`). A list view that does not fit one reply carries `"tru
 number of items left out, and `"next"`, the arguments that return the following page. An
 argument number must be written as a plain nonnegative integer, so `-0`, `1.0` and `1e2` are
 refused. A hyphen cannot occur in an author tool's name, which the lexer limits
-to `[a-z0-9_]` (`src/syntax/lexer.c`), so the `mo-` prefix cannot collide on the wire.
+to `[a-z0-9_]` (`crates/mo-syntax/`), so the `mo-` prefix cannot collide on the wire.
 
 Clients may rename tools before a model sees them, and the design does not depend on spelling
 surviving. The client probe (`learnability/phase4/preflight/README.md`, "Client names and
@@ -101,33 +93,15 @@ tool shows and its limits. Author tools gain no annotations in this phase: the e
 silently given an approval-skipping hint. The evaluation configures client approval explicitly
 (`learnability/phase4/protocol.md`).
 
-The nine views are followed by `mo-upgrade-open`, `mo-upgrade-page` and
-`mo-upgrade-commit`. These are the one documented exception to operator read-only
-safety: open reserves an upload slot, page writes consecutive padded-base64
-ranges (8192 decoded bytes except the final page), and commit replaces the
-program and migrates state at a message boundary. Every call needs the service
-token plus `Mo-Upgrade-Authorization: Bearer VALUE`; the service token alone
-never authorizes an upgrade. All three carry `readOnlyHint: false`,
-`idempotentHint: false` and `openWorldHint: false`; only commit carries
-`destructiveHint: true`. Their descriptions and schemas specify the page fields,
-base/candidate digests and slot lifetime. See `upgrades.md` for the shared reports.
-Remote pushes use the SSH local-forward procedure in `../ops/task-queue.md`.
+The nine read-only views are followed on `--admin-socket` by `mo-upgrade-open`,
+`mo-upgrade-page`, and `mo-upgrade-commit`. Open reserves an upload slot, page writes
+consecutive padded-base64 ranges (8192 decoded bytes except the final page), and commit
+replaces the program and migrates state at a message boundary. All three carry
+`readOnlyHint: false`, `idempotentHint: false`, and `openWorldHint: false`; only commit
+carries `destructiveHint: true`. See [upgrades.md](upgrades.md) for the shared reports.
 
-The review door's tools follow, in this order ([intent.md](intent.md)):
-
-| Wire name | Credential beside the service token | Does | Annotations |
-| --- | --- | --- | --- |
-| `mo-intent-items` | approval | Pages the active program's items and the review setting | read-only |
-| `mo-intent-approve` | approval | Approves one item of the active program | writes |
-| `mo-review-setting` | approval | Reads or sets the review setting | writes |
-| `mo-review-pending` | approval | The held upgrade's review id, digests, migration, approval-set version and intent difference | read-only |
-| `mo-review-answer` | approval | Answers the held upgrade yes or no, naming its review id | writes, destructive |
-| `mo-upgrade-status` | upgrade | The held upgrade's review id and state, and the latest review decisions, without source | read-only |
-| `mo-review-source` | approval | Pages the held or the active source bundle while the review id it names is held | read-only |
-
-Read-only tools carry `readOnlyHint: true`, `idempotentHint: true` and
-`openWorldHint: false`; the others carry `readOnlyHint: false`,
-`idempotentHint: false` and `openWorldHint: false`, and `mo-review-answer` also
+*(Historical note: the earlier Phase 6 external approval tools `mo-intent-*` and
+`mo-review-*` were retired in favor of `--admin-socket` isolation and `mo diff`.)*
 `destructiveHint: true`. A request carrying both the upgrade and the approval
 credential is refused with E1414. So the service token reads the views, the
 upgrade credential pushes and reads the door's state, and only the approval
@@ -155,9 +129,8 @@ JSON value.
 ### 3.3 Rendering state
 
 The existing MCP shapes cannot render every legal state. Shape reachability starts at tool
-arguments and results (`src/bytecode/service-reach.c`), so a service whose tools are all
-read-only has no shape for its state, and the converter asserts a shape exists
-(`src/tools/protocol-value.c`). Private state is legal, and E0105 deliberately skips it.
+arguments and results (`crates/mo-bytecode/`), so a service whose tools are all
+read-only has no shape for its state (`crates/mo-service/`). Private state is legal, and E0105 deliberately skips it.
 
 The state view is rendered from the **saved encoding** instead. Every saved value carries its own
 complete schema: tags, nominal names (already qualified by module), case and field names
@@ -342,8 +315,7 @@ CREATE TABLE failure_state(id INTEGER PRIMARY KEY, record BLOB NOT NULL) STRICT;
 ```
 
 `user_version` stays 1, and the existing tables and their records are unchanged. The store's
-check is by table name (`src/host/store.c`, `store_table_ready`), so a Phase 3 binary opening a Phase 4 store
-ignores the new tables, and a Phase 4 binary opening a Phase 3 store creates them.
+check is by table name (`crates/mo-service/`), so older stores upgrade cleanly when opened.
 
 A record is two framed blobs bound to one id, in two rows inserted, with any evictions, in one
 transaction:
@@ -353,7 +325,7 @@ transaction:
 
 They are separate rows because SQLite applies `SQLITE_LIMIT_LENGTH` to a whole row as well as to
 each value, and the store sets it to `MO_LIMIT_STORE_ROW`, 16 MiB plus 4,096 bytes
-(`src/host/store.c`, `mo_store_open`). One row holding a near-limit state and its message would
+(`crates/mo-service/`). One row holding a near-limit state and its message would
 pass that limit; a state row alone fits it exactly as a snapshot row does, and the message row is
 at most 1 MiB. Both frames are the store's own envelope, `MOST` 1, with kinds 3 and 4 beside the
 log's 1 and the snapshot's 2 (magic, kind, sequence, image key, length, payload, FNV-1a-64), so
@@ -397,8 +369,7 @@ for defects. It is stored as text in the `kind` column.
 
 Order, at the point where `mo_service_step` sees a failed call today:
 
-1. **Context, before cleanup.** The frames are still live: the event hook already runs before
-   `mo_service_finish_call` unwinds them (`src/vm/service.c`). For a defect, the existing defect frames are
+1. **Context, before cleanup.** The frames are still live before the service runtime unwinds them (`crates/mo-service/`). For a defect, the existing defect frames are
    used. For a work-limit cancellation, which fabricates no defect, the runtime walks the
    process's live frames the same way. Frames and top-frame variables are rendered as text
    into a buffer of at most `MO_LIMIT_FAILURE_CONTEXT_BYTES` (64 KiB, the defect report's size),
@@ -505,7 +476,7 @@ mo history DIR [--json]
 `FILE` is the program's main module, as for every `mo` command. `replay` compiles `FILE` and
 requires its program checksum to equal the record's, and refuses any other runtime build (section
 4). It decodes the record and runs the handler through the same controlled call the service uses,
-factored out of `src/vm/service.c`, with the recorded budgets, no timers, no mailbox and no
+factored out of `crates/mo-service/`, with the recorded budgets, no timers, no mailbox and no
 store. It prints the original message, pre-call state, signature and the regenerated stack with
 top-frame variables, and marks fields unavailable or truncated.
 
@@ -554,7 +525,7 @@ is refused, since lowering keeps only the instances a program uses. The name is 
 the checker's symbols, so an overloaded name selects the overload whose first parameter is the state
 type. The checker refuses an entry whose parameters or result contain a capability or a function,
 including inside records, choices, tuples and collections: the rule the checker already applies to
-service state and handler inputs (reference section 11.5, `src/check/services.c`), applied to the
+service state and handler inputs (reference section 11.5, `crates/mo-check/`), applied to the
 entry. A named top-level function captures nothing, so its parameters and result are the whole
 check. The entry's first parameter must be the state type of `FILE`'s main service exactly. A
 failure query's remaining parameters must be `Time` and the handler's argument types, in order.
@@ -620,12 +591,11 @@ query functions are allowed.
 counted through the controlled call the service uses, so a query that runs out stops with a report
 naming `--max-work`. `mo history` runs no Mo code and takes none of them; its copy is bounded by
 `MO_LIMIT_HISTORY_BYTES` (section 9). Replay uses only the recorded budgets and takes none of these
-flags. Each is a named limit in `src/base/limits.h`.
+flags. Each is a named limit in `crates/mo-def/defs/limits.h`.
 
 ## 9. Reading a stopped data folder
 
-`mo history` and `mo replay --data` use a new reader in `host/store-history.c`, never
-`mo_service_open`, which can run timers and take snapshots.
+`mo history` and `mo replay --data` use a dedicated read-only history reader in `crates/mo-service/src/history.rs`, never opening a live service loop that could run timers or take snapshots.
 
 - It opens `DIR/service.sqlite` read-only, never creates it, and never waits for a lock. It
   classifies the folder by SQLite's result code, never by whether a `-journal` file exists: a
@@ -1169,21 +1139,13 @@ rows. Rendering is linear in the state's size, about 8 s per MB at `-O2` and 20 
 rendering, so `mo serve` started beside a `mo history` of the 10.4 MB state listened within 2.3 s.
 The numbers and the commands are in `learnability/phase4/offline/results/verification.md`.
 
-## Whole-program upgrades and the review door
+## Whole-program upgrades and local administration
 
 Whole-program upgrades are implemented as [the upgrade design](upgrades.md)
-describes. Activation atomically records the source bundle, migrated snapshot and
-program identities in a version-2 folder that older readers refuse. The upgrade
-operator tools change the service and require a separate credential. A compiler
-child limits crashes and stalls, and where the host can confine it reaches only
-its compiler, library, inputs and own folder; a child taken over can still forge
-its own output, so its compiler is part of the upgrade credential's trusted base. Write access to
-the data folder confers the authority to replace the running program.
-
-Phase 6 adds [the review door](intent.md): a third secret, the approval
-credential, held only on the service's host; check children that run the
-candidate's checks there under the same limits and confinement; and a
-version-3 folder holding approvals. Write access to the data
-folder confers approval authority too, and a
-memory-safety defect in the compiler or the VM that pushed source can reach is a
-way around the door without a shell.
+describes. Activation atomically records the source bundle, migrated snapshot, and
+program identities in a version-2 folder that older readers refuse. Live operator
+views and upgrade tools bind exclusively to `--admin-socket PATH` (mode `0600`),
+and candidate compilation runs in a confined child process. Write access to
+the data folder or admin socket confers the authority to replace the running program.
+The earlier Phase 6 review door (`mo review`/`mo intent`) was retired in favor of
+`mo diff` and code-first non-vacuous `promise` blocks.

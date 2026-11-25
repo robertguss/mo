@@ -1,26 +1,21 @@
 # Mo Bytecode v0.3
 
-**Implementation contract, checked 24 October 2026 against main at
-[`acb2b84`](https://github.com/robertguss/mo/commit/acb2b8488f872c8d907184f2618c467dd8209afc).** This is the
-contract between Mo's compiler and its virtual machine, part of Architecture
-v0.1 (`architecture.md`). It fixes the file format, the instruction set, the
-representation of values, the calling convention and the rules the verifier
-enforces. `src/codegen` writes this format through `src/bytecode`'s writer.
-The loader, verifier, text tools and VM are integrated. `mo emit FILE -o OUT`
-writes a binary file; `mo check --emit=bytecode` prints its indexed text form.
-`mo run` compiles source and runs the resulting image, but no CLI command loads
-an emitted `.bc` file (D271). D318 adds explicit service shapes in version 0.3.
+**Implementation contract.** This is the contract between Mo's bytecode compiler
+(`crates/mo-codegen`) and its virtual machine (`crates/mo-vm`), part of
+[Architecture](architecture.md). It fixes the file format, the instruction set,
+the representation of values, the calling convention, and the rules the verifier
+(`crates/mo-bytecode`) enforces. `mo emit FILE -o OUT` writes a binary `.bc`
+file, `mo check --emit=bytecode` prints its indexed text form, and `mo run OUT`
+loads, verifies, and executes an emitted `.bc` file directly.
 
-Four files carry the contract as code, and nothing else defines it:
+Four contract files define the interface across crates:
 
-- `src/heap/types.h`: the runtime type table, the layouts, and
-  `mo_case_shape` (section 2.3). The compiler, the verifier, the heap, the
-  primitives and the host all use it.
-- `src/bytecode/bytecode.h`: the file's structures, and the opcodes with their
-  operands.
-- `src/base/prims.def`: every primitive operation, with its Mo signature, the
-  ownership of each parameter and the bugs it can raise (section 6).
-- `src/base/hostops.def`: every capability operation, in the same form
+- `crates/mo-bytecode/src/types.rs`: the runtime type table, the layouts, and
+  case payload shapes (section 2.3).
+- `crates/mo-def/defs/opcodes.def`: the opcodes and their operands.
+- `crates/mo-def/defs/prims.def`: every primitive operation, with its Mo signature, the
+  ownership of each parameter, and the bugs it can raise (section 6).
+- `crates/mo-def/defs/hostops.def`: every capability operation, in the same form
   (section 7).
 
 The checker, the code generator, the verifier and the VM all read these files.
@@ -112,8 +107,8 @@ the case's index, from 0 in declaration order, in the cell's first 4 bytes.
 
 Any other choice type's cell holds the tag in its first 4 bytes and a
 **payload** in bytes 8 to 15. The payload's shape depends only on the type and
-the case. `mo_case_shape(types, type, case)` in `src/heap/types.h` computes it,
-and every part of the toolchain calls that one function:
+the case (`crates/mo-bytecode/src/types.rs` computes it,
+and every part of the toolchain uses that single definition):
 
 | Shape | When | Payload |
 | --- | --- | --- |
@@ -227,8 +222,8 @@ table to each service descriptor. Version 0.2 files are refused, with or
 without services.
 
 The checksum detects truncation and corruption. It's no defense against an
-attacker: Phase 5 signs upgrade packages separately. Every count and index has
-a limit in `src/base/limits.h`, and the loader checks every one before
+attacker. Every count and index has
+a limit in `crates/mo-def/defs/limits.h`, and the loader checks every one before
 using it.
 
 **Entry encoding.** After the 20-byte header, every count, index, enum and
@@ -246,9 +241,8 @@ index, never a table entry. Type and layout entries use the per-kind forms
 below, not the memory representation of `struct mo_type` or `struct mo_layout`.
 The other sections follow the field order documented in `bytecode.h`.
 
-**Structural decoding.** The private decoder in `src/bytecode/io.h` copies
-the tables into a caller-owned arena. It checks this section before the later
-verifier checks control flow, operand types and ownership. Instruction widths,
+**Structural decoding.** The decoder in `crates/mo-bytecode/src/read.rs` and `validate.rs` checks
+every section before the verifier checks control flow, operand types, and ownership. Instruction widths,
 operand index bounds and instruction boundaries are structural too: debug
 ranges and jump offsets must be safe to inspect before dataflow. Field and
 case operands have their format limits checked here; their compatibility with
@@ -993,7 +987,7 @@ that takes a function as a parameter is written in Mo, in `lib/`, so C never
 calls back into Mo code. That covers `map`, `filter`, `reduce`, `sort_by`,
 `group_by`, `update` and the rest.
 
-`src/base/prims.def` lists the primitives, one line each:
+`crates/mo-def/defs/prims.def` lists the primitives, one line each:
 
 ```c
 /*   id                  module   name         Mo signature                       params  bugs */
@@ -1006,7 +1000,7 @@ PRIM(INT_POW,            "Int",   "pow",       "fn(Int, Int) : Int",            
 ```
 
 - **The checker** adds each primitive to its type's module, as if it were
-  declared there. A library module can also hold tests of C primitives, as
+  declared there. A library module can also hold tests of built-in primitives, as
   `lib/text.mo`, `lib/set.mo` and `lib/unicode16.mo` do, without repeating their
   signatures. Higher-order functions and Json are Mo code in `lib/`.
 - **Lowering** turns a call to a primitive into a Core primitive operation.
@@ -1014,18 +1008,13 @@ PRIM(INT_POW,            "Int",   "pow",       "fn(Int, Int) : Int",            
   each parameter as owned (`o`) or borrowed (`b`).
 - **The verifier** checks the argument and result types against the signature
   at that type.
-- **The VM** dispatches on the id to a C function in `src/prim/`.
+- **The VM** dispatches on the id to a Rust implementation in `crates/mo-prim/`.
 
 A primitive that "changes" a collection, such as `append`, `set`, `remove` or
 `take`, consumes it and follows section 4.6's two paths. A primitive that only
 reads, such as `get`, `size` or `contains?`, borrows. Every row in `prims.def`
-has a C implementation. That does not mean every source-level call lowers;
-native-call coverage belongs to `src/lower`. MO-116 delivered Env.get/of,
-Ordering/Entry/Map text conversion and Ordering comparison (#189), and MO-144
-qualified `T.to_text` and `T.compare` for every type with the ability (#208),
-using existing Core operations rather than new primitives.
-`docs/status/golden-gaps.md` lists working routes still needing golden programs
-and other gaps.
+has a Rust implementation in `crates/mo-prim/`; source-level lowering lives in
+`crates/mo-lower/`.
 
 On a stop, primitives and host operations must leave operands in their
 pre-instruction state, including their ownership and the objects they name, or
@@ -1034,13 +1023,8 @@ consumes or changes it. This applies to partial in-place updates followed by
 allocation failure and to `Map.%literal_insert` stopping on a duplicate key.
 A consumed or freed operand must never be printed from pre-instruction replay.
 
-The interpreter dispatches `prim` through `mo_prim_call` and `host` through
-`mo_host_call`, committing owned register consumption only after success.
-Both dispatch paths are implemented in `src/vm/execute.c`. The differential
-runner (`ci/check_vm.py`) pins unavailable primitive and host dispatch counts
-at zero; an unavailable dispatch is not a matched Mo outcome. C-only
-instruction budgets bound fuzz execution, including initialization loops.
-They are disabled for normal execution and are not language resource limits.
+The interpreter (`crates/mo-vm/`) dispatches `prim` through `mo-prim` and `host`
+through `mo-host`, committing owned register consumption only after success.
 
 ## 7. Capabilities and host operations
 
@@ -1060,7 +1044,7 @@ A capability is a heap object that carries its own operations. It has:
 `host r_d, h, r_c, …` calls operation `h` of `r_c`'s table. A fake
 constructor makes a capability rather than using one, so `host` calls it by
 `h` alone.
-`src/base/hostops.def` lists the operations, with the same columns as
+`crates/mo-def/defs/hostops.def` lists the operations, with the same columns as
 `prims.def`:
 
 - `Console`: `print`, `error`, `read_line`, `printed` and `printed_errors`;
@@ -1082,7 +1066,7 @@ they have no bytecode opcode and no `host` encoding.
 
 `LISTENEROP` entries in `hostops.def` (`NOW`, `WAIT`, `ACCEPT`, `READ`, `WRITE`, `AUTH`,
 `HALF_CLOSE`, `CLOSE`) are runtime-only too: they have no Mo type, no checker signature,
-no bytecode opcode and no `host` encoding. `src/host/listener.c` implements them.
+no bytecode opcode and no `host` encoding. `crates/mo-service/src/listener.rs` implements them.
 
 `Files.walk` and `ReadFiles.walk` are Mo functions over these operations in
 `lib/files.mo` and `lib/read-files.mo`, not extra host opcodes.
@@ -1994,7 +1978,7 @@ spec text, declaration locations, subject links, all three expectations and
 ordered condition lines with present/absent locations. A fuzz
 target checks the byte round trip.
 
-The assembler and disassembler live in `src/bytecode`.
+The disassembler lives in `crates/mo-bytecode/src/disassemble.rs`.
 `mo_bytecode_assemble(text, length, out, error_out)` writes verified bytecode,
 bounded by `MO_LIMIT_BYTECODE_SIZE`.
 `mo_bytecode_disassemble(bytes, length, out, error_out)` verifies its input

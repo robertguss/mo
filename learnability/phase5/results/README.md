@@ -1,7 +1,7 @@
 # M6 collected evidence
 
-Phase 5 remains open. See the [run record](../../../docs/status/phase5-run.md)
-for results, limits and the release decision boundary.
+Historical Phase 5 evidence archive (see `docs/status/phase5-run.md` in git history
+for the full run record, limits, and release decision boundary).
 
 - `drill.json` and `m6-final-drivers.txt`: declared 1,000-kill result, seed 20261110.
 - `results.json` and `pause/`: all five debug and five optimized production samples.

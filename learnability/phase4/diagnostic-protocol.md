@@ -2,7 +2,7 @@
 
 **Approved by Robert on 2026-11-07.** The build and experiment inputs are recorded in [freeze.json](freeze.json). The budget decision is recorded in section 12; collection awaits Robert’s authorization of the recorded freeze. Any change after the first scored session starts a new, separately named experiment.
 
-This protocol replaces the evaluation described in [protocol.md](protocol.md), which stays as the historical record of the original experiment and its predictions. It also supersedes an earlier draft of this file: written on 2026-11-05 on the unmerged branch `t3/draft-u6-diagnostic-protocol` (commit `a1fa3a96`), approved by Robert that day, and set aside by him on 2026-11-07. That draft proposed 24 sessions, independent human or model graders and a coverage gate. Robert chose 16 sessions, mechanical grading, and coverage reported but not gated. The plan for this work is [docs/plans/2026-11-07-1234-feat-phase4-evaluation-release-plan.md](../../docs/plans/2026-11-07-1234-feat-phase4-evaluation-release-plan.md).
+This protocol replaces the evaluation described in [protocol.md](protocol.md), which stays as the historical record of the original experiment and its predictions. It also supersedes an earlier draft of this file: written on 2026-11-05 on the unmerged branch `t3/draft-u6-diagnostic-protocol` (commit `a1fa3a96`), approved by Robert that day, and set aside by him on 2026-11-07. That draft proposed 24 sessions, independent human or model graders and a coverage gate. Robert chose 16 sessions, mechanical grading, and coverage reported but not gated. The archived plan for this work is `docs/plans/2026-11-07-1234-feat-phase4-evaluation-release-plan.md` (in git history).
 
 ## 1. The question and the claim
 

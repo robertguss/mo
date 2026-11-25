@@ -109,7 +109,7 @@ result fails the build.
 the program, runs its entry or a selected test/example, and prints one
 observable report. [TEXT.md](TEXT.md) specifies the complete wire grammar,
 canonical printing, result protocol, extension rules and sample timings.
-`make formal` additionally runs the executable's file/CLI checks.
+`bash ci/check.sh lean` additionally runs the executable's file/CLI and Rust differential checks.
 
 ## Layout
 
@@ -139,13 +139,13 @@ canonical printing, result protocol, extension rules and sample timings.
 | `MoCore/Builtins.lean` | Checks of built-in types, Unicode scalar boundaries, failure, programs and fakes; independent Blackman/Vigna random vectors, Lemire rejection/full-width intervals, Unicode16 interfaces and real/fake folder entries. |
 | `MoCore/Examples/*.lean` | The twelve samples of `examples/`, each in Core, with every example line and test of the sample as a `#guard`, and theorems that the program is well typed and never goes wrong. |
 | `MoCore/Saved.lean` | The saved value format of `docs/design/saved-state.md` as a model of its own: schemas with records apart from choices, names and type parameters; values with distinct set elements and map keys; the encoder and decoder; the round trip of a value and of a failure's replay inputs, the schema refusal, and the schema-blind decoder refuted. |
-| `MoCore/Verdict.lean` | Signatures, outcomes and the `mo replay --fix` verdict of `docs/design/introspection.md` 6.2 and 7.1: the matching relation and the verdict table as specifications, the functions the C code mirrors, their equality, and the revised-only verdict refuted. |
+| `MoCore/Verdict.lean` | Signatures, outcomes and the `mo replay --fix` verdict of `docs/design/introspection.md` 6.2 and 7.1: the matching relation and the verdict table as specifications, the functions the Rust code mirrors, their equality, and the revised-only verdict refuted. |
 | `MoCore/Text/*.lean` | The reference text codec: S-expressions, types/literals, primitives, programs, lossless values/worlds/outcomes, structural observations and checked run requests. |
 | `MoCore/TextChecks.lean` | Round trips for all twelve programs, every primitive/value, Builtins programs, reproducible runs and report/lexical checks. |
 | `Main.lean` | The `mocore` file/CLI protocol, with distinct diagnostic and outcome exit codes. |
 | `ExportSamples.lean` | Writes twelve entry runs plus Fakes, Library (including D236/D237 file checks) and synthetic Metadata, in Core text 0.11; optional second directory exports all eighteen fuzz seeds (`lake env lean --run ExportSamples.lean DIR FUZZ_DIR`). |
 | `HeapFloatOracle.lean` | Reads decimal binary64 bits from stdin and prints the model's `Float.toText` spelling. |
-| `TEXT.md` | Complete Core text 0.11 contract shared by Lean and C, compiler metadata, file-operation outcomes, worked runs and measurements. |
+| `TEXT.md` | Complete Core text 0.11 contract shared by Lean and Rust, compiler metadata, file-operation outcomes, worked runs and measurements. |
 | `TRANSLATION.md` | The lowering from every v0.1 feature to Core, how the model follows the answers D227 gave to the questions writing it raised, the three things D228 added, and what the model decided in making `Byte`, `Bytes`, `Range` and `Set` types of their own. |
 
 ## The twelve programs
@@ -334,15 +334,15 @@ No theorem is left with `sorry`. What the proofs don't yet cover:
   regressions are checked by bits. Functional correctness is not proved.
   The VM's float text form is a trusted primitive, checked against Ryu
   (architecture 4.5).
-- **The C saved-value decoder and verdict.** `MoCore/Saved.lean` and `MoCore/Verdict.lean`
-  model them; the C code is not proved. Its contract is the models' statement, and the C unit
-  tests, the saved-state fuzz target and the verdict tests exercise the same cases. Nothing yet
-  compares the C and Lean encoders byte for byte.
+- **The Rust saved-value decoder and verdict.** `MoCore/Saved.lean` and `MoCore/Verdict.lean`
+  model them; the Rust code is not proved. Its contract is the models' statement, and the Rust unit
+  tests, saved-state corpus tests, and verdict tests exercise the same cases. Nothing yet
+  compares the Rust and Lean encoders byte for byte.
 - **Saved leaves and recursive schemas.** The saved model takes a leaf's payload as the bytes
   the format lays out (an `Int` is its eight bytes), with the format's validity rules; it does
   not relate them to Core's numbers or text. It has no recursive schemas, which the format
   writes with back-references to an enclosing type, and it does not prove that different
-  schemas have different bytes: the refusal theorem is about the bytes, which is what the C
+  schemas have different bytes: the refusal theorem is about the bytes, which is what the Rust
   decoder compares.
 - **Completeness of the checker** (that it accepts every well-typed
   expression) is not proven; it is sound, and accepts all twelve programs.

@@ -238,7 +238,7 @@ def serve_guide():
             "The token never appears in output, logs or errors.",
             "- 0: SIGTERM or SIGINT stopped it. It closes its port, so a new connection is refused, "
             "and finishes the open ones first, which their deadlines bound to about 25 seconds.",
-            "- 69: supervision (D308) stopped the service.",
+            "- 69: supervision stopped the service.",
             "It stays down until a person starts it, as Recover from a stop says.",
             "any source-byte change, including comments, needs an explicit upgrade.",
             "`service.sqlite` is readable only by its owner.",
