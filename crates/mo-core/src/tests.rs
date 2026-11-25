@@ -233,6 +233,7 @@ fn test_shapes() {
         "(command)",
         "(secureRandom)",
         "(file)",
+        "(process)",
     ] {
         canonical(CoreTextKind::Cap, cap);
     }

@@ -688,6 +688,8 @@ impl<'a> InferState<'a> {
                 "Sqlite"
             } else if ty_name == "Files.File" {
                 "Files"
+            } else if ty_name == "Command.Process" {
+                "Command"
             } else {
                 ty_name.as_str()
             };

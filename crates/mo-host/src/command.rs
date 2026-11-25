@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::fs;
 use std::io::{ErrorKind, Read};
 #[cfg(unix)]
@@ -6,8 +6,10 @@ use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use mo_bytecode::Capability;
@@ -16,7 +18,7 @@ use mo_def::HostOpId;
 use mo_def::limits::{
     MO_LIMIT_COMMAND_ARG_BYTES, MO_LIMIT_COMMAND_ARGS, MO_LIMIT_COMMAND_DURATION_US,
     MO_LIMIT_COMMAND_MEMORY, MO_LIMIT_COMMAND_OUTPUT_BYTES, MO_LIMIT_HOST_PATH_SIZE,
-    MO_LIMIT_OPEN_FOLDERS, MO_LIMIT_VALUE_BYTES,
+    MO_LIMIT_OPEN_FOLDERS, MO_LIMIT_OPEN_PROCESSES, MO_LIMIT_VALUE_BYTES,
 };
 use mo_heap::{Heap, ScratchGuard, Value};
 #[cfg(unix)]
@@ -29,6 +31,8 @@ use crate::files_common::{FileStatus, find_case_tag, join_path, prepare_real_pat
 #[cfg(unix)]
 use crate::real_files::{PathMode, ResolverState, dir_fd_path, resolve};
 
+static NEXT_FAKE_PID: AtomicI64 = AtomicI64::new(10_000);
+
 #[cfg(unix)]
 struct RealCommandCap {
     fd: OwnedFd,
@@ -36,6 +40,7 @@ struct RealCommandCap {
     forbidden: bool,
     prefix: Option<String>,
     allowed: Option<Vec<String>>,
+    allow_loopback: bool,
     open_folders: Rc<Cell<u32>>,
 }
 
@@ -53,12 +58,80 @@ struct FakeCommandCap {
     prefix: Option<String>,
     forbidden: bool,
     allowed: Option<Vec<String>>,
+    allow_loopback: bool,
 }
 
 enum CommandCap {
     #[cfg(unix)]
     Real(RealCommandCap),
     Fake(FakeCommandCap),
+}
+
+#[cfg(unix)]
+type CapturedProcessOutput = Result<(i64, Vec<u8>, Vec<u8>), &'static str>;
+
+pub(crate) struct CommandCounters<'a> {
+    pub open_folders: &'a Rc<Cell<u32>>,
+    pub open_processes: &'a Rc<Cell<u32>>,
+}
+
+#[cfg(unix)]
+struct RealProcessState {
+    pid: i64,
+    raw_pid: u32,
+    child: Child,
+    exit_status: Option<ExitStatus>,
+    out_reader: Option<JoinHandle<(Vec<u8>, bool)>>,
+    err_reader: Option<JoinHandle<(Vec<u8>, bool)>>,
+    captured: Option<CapturedProcessOutput>,
+    _tmp_guard: TempDirGuard,
+}
+
+#[cfg(unix)]
+struct RealProcessCap {
+    state: RefCell<RealProcessState>,
+    open_processes: Rc<Cell<u32>>,
+}
+
+#[cfg(unix)]
+impl Drop for RealProcessCap {
+    fn drop(&mut self) {
+        let mut st = self.state.borrow_mut();
+        if st.exit_status.is_none() {
+            match st.child.try_wait() {
+                Ok(Some(es)) => st.exit_status = Some(es),
+                _ => {
+                    crate::confine::kill_child_tree(st.raw_pid);
+                    let _ = st.child.kill();
+                    st.exit_status = st.child.wait().ok();
+                }
+            }
+        }
+        if let Some(h) = st.out_reader.take() {
+            let _ = h.join();
+        }
+        if let Some(h) = st.err_reader.take() {
+            let _ = h.join();
+        }
+        let cur = self.open_processes.get();
+        debug_assert!(cur != 0);
+        self.open_processes.set(cur.saturating_sub(1));
+    }
+}
+
+struct FakeProcessCap {
+    pid: i64,
+    alive: Cell<bool>,
+    killed: Cell<bool>,
+    status: i64,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+enum ProcessCap {
+    #[cfg(unix)]
+    Real(RealProcessCap),
+    Fake(FakeProcessCap),
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +184,11 @@ fn command_error_tag(
     Ok(heap.make_case(types, result_ty, err_tag, vec![msg_val])?)
 }
 
+fn command_ok_unit(heap: &Heap, types: &TypeTable, result_ty: u32) -> Result<Value, HostError> {
+    let ok_tag = find_case_tag(types, result_ty, "Ok");
+    Ok(heap.make_case(types, result_ty, ok_tag, vec![Value::Unit])?)
+}
+
 fn command_ok_tuple(
     heap: &Heap,
     types: &TypeTable,
@@ -129,7 +207,7 @@ fn command_ok_tuple(
     )]
     let layout = types
         .find_tuple_layout(tup_ty)
-        .expect("tuple layout for Command.run_raw");
+        .expect("tuple layout for Command output");
     let tup = heap.construct(types, layout, vec![Value::Int(status), out_val, err_val])?;
     Ok(heap.make_case(types, result_ty, ok_tag, vec![tup])?)
 }
@@ -180,6 +258,103 @@ fn parse_i64_until(bytes: &[u8], pos: &mut usize, sep: u8) -> Option<i64> {
     } else {
         Some(mag as i64)
     }
+}
+
+enum FakeLookup {
+    Ok(i64, Vec<u8>, Vec<u8>),
+    Err(&'static str, String),
+}
+
+fn lookup_fake_reply(
+    heap: &Heap,
+    types: &TypeTable,
+    fake: &FakeCommandCap,
+    prog: &str,
+    cmd_args_val: &Value,
+) -> Result<FakeLookup, HostError> {
+    if fake.forbidden {
+        let esc = fake.prefix.as_deref().unwrap_or("");
+        return Ok(FakeLookup::Err("outside_folder:", esc.to_string()));
+    }
+    if !program_allowed(&fake.allowed, prog) {
+        return Ok(FakeLookup::Err("not_permitted:", prog.to_string()));
+    }
+    let cmd_args = cmd_args_val.as_list();
+    for a in cmd_args.iter() {
+        let ab = a.as_text().as_bytes();
+        if ab.len() as u64 > MO_LIMIT_COMMAND_ARG_BYTES || ab.contains(&0) {
+            return Ok(FakeLookup::Err(
+                "spawn_failed:invalid command argument",
+                String::new(),
+            ));
+        }
+    }
+
+    let cwd = fake.prefix.as_deref().unwrap_or("");
+    let mut key_bytes = Vec::new();
+    key_bytes.extend_from_slice(cwd.len().to_string().as_bytes());
+    key_bytes.push(b':');
+    key_bytes.extend_from_slice(cwd.as_bytes());
+    key_bytes.push(b'\n');
+    key_bytes.extend_from_slice(prog.len().to_string().as_bytes());
+    key_bytes.push(b':');
+    key_bytes.extend_from_slice(prog.as_bytes());
+    key_bytes.push(b'\n');
+    key_bytes.extend_from_slice(cmd_args.len().to_string().as_bytes());
+    key_bytes.push(b'\n');
+    for a in cmd_args.iter() {
+        let ab = a.as_text().as_bytes();
+        key_bytes.extend_from_slice(ab.len().to_string().as_bytes());
+        key_bytes.push(b':');
+        key_bytes.extend_from_slice(ab);
+        key_bytes.push(b'\n');
+    }
+
+    let key_val = heap.alloc_bytes(key_bytes)?;
+    let Some(reply_val) = fake
+        .replies
+        .as_map()
+        .get(types, heap.hash_key(), &key_val)
+        .cloned()
+    else {
+        return Ok(FakeLookup::Err(
+            "spawn_failed:unexpected command in fake: ",
+            prog.to_string(),
+        ));
+    };
+
+    let val = reply_val.as_bytes();
+    let mut pos = 0usize;
+    let Some(status) = parse_i64_until(val, &mut pos, b':') else {
+        return Ok(FakeLookup::Err(
+            "spawn_failed:malformed fake command reply",
+            String::new(),
+        ));
+    };
+    let Some(out_len) = parse_u64_until(val, &mut pos, b':') else {
+        return Ok(FakeLookup::Err(
+            "spawn_failed:malformed fake command reply",
+            String::new(),
+        ));
+    };
+    let Some(err_len) = parse_u64_until(val, &mut pos, b'\n') else {
+        return Ok(FakeLookup::Err(
+            "spawn_failed:malformed fake command reply",
+            String::new(),
+        ));
+    };
+    if out_len > MO_LIMIT_COMMAND_OUTPUT_BYTES
+        || err_len > MO_LIMIT_COMMAND_OUTPUT_BYTES
+        || pos + (out_len as usize) + (err_len as usize) != val.len()
+    {
+        return Ok(FakeLookup::Err(
+            "spawn_failed:malformed fake command reply",
+            String::new(),
+        ));
+    }
+    let out_slice = val[pos..pos + out_len as usize].to_vec();
+    let err_slice = val[pos + out_len as usize..].to_vec();
+    Ok(FakeLookup::Ok(status, out_slice, err_slice))
 }
 
 // ---------------------------------------------------------------------------
@@ -292,6 +467,167 @@ fn make_temp_dir() -> Option<TempDirGuard> {
     None
 }
 
+#[cfg(unix)]
+fn spawn_pipe_drainer<R: Read + Send + 'static>(mut pipe: R) -> JoinHandle<(Vec<u8>, bool)> {
+    let max_out = MO_LIMIT_COMMAND_OUTPUT_BYTES as usize;
+    let builder = std::thread::Builder::new()
+        .name("mo-cmd-pipe".to_string())
+        .stack_size(256 * 1024);
+    let task = move || {
+        let mut buf = Vec::new();
+        let mut too_large = false;
+        let mut chunk = [0u8; 8192];
+        loop {
+            match pipe.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if !too_large {
+                        if n > max_out - buf.len() {
+                            too_large = true;
+                            buf.clear();
+                        } else {
+                            buf.extend_from_slice(&chunk[..n]);
+                        }
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                Err(_) => break,
+            }
+        }
+        (buf, too_large)
+    };
+    match builder.spawn(task) {
+        Ok(h) => h,
+        Err(_) => std::thread::spawn(|| (Vec::new(), false)),
+    }
+}
+
+#[cfg(unix)]
+fn spawn_confined_child(
+    resolver: &mut ResolverState,
+    root: &RealCommandCap,
+    prog: &str,
+    cmd_args_val: &Value,
+    cpu_seconds: u64,
+) -> Result<(Child, TempDirGuard), (&'static str, String)> {
+    if root.forbidden {
+        let esc = root.prefix.as_deref().unwrap_or("");
+        return Err(("outside_folder:", esc.to_string()));
+    }
+    if !program_allowed(&root.allowed, prog) {
+        return Err(("not_permitted:", prog.to_string()));
+    }
+
+    let resolved_dir_fd: Option<OwnedFd> = if root.pending {
+        let rel = root.prefix.as_deref().unwrap_or("");
+        if rel.len() >= MO_LIMIT_HOST_PATH_SIZE as usize {
+            return Err(("spawn_failed:path too long", String::new()));
+        }
+        match resolve(resolver, root.fd.as_fd(), rel, PathMode::Folder) {
+            Ok(r) => Some(r.fd),
+            Err(rerr) if rerr.containment || rerr.status == FileStatus::NotAllowed => {
+                return Err(("outside_folder:", rel.to_string()));
+            }
+            Err(_) => {
+                return Err(("spawn_failed:working folder unavailable", String::new()));
+            }
+        }
+    } else {
+        None
+    };
+    let workdir_fd: BorrowedFd<'_> = match resolved_dir_fd.as_ref() {
+        Some(fd) => fd.as_fd(),
+        None => root.fd.as_fd(),
+    };
+
+    let cmd_args = cmd_args_val.as_list();
+    let mut arg_strs = Vec::with_capacity(cmd_args.len());
+    for a in cmd_args.iter() {
+        let s = a.as_text();
+        if s.len() as u64 > MO_LIMIT_COMMAND_ARG_BYTES || s.as_bytes().contains(&0) {
+            return Err(("spawn_failed:invalid command argument", String::new()));
+        }
+        arg_strs.push(s.to_string());
+    }
+
+    let Some(exe_path) = resolve_executable(prog) else {
+        return Err(("spawn_failed:program not found: ", prog.to_string()));
+    };
+    let Some(workdir_path) = dir_fd_path(workdir_fd, false) else {
+        return Err((
+            "spawn_failed:could not resolve working folder",
+            String::new(),
+        ));
+    };
+    let Some(tmp_guard) = make_temp_dir() else {
+        return Err((
+            "spawn_failed:could not create temporary folder",
+            String::new(),
+        ));
+    };
+    let Ok(workdir_stat) = fstat(workdir_fd) else {
+        return Err((
+            "spawn_failed:could not resolve working folder",
+            String::new(),
+        ));
+    };
+
+    let path_env = match valid_local_bin_dir() {
+        Some(local_bin) => format!("{local_bin}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"),
+        None => "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin".to_string(),
+    };
+    let can_confine = crate::confine::can_confine();
+
+    let mut cmd = if let Some(trampoline) = crate::confine::trampoline_exe() {
+        let mut c = Command::new(trampoline);
+        c.arg(crate::confine::INTERNAL_COMMAND_TRAMPOLINE_ARG)
+            .arg("--dev")
+            .arg(workdir_stat.st_dev.to_string())
+            .arg("--ino")
+            .arg(workdir_stat.st_ino.to_string())
+            .arg("--workdir")
+            .arg(&workdir_path)
+            .arg("--tmpdir")
+            .arg(&tmp_guard.0)
+            .arg("--cpu")
+            .arg(cpu_seconds.to_string())
+            .arg("--mem")
+            .arg(MO_LIMIT_COMMAND_MEMORY.to_string())
+            .arg("--ppid")
+            .arg(std::process::id().to_string())
+            .arg(if can_confine {
+                "--confine"
+            } else {
+                "--no-confine"
+            });
+        if root.allow_loopback {
+            c.arg("--allow-loopback");
+        }
+        c.arg("--exe").arg(&exe_path).arg("--").args(&arg_strs);
+        c
+    } else {
+        let mut c = Command::new(&exe_path);
+        c.args(&arg_strs);
+        c
+    };
+
+    let child = cmd
+        .current_dir(&workdir_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env_clear()
+        .env("PATH", &path_env)
+        .env("HOME", &workdir_path)
+        .env("TMPDIR", &tmp_guard.0)
+        .env("LANG", "C.UTF-8")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .spawn()
+        .map_err(|_| ("spawn_failed:fork failed", String::new()))?;
+    crate::confine::set_child_process_group(child.id());
+    Ok((child, tmp_guard))
+}
+
 // ---------------------------------------------------------------------------
 // Capability construction
 // ---------------------------------------------------------------------------
@@ -320,6 +656,7 @@ pub(crate) fn make_real_command(
         forbidden: false,
         prefix: None,
         allowed: None,
+        allow_loopback: false,
         open_folders: Rc::clone(open_folders),
     });
     Ok(heap.alloc_capability(Capability::Command, ty, Rc::new(cap))?)
@@ -335,6 +672,7 @@ pub(crate) fn command_fake(
         prefix: None,
         forbidden: false,
         allowed: None,
+        allow_loopback: false,
     });
     Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(cap))?)
 }
@@ -342,6 +680,51 @@ pub(crate) fn command_fake(
 // ---------------------------------------------------------------------------
 // Operation implementations
 // ---------------------------------------------------------------------------
+
+fn command_allow_loopback(
+    heap: &Heap,
+    open_folders: &Rc<Cell<u32>>,
+    result_ty: u32,
+    args: &[Value],
+) -> Result<Value, HostError> {
+    let cap = crate::downcast_cap::<CommandCap>(&args[0], "Command capability");
+    match cap {
+        CommandCap::Fake(f) => {
+            let new_cap = CommandCap::Fake(FakeCommandCap {
+                replies: f.replies.clone(),
+                prefix: f.prefix.clone(),
+                forbidden: f.forbidden,
+                allowed: f.allowed.clone(),
+                allow_loopback: true,
+            });
+            Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?)
+        }
+        #[cfg(unix)]
+        CommandCap::Real(r) => {
+            if u64::from(open_folders.get()) >= MO_LIMIT_OPEN_FOLDERS {
+                return Err(HostError::Bug {
+                    reason: "too many folders open at once",
+                    detail: None,
+                });
+            }
+            let fd = fcntl_dupfd_cloexec(&r.fd, 0).map_err(|_| HostError::Bug {
+                reason: "too many folders open at once",
+                detail: None,
+            })?;
+            open_folders.set(open_folders.get() + 1);
+            let new_cap = CommandCap::Real(RealCommandCap {
+                fd,
+                pending: r.pending,
+                forbidden: r.forbidden,
+                prefix: r.prefix.clone(),
+                allowed: r.allowed.clone(),
+                allow_loopback: true,
+                open_folders: Rc::clone(open_folders),
+            });
+            Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?)
+        }
+    }
+}
 
 fn command_allow_programs(
     heap: &Heap,
@@ -379,6 +762,7 @@ fn command_allow_programs(
                 prefix: f.prefix.clone(),
                 forbidden: f.forbidden,
                 allowed: Some(next_allowed),
+                allow_loopback: f.allow_loopback,
             });
             Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?)
         }
@@ -401,6 +785,7 @@ fn command_allow_programs(
                 forbidden: r.forbidden,
                 prefix: r.prefix.clone(),
                 allowed: Some(next_allowed),
+                allow_loopback: r.allow_loopback,
                 open_folders: Rc::clone(open_folders),
             });
             Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?)
@@ -420,6 +805,7 @@ fn command_within_fake(
             prefix: orig.prefix.clone(),
             forbidden: true,
             allowed: orig.allowed.clone(),
+            allow_loopback: orig.allow_loopback,
         });
         return Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?);
     }
@@ -429,6 +815,7 @@ fn command_within_fake(
             prefix: Some(raw.to_string()),
             forbidden: true,
             allowed: orig.allowed.clone(),
+            allow_loopback: orig.allow_loopback,
         });
         return Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?);
     };
@@ -446,6 +833,7 @@ fn command_within_fake(
         prefix,
         forbidden: false,
         allowed: orig.allowed.clone(),
+        allow_loopback: orig.allow_loopback,
     });
     Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?)
 }
@@ -483,6 +871,7 @@ fn command_within_real(
             forbidden,
             prefix,
             allowed: orig.allowed.clone(),
+            allow_loopback: orig.allow_loopback,
             open_folders: Rc::clone(open_folders),
         });
         Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(cap))?)
@@ -528,108 +917,98 @@ fn command_run_fake(
     result_ty: u32,
     args: &[Value],
 ) -> Result<Value, HostError> {
-    if fake.forbidden {
-        let esc = fake.prefix.as_deref().unwrap_or("");
-        return command_error_tag(heap, types, result_ty, "outside_folder:", esc);
-    }
     let prog = args[1].as_text();
-    if !program_allowed(&fake.allowed, prog) {
-        return command_error_tag(heap, types, result_ty, "not_permitted:", prog);
-    }
-    let cmd_args = args[2].as_list();
-    for a in cmd_args.iter() {
-        let ab = a.as_text().as_bytes();
-        if ab.len() as u64 > MO_LIMIT_COMMAND_ARG_BYTES || ab.contains(&0) {
-            return command_error_tag(
-                heap,
-                types,
-                result_ty,
-                "spawn_failed:invalid command argument",
-                "",
-            );
+    match lookup_fake_reply(heap, types, fake, prog, &args[2])? {
+        FakeLookup::Ok(status, out_slice, err_slice) => {
+            command_ok_tuple(heap, types, result_ty, status, out_slice, err_slice)
+        }
+        FakeLookup::Err(prefix, detail) => {
+            command_error_tag(heap, types, result_ty, prefix, &detail)
         }
     }
+}
 
-    let cwd = fake.prefix.as_deref().unwrap_or("");
-    let mut key_bytes = Vec::new();
-    key_bytes.extend_from_slice(cwd.len().to_string().as_bytes());
-    key_bytes.push(b':');
-    key_bytes.extend_from_slice(cwd.as_bytes());
-    key_bytes.push(b'\n');
-    key_bytes.extend_from_slice(prog.len().to_string().as_bytes());
-    key_bytes.push(b':');
-    key_bytes.extend_from_slice(prog.as_bytes());
-    key_bytes.push(b'\n');
-    key_bytes.extend_from_slice(cmd_args.len().to_string().as_bytes());
-    key_bytes.push(b'\n');
-    for a in cmd_args.iter() {
-        let ab = a.as_text().as_bytes();
-        key_bytes.extend_from_slice(ab.len().to_string().as_bytes());
-        key_bytes.push(b':');
-        key_bytes.extend_from_slice(ab);
-        key_bytes.push(b'\n');
+fn command_spawn_fake(
+    heap: &Heap,
+    types: &TypeTable,
+    fake: &FakeCommandCap,
+    result_ty: u32,
+    args: &[Value],
+) -> Result<Value, HostError> {
+    let prog = args[1].as_text();
+    match lookup_fake_reply(heap, types, fake, prog, &args[2])? {
+        FakeLookup::Err(prefix, detail) => {
+            command_error_tag(heap, types, result_ty, prefix, &detail)
+        }
+        FakeLookup::Ok(status, stdout, stderr) => {
+            let pid = NEXT_FAKE_PID.fetch_add(1, Ordering::Relaxed);
+            let ok_tag = find_case_tag(types, result_ty, "Ok");
+            let proc_ty = types.get(result_ty).cases[ok_tag as usize].fields[0].ty;
+            let proc_cap = ProcessCap::Fake(FakeProcessCap {
+                pid,
+                alive: Cell::new(true),
+                killed: Cell::new(false),
+                status,
+                stdout,
+                stderr,
+            });
+            let proc_val =
+                heap.alloc_capability(Capability::Process, proc_ty, Rc::new(proc_cap))?;
+            Ok(heap.make_case(types, result_ty, ok_tag, vec![proc_val])?)
+        }
     }
+}
 
-    let key_val = heap.alloc_bytes(key_bytes)?;
-    let Some(reply_val) = fake
-        .replies
-        .as_map()
-        .get(types, heap.hash_key(), &key_val)
-        .cloned()
-    else {
-        return command_error_tag(
-            heap,
-            types,
-            result_ty,
-            "spawn_failed:unexpected command in fake: ",
-            prog,
-        );
-    };
-
-    let val = reply_val.as_bytes();
-    let mut pos = 0usize;
-    let Some(status) = parse_i64_until(val, &mut pos, b':') else {
-        return command_error_tag(
-            heap,
-            types,
-            result_ty,
-            "spawn_failed:malformed fake command reply",
-            "",
-        );
-    };
-    let Some(out_len) = parse_u64_until(val, &mut pos, b':') else {
-        return command_error_tag(
-            heap,
-            types,
-            result_ty,
-            "spawn_failed:malformed fake command reply",
-            "",
-        );
-    };
-    let Some(err_len) = parse_u64_until(val, &mut pos, b'\n') else {
-        return command_error_tag(
-            heap,
-            types,
-            result_ty,
-            "spawn_failed:malformed fake command reply",
-            "",
-        );
-    };
-    if out_len > MO_LIMIT_COMMAND_OUTPUT_BYTES
-        || err_len > MO_LIMIT_COMMAND_OUTPUT_BYTES
-        || pos + (out_len as usize) + (err_len as usize) != val.len()
-    {
-        return command_error_tag(
-            heap,
-            types,
-            result_ty,
-            "spawn_failed:malformed fake command reply",
-            "",
-        );
+#[cfg(unix)]
+fn command_spawn_real(
+    heap: &Heap,
+    types: &TypeTable,
+    resolver: &mut ResolverState,
+    open_processes: &Rc<Cell<u32>>,
+    root: &RealCommandCap,
+    result_ty: u32,
+    args: &[Value],
+) -> Result<Value, HostError> {
+    if u64::from(open_processes.get()) >= MO_LIMIT_OPEN_PROCESSES {
+        return Err(HostError::Bug {
+            reason: "too many processes open at once",
+            detail: None,
+        });
     }
-    let out_slice = val[pos..pos + out_len as usize].to_vec();
-    let err_slice = val[pos + out_len as usize..].to_vec();
-    command_ok_tuple(heap, types, result_ty, status, out_slice, err_slice)
+    let prog = args[1].as_text();
+    let cpu_seconds = ((MO_LIMIT_COMMAND_DURATION_US as u64) / 1_000_000).saturating_add(1);
+    let (mut child, tmp_guard) =
+        match spawn_confined_child(resolver, root, prog, &args[2], cpu_seconds) {
+            Ok(pair) => pair,
+            Err((prefix, detail)) => {
+                return command_error_tag(heap, types, result_ty, prefix, &detail);
+            }
+        };
+
+    let raw_pid = child.id();
+    let pid = i64::from(raw_pid);
+    let out_reader = child.stdout.take().map(spawn_pipe_drainer);
+    let err_reader = child.stderr.take().map(spawn_pipe_drainer);
+
+    open_processes.set(open_processes.get() + 1);
+    let proc_cap = ProcessCap::Real(RealProcessCap {
+        state: RefCell::new(RealProcessState {
+            pid,
+            raw_pid,
+            child,
+            exit_status: None,
+            out_reader,
+            err_reader,
+            captured: None,
+            _tmp_guard: tmp_guard,
+        }),
+        open_processes: Rc::clone(open_processes),
+    });
+
+    let ok_tag = find_case_tag(types, result_ty, "Ok");
+    let proc_ty = types.get(result_ty).cases[ok_tag as usize].fields[0].ty;
+    let proc_val = heap.alloc_capability(Capability::Process, proc_ty, Rc::new(proc_cap))?;
+    Ok(heap.make_case(types, result_ty, ok_tag, vec![proc_val])?)
 }
 
 #[cfg(unix)]
@@ -642,158 +1021,17 @@ fn command_run_real(
     args: &[Value],
     timeout_us: i64,
 ) -> Result<Value, HostError> {
-    if root.forbidden {
-        let esc = root.prefix.as_deref().unwrap_or("");
-        return command_error_tag(heap, types, result_ty, "outside_folder:", esc);
-    }
     let prog = args[1].as_text();
-    if !program_allowed(&root.allowed, prog) {
-        return command_error_tag(heap, types, result_ty, "not_permitted:", prog);
-    }
-
-    let resolved_dir_fd: Option<OwnedFd> = if root.pending {
-        let rel = root.prefix.as_deref().unwrap_or("");
-        if rel.len() >= MO_LIMIT_HOST_PATH_SIZE as usize {
-            return command_error_tag(heap, types, result_ty, "spawn_failed:path too long", "");
-        }
-        match resolve(resolver, root.fd.as_fd(), rel, PathMode::Folder) {
-            Ok(r) => Some(r.fd),
-            Err(rerr) if rerr.containment || rerr.status == FileStatus::NotAllowed => {
-                return command_error_tag(heap, types, result_ty, "outside_folder:", rel);
-            }
-            Err(_) => {
-                return command_error_tag(
-                    heap,
-                    types,
-                    result_ty,
-                    "spawn_failed:working folder unavailable",
-                    "",
-                );
-            }
-        }
-    } else {
-        None
-    };
-    let workdir_fd: BorrowedFd<'_> = match resolved_dir_fd.as_ref() {
-        Some(fd) => fd.as_fd(),
-        None => root.fd.as_fd(),
-    };
-
-    let cmd_args = args[2].as_list();
-    let mut arg_strs = Vec::with_capacity(cmd_args.len());
-    for a in cmd_args.iter() {
-        let s = a.as_text();
-        if s.len() as u64 > MO_LIMIT_COMMAND_ARG_BYTES || s.as_bytes().contains(&0) {
-            return command_error_tag(
-                heap,
-                types,
-                result_ty,
-                "spawn_failed:invalid command argument",
-                "",
-            );
-        }
-        arg_strs.push(s);
-    }
-
-    let Some(exe_path) = resolve_executable(prog) else {
-        return command_error_tag(
-            heap,
-            types,
-            result_ty,
-            "spawn_failed:program not found: ",
-            prog,
-        );
-    };
-    let Some(workdir_path) = dir_fd_path(workdir_fd, false) else {
-        return command_error_tag(
-            heap,
-            types,
-            result_ty,
-            "spawn_failed:could not resolve working folder",
-            "",
-        );
-    };
-    let Some(tmp_guard) = make_temp_dir() else {
-        return command_error_tag(
-            heap,
-            types,
-            result_ty,
-            "spawn_failed:could not create temporary folder",
-            "",
-        );
-    };
-
-    let Ok(workdir_stat) = fstat(workdir_fd) else {
-        return command_error_tag(
-            heap,
-            types,
-            result_ty,
-            "spawn_failed:could not resolve working folder",
-            "",
-        );
-    };
-
-    let path_env = match valid_local_bin_dir() {
-        Some(local_bin) => format!("{local_bin}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"),
-        None => "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin".to_string(),
-    };
-
     let deadline = Instant::now() + Duration::from_micros(timeout_us as u64);
     let cpu_seconds = ((timeout_us as u64).saturating_add(999_999) / 1_000_000).saturating_add(1);
-    let can_confine = crate::confine::can_confine();
 
-    let mut cmd = if let Some(trampoline) = crate::confine::trampoline_exe() {
-        let mut c = Command::new(trampoline);
-        c.arg(crate::confine::INTERNAL_COMMAND_TRAMPOLINE_ARG)
-            .arg("--dev")
-            .arg(workdir_stat.st_dev.to_string())
-            .arg("--ino")
-            .arg(workdir_stat.st_ino.to_string())
-            .arg("--workdir")
-            .arg(&workdir_path)
-            .arg("--tmpdir")
-            .arg(&tmp_guard.0)
-            .arg("--cpu")
-            .arg(cpu_seconds.to_string())
-            .arg("--mem")
-            .arg(MO_LIMIT_COMMAND_MEMORY.to_string())
-            .arg("--ppid")
-            .arg(std::process::id().to_string())
-            .arg(if can_confine {
-                "--confine"
-            } else {
-                "--no-confine"
-            })
-            .arg("--exe")
-            .arg(&exe_path)
-            .arg("--")
-            .args(&arg_strs);
-        c
-    } else {
-        let mut c = Command::new(&exe_path);
-        c.args(&arg_strs);
-        c
-    };
-
-    let mut child = match cmd
-        .current_dir(&workdir_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .env_clear()
-        .env("PATH", &path_env)
-        .env("HOME", &workdir_path)
-        .env("TMPDIR", &tmp_guard.0)
-        .env("LANG", "C.UTF-8")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(_) => {
-            return command_error_tag(heap, types, result_ty, "spawn_failed:fork failed", "");
-        }
-    };
-    crate::confine::set_child_process_group(child.id());
+    let (mut child, tmp_guard) =
+        match spawn_confined_child(resolver, root, prog, &args[2], cpu_seconds) {
+            Ok(pair) => pair,
+            Err((prefix, detail)) => {
+                return command_error_tag(heap, types, result_ty, prefix, &detail);
+            }
+        };
 
     let mut out_pipe = child.stdout.take();
     let mut err_pipe = child.stderr.take();
@@ -984,6 +1222,95 @@ fn command_run_real(
     command_ok_tuple(heap, types, result_ty, exit_code, out_buf, err_buf)
 }
 
+#[cfg(unix)]
+fn process_wait_real(
+    heap: &Heap,
+    types: &TypeTable,
+    proc_cap: &RealProcessCap,
+    result_ty: u32,
+    timeout_us: i64,
+) -> Result<Value, HostError> {
+    let mut st = proc_cap.state.borrow_mut();
+    if let Some(ref cached) = st.captured {
+        return match cached {
+            Ok((code, out_b, err_b)) => {
+                command_ok_tuple(heap, types, result_ty, *code, out_b.clone(), err_b.clone())
+            }
+            Err(tag) => command_error_tag(heap, types, result_ty, tag, ""),
+        };
+    }
+
+    let deadline = Instant::now() + Duration::from_micros(timeout_us as u64);
+    let mut timed_out = false;
+    while st.exit_status.is_none() {
+        match st.child.try_wait() {
+            Ok(Some(es)) => {
+                st.exit_status = Some(es);
+                break;
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    timed_out = true;
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            Err(_) => break,
+        }
+    }
+
+    if st.exit_status.is_none() {
+        crate::confine::kill_child_tree(st.raw_pid);
+        let _ = st.child.kill();
+        st.exit_status = st.child.wait().ok();
+    }
+
+    let (out_buf, out_large) = st
+        .out_reader
+        .take()
+        .and_then(|h| h.join().ok())
+        .unwrap_or_else(|| (Vec::new(), false));
+    let (err_buf, err_large) = st
+        .err_reader
+        .take()
+        .and_then(|h| h.join().ok())
+        .unwrap_or_else(|| (Vec::new(), false));
+
+    if timed_out {
+        st.captured = Some(Err("timed_out"));
+        return command_error_tag(heap, types, result_ty, "timed_out", "");
+    }
+    if out_large || err_large {
+        st.captured = Some(Err("output_too_large"));
+        return command_error_tag(heap, types, result_ty, "output_too_large", "");
+    }
+    let Some(es) = st.exit_status else {
+        st.captured = Some(Err("spawn_failed:child wait failed"));
+        return command_error_tag(heap, types, result_ty, "spawn_failed:child wait failed", "");
+    };
+    if es.signal() == Some(24) {
+        st.captured = Some(Err("timed_out"));
+        return command_error_tag(heap, types, result_ty, "timed_out", "");
+    }
+    if es.code() == Some(125) {
+        st.captured = Some(Err("spawn_failed:could not confine command child"));
+        return command_error_tag(
+            heap,
+            types,
+            result_ty,
+            "spawn_failed:could not confine command child",
+            "",
+        );
+    }
+
+    let exit_code = match es.code() {
+        Some(c) => i64::from(c),
+        None => 128 + i64::from(es.signal().unwrap_or(0)),
+    };
+    st.captured = Some(Ok((exit_code, out_buf.clone(), err_buf.clone())));
+    command_ok_tuple(heap, types, result_ty, exit_code, out_buf, err_buf)
+}
+
 // ---------------------------------------------------------------------------
 // Public dispatch
 // ---------------------------------------------------------------------------
@@ -992,12 +1319,17 @@ pub(crate) fn call_command(
     heap: &Heap,
     types: &TypeTable,
     #[cfg(unix)] resolver: &mut ResolverState,
-    open_folders: &Rc<Cell<u32>>,
+    counters: CommandCounters<'_>,
     op: HostOpId,
     result_ty: u32,
     args: &[Value],
 ) -> Result<Value, HostError> {
+    let open_folders = counters.open_folders;
+    let open_processes = counters.open_processes;
     match op {
+        HostOpId::CommandAllowLoopback => {
+            command_allow_loopback(heap, open_folders, result_ty, args)
+        }
         HostOpId::CommandAllowPrograms => {
             command_allow_programs(heap, open_folders, result_ty, args)
         }
@@ -1032,6 +1364,108 @@ pub(crate) fn call_command(
                 #[cfg(unix)]
                 CommandCap::Real(r) => {
                     command_run_real(heap, types, resolver, r, result_ty, args, timeout_us)
+                }
+            }
+        }
+        HostOpId::CommandSpawnRaw => {
+            if args[2].as_list().len() as u64 > MO_LIMIT_COMMAND_ARGS {
+                return Err(HostError::Bug {
+                    reason: "too many command arguments",
+                    detail: None,
+                });
+            }
+            let cap = crate::downcast_cap::<CommandCap>(&args[0], "Command capability");
+            match cap {
+                CommandCap::Fake(f) => command_spawn_fake(heap, types, f, result_ty, args),
+                #[cfg(unix)]
+                CommandCap::Real(r) => {
+                    command_spawn_real(heap, types, resolver, open_processes, r, result_ty, args)
+                }
+            }
+        }
+        HostOpId::CommandProcessPid => {
+            let proc_cap =
+                crate::downcast_cap::<ProcessCap>(&args[0], "Command.Process capability");
+            match proc_cap {
+                #[cfg(unix)]
+                ProcessCap::Real(r) => Ok(Value::Int(r.state.borrow().pid)),
+                ProcessCap::Fake(f) => Ok(Value::Int(f.pid)),
+            }
+        }
+        HostOpId::CommandProcessAlive => {
+            let proc_cap =
+                crate::downcast_cap::<ProcessCap>(&args[0], "Command.Process capability");
+            match proc_cap {
+                #[cfg(unix)]
+                ProcessCap::Real(r) => {
+                    let mut st = r.state.borrow_mut();
+                    if st.exit_status.is_some() {
+                        Ok(Value::Bool(false))
+                    } else if let Ok(Some(es)) = st.child.try_wait() {
+                        st.exit_status = Some(es);
+                        Ok(Value::Bool(false))
+                    } else {
+                        Ok(Value::Bool(true))
+                    }
+                }
+                ProcessCap::Fake(f) => Ok(Value::Bool(f.alive.get())),
+            }
+        }
+        HostOpId::CommandProcessKillRaw => {
+            let proc_cap =
+                crate::downcast_cap::<ProcessCap>(&args[0], "Command.Process capability");
+            match proc_cap {
+                #[cfg(unix)]
+                ProcessCap::Real(r) => {
+                    let mut st = r.state.borrow_mut();
+                    if st.exit_status.is_none() {
+                        match st.child.try_wait() {
+                            Ok(Some(es)) => st.exit_status = Some(es),
+                            _ => {
+                                crate::confine::kill_child_tree(st.raw_pid);
+                                let _ = st.child.kill();
+                                st.exit_status = st.child.wait().ok();
+                            }
+                        }
+                    }
+                    command_ok_unit(heap, types, result_ty)
+                }
+                ProcessCap::Fake(f) => {
+                    if f.alive.get() {
+                        f.alive.set(false);
+                        f.killed.set(true);
+                    }
+                    command_ok_unit(heap, types, result_ty)
+                }
+            }
+        }
+        HostOpId::CommandProcessWaitRaw => {
+            let timeout_us = args[1].as_duration();
+            if !(1000..=MO_LIMIT_COMMAND_DURATION_US).contains(&timeout_us) {
+                return Err(HostError::Bug {
+                    reason: "timeout below 1ms or above 1 hour",
+                    detail: None,
+                });
+            }
+            let proc_cap =
+                crate::downcast_cap::<ProcessCap>(&args[0], "Command.Process capability");
+            match proc_cap {
+                #[cfg(unix)]
+                ProcessCap::Real(r) => process_wait_real(heap, types, r, result_ty, timeout_us),
+                ProcessCap::Fake(f) => {
+                    f.alive.set(false);
+                    if f.killed.get() {
+                        command_ok_tuple(heap, types, result_ty, 137, Vec::new(), Vec::new())
+                    } else {
+                        command_ok_tuple(
+                            heap,
+                            types,
+                            result_ty,
+                            f.status,
+                            f.stdout.clone(),
+                            f.stderr.clone(),
+                        )
+                    }
                 }
             }
         }

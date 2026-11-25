@@ -637,8 +637,17 @@ results in `lib/command.mo`.
 | `run_raw(program, args, within)` | host | `COMMAND_RUN_RAW` | spawns `program` inside the capability's folder with monotonic deadline and 4 MiB pipe cap, or looks up a `Command.fake` exchange |
 | `within(folder)` | host | `COMMAND_WITHIN` | narrows the working folder with `mo_host_resolve` (`RESOLVE_BENEATH`), poisoning escapes |
 | `allow_programs(programs)` | host | `COMMAND_ALLOW_PROGRAMS` | intersects allowed program basenames so authority only narrows |
+| `allow_loopback()` | host | `COMMAND_ALLOW_LOOPBACK` | opts child confinement into loopback-only TCP (`127.0.0.1` / `::1`) while keeping external network connections blocked |
+| `spawn_raw(program, args)` | host | `COMMAND_SPAWN_RAW` | spawns a supervised `Command.Process` child inside the capability's folder, or looks up a `Command.fake` exchange |
+| `pid` | host | `COMMAND_PROCESS_PID` | returns the OS PID (or deterministic fake PID) of a `Command.Process` |
+| `alive?` | host | `COMMAND_PROCESS_ALIVE` | checks whether a `Command.Process` is still running without losing its exit status |
+| `kill_raw` | host | `COMMAND_PROCESS_KILL_RAW` | terminates a `Command.Process` process group and reaps the child |
+| `wait_raw(within)` | host | `COMMAND_PROCESS_WAIT_RAW` | waits up to `within` for a `Command.Process` to exit and returns `(status, stdout, stderr)` |
 | `Command.fake(replies)` | host | `COMMAND_FAKE` | a fake, for spec code only (reference 12.4) |
 | `run(program, args, within)` | Mo | `lib/command.mo` | decodes UTF-8 `stdout`/`stderr` into `Output` and maps error tags into `CommandError` |
+| `spawn(program, args)` | Mo | `lib/command.mo` | spawns a supervised `Command.Process` and maps error tags into `CommandError` |
+| `kill()` | Mo | `lib/command.mo` | terminates a `Command.Process` and maps error tags into `CommandError` |
+| `wait(within)` | Mo | `lib/command.mo` | waits for a `Command.Process` and decodes UTF-8 `stdout`/`stderr` into `Output` |
 | `Command.spec(program, args)` | Mo | `lib/command.mo` | starts a `Spec` at the capability's root folder |
 | `in_folder(folder)` | Mo | `lib/command.mo` | narrows a `Spec` to a relative subfolder |
 | `Command.output(status, stdout, stderr)` | Mo | `lib/command.mo` | builds an `Output` |

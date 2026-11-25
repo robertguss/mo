@@ -270,6 +270,7 @@ pub enum Cap {
     Command,
     SecureRandom,
     File,
+    Process,
 }
 
 impl Cap {
@@ -290,6 +291,7 @@ impl Cap {
             Self::Command => "command",
             Self::SecureRandom => "secureRandom",
             Self::File => "file",
+            Self::Process => "process",
         }
     }
 
@@ -310,6 +312,7 @@ impl Cap {
             "command" => Some(Self::Command),
             "secureRandom" => Some(Self::SecureRandom),
             "file" => Some(Self::File),
+            "process" => Some(Self::Process),
             _ => None,
         }
     }
@@ -332,6 +335,7 @@ impl Cap {
             Self::Command => "Command",
             Self::SecureRandom => "SecureRandom",
             Self::File => "Files.File",
+            Self::Process => "Command.Process",
         }
     }
 }

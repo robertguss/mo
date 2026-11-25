@@ -87,6 +87,8 @@ pub struct ServeOptions<'a> {
     pub allow_host: Option<&'a str>,
     /// Optional operator Unix domain socket (`--admin-socket`).
     pub admin_socket: Option<&'a Path>,
+    /// Optional path where readiness JSON is written atomically once listening (`--ready-file`).
+    pub ready_file: Option<&'a Path>,
     /// Optional explicit library directory (`--lib`).
     pub library: Option<&'a Path>,
     /// Whether `--upgrade` was passed (allows changing recorded program on startup).
@@ -952,6 +954,21 @@ pub fn run_serve_service(
         };
         let _ = writeln!(errors, "mo serve: upgrades: {msg}");
         let _ = errors.flush();
+    }
+
+    if let Some(ready_path) = opts.ready_file
+        && let Err(err) = crate::write_ready_file(
+            ready_path,
+            &format!("http://{numeric}"),
+            bound_port,
+            opts.data_dir,
+        )
+    {
+        let _ = writeln!(
+            errors,
+            "error E1409: mo serve could not write ready file: {err}"
+        );
+        return 1;
     }
 
     if writeln!(output, "mo serve: listening on http://{numeric}/mcp").is_err()

@@ -973,6 +973,8 @@ impl<'a> InferState<'a> {
         }
         let mod_name = if term.shape.name.starts_with("Sqlite.") {
             "Sqlite".to_string()
+        } else if term.shape.name.starts_with("Command.") {
+            "Command".to_string()
         } else {
             term.shape.name.clone()
         };

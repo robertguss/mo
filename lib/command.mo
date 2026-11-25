@@ -1,7 +1,19 @@
 ## Confined subprocess execution (`Command`): explicit working-folder and program-basename
 ## attenuation, bounded output and deadlines, and deterministic `Command.fake` exchanges for tests.
 module Command
-expose Output(..), Spec(..), CommandError(..), spec, in_folder, output, ok_output, ok?, replies, run
+expose Output(..),
+Spec(..),
+CommandError(..),
+spec,
+in_folder,
+output,
+ok_output,
+ok?,
+replies,
+run,
+spawn,
+kill,
+wait
 
 struct Output
   status: Int
@@ -158,6 +170,36 @@ fn run(command: Command, program: Text, args: List(Text), within: Duration) : Re
   end
 end
 
+## Spawns `program` with `args` inside `command`'s confined folder as a supervised background
+## `Command.Process` handle. Dropping a live handle kills and reaps the child automatically.
+fn spawn(command: Command, program: Text, args: List(Text)) : Result(Command.Process, CommandError)
+  case command.spawn_raw(program, args)
+    Error(raw): Error(parse_error(raw))
+    Ok(proc): Ok(proc)
+  end
+end
+
+## Terminates `proc`'s process group and reaps the child process.
+fn kill(proc: Command.Process) : Result(Unit, CommandError)
+  case proc.kill_raw
+    Error(raw): Error(parse_error(raw))
+    Ok(_): Ok(Unit)
+  end
+end
+
+## Waits up to `within` for `proc` to exit and returns its decoded `Output` (or `TimedOut` after
+## killing and reaping the child if `within` expires first).
+fn wait(proc: Command.Process, within: Duration) : Result(Output, CommandError)
+  case proc.wait_raw(within)
+    Error(raw): Error(parse_error(raw))
+    Ok((status, out_b, err_b)):
+      case (out_b.decode_utf8, err_b.decode_utf8)
+        (Some(stdout), Some(stderr)): Ok(Output(status: status, stdout: stdout, stderr: stderr))
+        _: Error(SpawnFailed(reason: "command output is not valid UTF-8"))
+      end
+  end
+end
+
 test "fake command enforces folder containment and monotonic program allowlists"
   cmd = Command.fake(
     replies([
@@ -180,4 +222,34 @@ test "fake command enforces folder containment and monotonic program allowlists"
 
   escaped = cmd.within("../etc")
   assert escaped.run("mo", ["check"], 5.seconds) == Error(OutsideFolder(path: "../etc"))
+end
+
+test "fake Command.spawn supports pid, alive?, wait, kill, within, allow_programs and allow_loopback"
+  cmd = Command.fake(
+    replies([
+      (spec("mo", ["serve", "app.mo"]).in_folder("svc"), ok_output("mo serve: listening\n")),
+      (spec("mo", ["test", "app.mo"]).in_folder("svc"), ok_output("3 passed\n"))
+    ])
+  )
+  scoped = cmd.within("svc").allow_programs(["mo"]).allow_loopback()
+
+  assert scoped.spawn("curl", ["http://127.0.0.1:8080"]) is Error(NotPermitted(program: "curl"))
+
+  case scoped.spawn("mo", ["test", "app.mo"])
+    Error(_): assert false
+    Ok(proc):
+      assert proc.pid > 0
+      assert proc.alive?
+      assert proc.wait(5.seconds) == Ok(Output(status: 0, stdout: "3 passed\n", stderr: ""))
+      assert not proc.alive?
+  end
+
+  case scoped.spawn("mo", ["serve", "app.mo"])
+    Error(_): assert false
+    Ok(srv):
+      assert srv.alive?
+      assert srv.kill() == Ok(Unit)
+      assert not srv.alive?
+      assert srv.wait(1.second) == Ok(Output(status: 137, stdout: "", stderr: ""))
+  end
 end

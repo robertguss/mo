@@ -259,7 +259,8 @@ def signatures():
                "(fn ((int)) (text))", '(data "undeclared")', L(T), m, se,
                O(T), R(T), "(tuple ((text) (float)))"] + [
                    C(k) for k in ["args", "env", "console", "files", "readFiles", "clock", "random",
-                                  "network", "connection", "sqlite", "database", "command"]]:
+                                  "network", "connection", "sqlite", "database", "command",
+                                  "process"]]:
         table.append((f"(structural {ty})", [ty], T, False))
     add("io", "argsList", C("args"), L(T))
     add("io", "envGet", C("env") + "|" + T, O(T))
@@ -325,6 +326,14 @@ def signatures():
         f"(result (tuple ({I} (bytes) (bytes))) {T})")
     add("io", "commandWithin", C("command") + "|" + T, C("command"))
     add("io", "commandAllowPrograms", C("command") + "|" + L(T), C("command"))
+    add("io", "commandAllowLoopback", C("command"), C("command"))
+    add("io", "commandSpawnRaw", C("command") + "|" + T + "|" + L(T),
+        f"(result {C('process')} {T})")
+    add("io", "commandProcessPid", C("process"), I)
+    add("io", "commandProcessAlive", C("process"), "(bool)")
+    add("io", "commandProcessKillRaw", C("process"), f"(result {U} {T})")
+    add("io", "commandProcessWaitRaw", C("process") + "|(duration)",
+        f"(result (tuple ({I} (bytes) (bytes))) {T})")
     add("io", "commandFake", "(map (bytes) (bytes))", C("command"), True)
     return table
 

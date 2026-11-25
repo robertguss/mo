@@ -127,6 +127,7 @@ pub struct Cli {
     pub watch: bool,
     pub bind_host: Option<Vec<u8>>,
     pub data: Option<Vec<u8>>,
+    pub ready_file: Option<Vec<u8>>,
     pub allow_host: Option<Vec<u8>>,
     pub admin_socket: Option<Vec<u8>>,
     pub push_base: Option<Vec<u8>>,
@@ -185,6 +186,7 @@ impl Default for Cli {
             watch: false,
             bind_host: None,
             data: None,
+            ready_file: None,
             allow_host: None,
             admin_socket: None,
             push_base: None,
@@ -530,6 +532,7 @@ enum FlagId {
     Bind,
     Workers,
     Watch,
+    ReadyFile,
     Tests,
     ConfineChild,
     RlimitChild,
@@ -1006,6 +1009,15 @@ const FLAGS_TABLE: &[FlagSpec] = &[
         commands: cmd_mask(&[Command::Serve]),
     },
     FlagSpec {
+        id: FlagId::ReadyFile,
+        name: b"--ready-file",
+        prefix: false,
+        repeated: false,
+        value: FlagValue::Text,
+        maximum: 0,
+        commands: cmd_mask(&[Command::Serve]),
+    },
+    FlagSpec {
         id: FlagId::Tests,
         name: b"--tests",
         prefix: false,
@@ -1069,6 +1081,7 @@ fn set_flag(
             out.has_workers = true;
         }
         FlagId::Watch => out.watch = true,
+        FlagId::ReadyFile => out.ready_file = op_bytes(),
         FlagId::Tests => out.emit_tests = true,
         FlagId::Strength => out.strength = op_bytes(),
         FlagId::Context => out.compile_context = op_bytes(),
@@ -1675,6 +1688,10 @@ fn flag_help_meta(id: FlagId) -> (&'static str, &'static str) {
             "worker thread count for api servers (1..64, default 8)",
         ),
         FlagId::Watch => ("", "reload modified .mo modules automatically"),
+        FlagId::ReadyFile => (
+            "PATH",
+            "write server readiness JSON atomically once listening",
+        ),
         FlagId::Tests => ("", "emit bytecode including test functions"),
         FlagId::ConfineChild => ("", "confine internal compile child process"),
         FlagId::RlimitChild => (

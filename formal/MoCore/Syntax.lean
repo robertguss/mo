@@ -17,7 +17,7 @@ namespace MoCore
 
 /-- The capability types of reference section 11.1. -/
 inductive Cap where
-  | console | files | readFiles | clock | random | args | env | network | connection | sqlite | database | command | secureRandom | file
+  | console | files | readFiles | clock | random | args | env | network | connection | sqlite | database | command | secureRandom | file | process
   deriving DecidableEq, Repr, Inhabited
 
 /-- Core types.
@@ -165,7 +165,7 @@ def Cap.name : Cap → String
   | .clock => "Clock" | .random => "Random" | .args => "Args" | .env => "Env"
   | .network => "Network" | .connection => "Connection"
   | .sqlite => "Sqlite" | .database => "Sqlite.Database" | .command => "Command"
-  | .secureRandom => "SecureRandom" | .file => "Files.File"
+  | .secureRandom => "SecureRandom" | .file => "Files.File" | .process => "Command.Process"
 
 mutual
 /-- A type written as Mo writes it, used to name instantiated functions such
@@ -380,7 +380,9 @@ inductive IoOp where
   | now | sleep | randomInt
   | connect | connectSecure | allowHosts | send | receive
   | sqliteOpen | sqliteRun | sqliteQuery | sqliteExecuteRaw | sqliteStatsRaw | sqliteResetStatsRaw
-  | commandRunRaw | commandWithin | commandAllowPrograms
+  | commandRunRaw | commandWithin | commandAllowPrograms | commandAllowLoopback
+  | commandSpawnRaw | commandProcessPid | commandProcessAlive
+  | commandProcessKillRaw | commandProcessWaitRaw
   | secureRandomBytes
   | writeBytes | rename | fileOpen | fileReadAt | fileWriteAt | fileSize | fileTruncate | fileSync
   | fileLockShared | fileLockExclusive | fileUnlock | readFileOpen
@@ -643,6 +645,13 @@ def IoOp.sig : IoOp → List Ty × Ty
     ([.cap .command, .text, .list .text, .duration], .result (.tuple [.int, .bytes, .bytes]) .text)
   | .commandWithin => ([.cap .command, .text], .cap .command)
   | .commandAllowPrograms => ([.cap .command, .list .text], .cap .command)
+  | .commandAllowLoopback => ([.cap .command], .cap .command)
+  | .commandSpawnRaw => ([.cap .command, .text, .list .text], .result (.cap .process) .text)
+  | .commandProcessPid => ([.cap .process], .int)
+  | .commandProcessAlive => ([.cap .process], .bool)
+  | .commandProcessKillRaw => ([.cap .process], .result .unit .text)
+  | .commandProcessWaitRaw =>
+    ([.cap .process, .duration], .result (.tuple [.int, .bytes, .bytes]) .text)
   | .commandFake => ([.map .bytes .bytes], .cap .command)
   | .secureRandomBytes => ([.cap .secureRandom, .int], .bytes)
   | .secureRandomSeeded => ([.int], .cap .secureRandom)

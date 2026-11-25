@@ -670,6 +670,7 @@ static inline struct mo_limits mo_limits_default(void) {
 #define MO_LIMIT_COMMAND_ARG_BYTES 65536
 #define MO_LIMIT_COMMAND_DURATION_US (INT64_C(3600) * 1000000)
 #define MO_LIMIT_COMMAND_MEMORY (UINT64_C(2) * 1024 * 1024 * 1024)
+#define MO_LIMIT_OPEN_PROCESSES 32
 
 /* Cryptographic randomness and password hashing bounds (reference 11.1, 14). */
 #define MO_LIMIT_SECURE_RANDOM_BYTES 65536

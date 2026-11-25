@@ -62,6 +62,8 @@ pub struct ApiServeOptions<'a> {
     pub watch: bool,
     /// Optional explicit library directory (`--lib`).
     pub library: Option<&'a Path>,
+    /// Optional path where readiness JSON is written atomically once listening (`--ready-file`).
+    pub ready_file: Option<&'a Path>,
     /// VM limits.
     pub limits: Limits,
 }
@@ -1695,13 +1697,33 @@ pub fn run_serve_api(
         None
     };
 
-    if writeln!(
-        output,
-        "mo serve: listening on http://{bind_host}:{actual_port}"
-    )
-    .is_err()
-        || output.flush().is_err()
+    let listen_url = format!("http://{bind_host}:{actual_port}");
+    if let Some(ready_path) = opts.ready_file
+        && let Err(err) = crate::write_ready_file(ready_path, &listen_url, actual_port, data_dir)
     {
+        pool.stopping.store(true, Ordering::Relaxed);
+        {
+            let mut g = pool
+                .queue
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            g.1 = true;
+            pool.queue_cv.notify_all();
+            pool.job_cv.notify_all();
+        }
+        for h in worker_handles {
+            let _ = h.join();
+        }
+        if let Some(jh) = job_handle {
+            let _ = jh.join();
+        }
+        return report_start_error(
+            errors,
+            &format!("mo serve could not write ready file: {err}"),
+        );
+    }
+
+    if writeln!(output, "mo serve: listening on {listen_url}").is_err() || output.flush().is_err() {
         pool.stopping.store(true, Ordering::Relaxed);
         {
             let mut g = pool

@@ -157,10 +157,11 @@ pub enum Capability {
     Command = 12,
     SecureRandom = 13,
     File = 14,
+    Process = 15,
 }
 
 impl Capability {
-    pub const COUNT: usize = 15;
+    pub const COUNT: usize = 16;
 
     pub const fn from_u32(v: u32) -> Option<Self> {
         match v {
@@ -179,6 +180,7 @@ impl Capability {
             12 => Some(Self::Command),
             13 => Some(Self::SecureRandom),
             14 => Some(Self::File),
+            15 => Some(Self::Process),
             _ => None,
         }
     }
@@ -200,6 +202,7 @@ impl Capability {
             Self::Command => "Command",
             Self::SecureRandom => "SecureRandom",
             Self::File => "Files.File",
+            Self::Process => "Command.Process",
         }
     }
 }

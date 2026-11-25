@@ -63,6 +63,7 @@ fn core_cap_to_bytecode(cap: Cap) -> Capability {
         Cap::Command => Capability::Command,
         Cap::SecureRandom => Capability::SecureRandom,
         Cap::File => Capability::File,
+        Cap::Process => Capability::Process,
     }
 }
 
@@ -168,6 +169,7 @@ fn parse_sig_type(cursor: &mut &str, vars: &[Option<u32>; 4], depth: u32) -> Opt
         "Command" => return Some(SigTy::Cap(Cap::Command)),
         "SecureRandom" => return Some(SigTy::Cap(Cap::SecureRandom)),
         "Files.File" => return Some(SigTy::Cap(Cap::File)),
+        "Command.Process" => return Some(SigTy::Cap(Cap::Process)),
         "List" | "Set" | "Map" | "Option" | "Result" => {}
         _ => return None,
     }

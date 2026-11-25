@@ -1148,6 +1148,20 @@ fn match_static_prim(native: &str) -> Option<Prim> {
             CoreIoNullaryOp::CommandAllowPrograms,
         ))),
         "Command.fake" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::CommandFake))),
+        "Command.allow_loopback" => Some(Prim::Io(IoOp::Nullary(
+            CoreIoNullaryOp::CommandAllowLoopback,
+        ))),
+        "Command.spawn_raw" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::CommandSpawnRaw))),
+        "Command.pid" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::CommandProcessPid))),
+        "Command.alive?" => Some(Prim::Io(IoOp::Nullary(
+            CoreIoNullaryOp::CommandProcessAlive,
+        ))),
+        "Command.kill_raw" => Some(Prim::Io(IoOp::Nullary(
+            CoreIoNullaryOp::CommandProcessKillRaw,
+        ))),
+        "Command.wait_raw" => Some(Prim::Io(IoOp::Nullary(
+            CoreIoNullaryOp::CommandProcessWaitRaw,
+        ))),
         "SecureRandom.bytes" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::SecureRandomBytes))),
         "SecureRandom.seeded" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::SecureRandomSeeded))),
         "Files.write_bytes" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::WriteBytes))),

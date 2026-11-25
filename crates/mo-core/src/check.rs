@@ -1531,6 +1531,41 @@ impl<'a> Checker<'a> {
                     let m = self.binary(TyTag::Map, s_bytes, s_bytes);
                     self.sig1(cmd, m)
                 }
+                CoreIoNullaryOp::CommandAllowLoopback => {
+                    let cmd = self.cap_ty(Cap::Command);
+                    self.sig1(cmd, cmd)
+                }
+                CoreIoNullaryOp::CommandSpawnRaw => {
+                    let cmd = self.cap_ty(Cap::Command);
+                    let proc = self.cap_ty(Cap::Process);
+                    let lt = self.unary(TyTag::List, s_text);
+                    let res = self.binary(TyTag::Result, proc, s_text);
+                    self.sig3(res, cmd, s_text, lt)
+                }
+                CoreIoNullaryOp::CommandProcessPid => {
+                    let proc = self.cap_ty(Cap::Process);
+                    self.sig1(s_int, proc)
+                }
+                CoreIoNullaryOp::CommandProcessAlive => {
+                    let proc = self.cap_ty(Cap::Process);
+                    self.sig1(s_bool, proc)
+                }
+                CoreIoNullaryOp::CommandProcessKillRaw => {
+                    let proc = self.cap_ty(Cap::Process);
+                    let res = self.binary(TyTag::Result, s_unit, s_text);
+                    self.sig1(res, proc)
+                }
+                CoreIoNullaryOp::CommandProcessWaitRaw => {
+                    let proc = self.cap_ty(Cap::Process);
+                    let tup = self.intern(
+                        TyTag::Tuple,
+                        vec![s_int, s_bytes, s_bytes],
+                        "",
+                        Cap::Console,
+                    );
+                    let res = self.binary(TyTag::Result, tup, s_text);
+                    self.sig2(res, proc, s_dur)
+                }
                 CoreIoNullaryOp::SecureRandomBytes => {
                     let sr = self.cap_ty(Cap::SecureRandom);
                     self.sig2(s_bytes, sr, s_int)

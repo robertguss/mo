@@ -165,12 +165,13 @@ pub fn confine_compile_child(
 }
 
 /// Applies fail-closed Landlock (ABI V3–V6) + Seccomp-BPF confinement to a `Command.run_raw`
-/// child process.
+/// or `Command.spawn_raw` child process.
 pub fn confine_command_child(
     executable: &Path,
     work_dir: &Path,
     tmp_dir: &Path,
     parent_pid: u32,
+    allow_loopback: bool,
 ) -> Result<(), String> {
     #[cfg(all(
         target_os = "linux",
@@ -178,7 +179,13 @@ pub fn confine_command_child(
         any(target_arch = "x86_64", target_arch = "aarch64")
     ))]
     {
-        linux::confine_command_child_linux(executable, work_dir, tmp_dir, parent_pid)
+        linux::confine_command_child_linux(
+            executable,
+            work_dir,
+            tmp_dir,
+            parent_pid,
+            allow_loopback,
+        )
     }
     #[cfg(not(all(
         target_os = "linux",
@@ -186,7 +193,7 @@ pub fn confine_command_child(
         any(target_arch = "x86_64", target_arch = "aarch64")
     )))]
     {
-        let _ = (executable, work_dir, tmp_dir, parent_pid);
+        let _ = (executable, work_dir, tmp_dir, parent_pid, allow_loopback);
         Err("confinement is unsupported on this host".to_string())
     }
 }
@@ -231,6 +238,7 @@ fn run_trampoline_inner(args: Vec<OsString>) -> u8 {
     let mut mem_bytes: Option<u64> = None;
     let mut parent_pid: Option<u32> = None;
     let mut confine = false;
+    let mut allow_loopback = false;
     let mut exe_path: Option<PathBuf> = None;
     let mut cmd_args: Vec<OsString> = Vec::new();
 
@@ -273,6 +281,7 @@ fn run_trampoline_inner(args: Vec<OsString>) -> u8 {
             }
             "--confine" => confine = true,
             "--no-confine" => confine = false,
+            "--allow-loopback" => allow_loopback = true,
             "--exe" => {
                 i += 1;
                 exe_path = args.get(i).map(PathBuf::from);
@@ -307,7 +316,7 @@ fn run_trampoline_inner(args: Vec<OsString>) -> u8 {
         return fail_trampoline(step);
     }
 
-    if confine && let Err(step) = confine_command_child(&exe, &wd, &td, ppid) {
+    if confine && let Err(step) = confine_command_child(&exe, &wd, &td, ppid, allow_loopback) {
         return fail_trampoline(&step);
     }
 
@@ -326,9 +335,9 @@ mod linux {
     use std::path::Path;
 
     use landlock::{
-        ABI, Access, AccessFs, AccessNet, BitFlags, CompatLevel, Compatible, PathBeneath, PathFd,
-        PathFdError, Ruleset, RulesetAttr, RulesetCreated, RulesetCreatedAttr, RulesetStatus,
-        Scope,
+        ABI, Access, AccessFs, AccessNet, BitFlags, CompatLevel, Compatible, NetPort, PathBeneath,
+        PathFd, PathFdError, Ruleset, RulesetAttr, RulesetCreated, RulesetCreatedAttr,
+        RulesetStatus, Scope,
     };
     use seccompiler::{
         BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter,
@@ -441,7 +450,7 @@ mod linux {
             .is_ok_and(|s| s.split_whitespace().any(|tok| tok == "kill_process"))
     }
 
-    fn create_ruleset_v3_to_v6() -> Result<RulesetCreated, String> {
+    fn create_ruleset_v3_to_v6(allow_loopback: bool) -> Result<RulesetCreated, String> {
         // First confirm Landlock ABI >= 3 is supported.
         Ruleset::default()
             .set_compatibility(CompatLevel::HardRequirement)
@@ -449,17 +458,81 @@ mod linux {
             .and_then(Ruleset::create)
             .map_err(|e| format!("landlock_create_ruleset(v3 probe): {e}"))?;
 
+        let net_access = if allow_loopback {
+            BitFlags::from(AccessNet::ConnectTcp)
+        } else {
+            AccessNet::from_all(ABI::V4)
+        };
+
         // Build best-effort ABI V6 ruleset (FS + TCP net + signal/abstract-unix scopes);
         // `restrict_self` verifies enforcement is not NotEnforced.
         Ruleset::default()
             .handle_access(AccessFs::from_all(ABI::V6))
             .map_err(|e| format!("landlock handle_access(fs): {e}"))?
-            .handle_access(AccessNet::from_all(ABI::V4))
+            .handle_access(net_access)
             .map_err(|e| format!("landlock handle_access(net): {e}"))?
             .scope(Scope::from_all(ABI::V6))
             .map_err(|e| format!("landlock scope(v6): {e}"))?
             .create()
             .map_err(|e| format!("landlock_create_ruleset: {e}"))
+    }
+
+    /// Reads `/proc/net/tcp` and `/proc/net/tcp6` before Landlock restricts filesystem access,
+    /// returning all TCP ports currently listening strictly on loopback (`127.0.0.0/8`, `::1`, or
+    /// `::ffff:127.0.0.0/104`). Listeners on `0.0.0.0`, `::`, or external NICs are excluded so
+    /// Landlock `AccessNet::ConnectTcp` blocks every non-loopback destination port with `EACCES`.
+    fn collect_loopback_listen_ports() -> Vec<u16> {
+        let mut ports = Vec::new();
+        if let Ok(tcp4) = std::fs::read_to_string("/proc/net/tcp") {
+            for line in tcp4.lines().skip(1) {
+                let mut cols = line.split_whitespace();
+                let _slot = cols.next();
+                let Some(local) = cols.next() else { continue };
+                let _rem = cols.next();
+                let Some(state) = cols.next() else { continue };
+                if !state.eq_ignore_ascii_case("0A") {
+                    continue;
+                }
+                let Some((ip_hex, port_hex)) = local.split_once(':') else {
+                    continue;
+                };
+                if ip_hex.len() == 8
+                    && ip_hex[6..8].eq_ignore_ascii_case("7F")
+                    && let Ok(port) = u16::from_str_radix(port_hex, 16)
+                    && port > 0
+                {
+                    ports.push(port);
+                }
+            }
+        }
+        if let Ok(tcp6) = std::fs::read_to_string("/proc/net/tcp6") {
+            for line in tcp6.lines().skip(1) {
+                let mut cols = line.split_whitespace();
+                let _slot = cols.next();
+                let Some(local) = cols.next() else { continue };
+                let _rem = cols.next();
+                let Some(state) = cols.next() else { continue };
+                if !state.eq_ignore_ascii_case("0A") {
+                    continue;
+                }
+                let Some((ip6_hex, port_hex)) = local.split_once(':') else {
+                    continue;
+                };
+                let is_loopback6 = ip6_hex.len() == 32
+                    && (ip6_hex.eq_ignore_ascii_case("00000000000000000000000001000000")
+                        || (ip6_hex[..24].eq_ignore_ascii_case("0000000000000000FFFF0000")
+                            && ip6_hex[30..32].eq_ignore_ascii_case("7F")));
+                if is_loopback6
+                    && let Ok(port) = u16::from_str_radix(port_hex, 16)
+                    && port > 0
+                {
+                    ports.push(port);
+                }
+            }
+        }
+        ports.sort_unstable();
+        ports.dedup();
+        ports
     }
 
     fn allow_path(
@@ -684,7 +757,7 @@ mod linux {
         seccompiler::apply_filter(&prog).map_err(|e| format!("seccomp(compile apply): {e}"))
     }
 
-    fn apply_command_seccomp(parent_pid: u32) -> Result<(), String> {
+    fn apply_command_seccomp(parent_pid: u32, allow_loopback: bool) -> Result<(), String> {
         let arch = target_arch()?;
 
         let mut rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
@@ -692,7 +765,61 @@ mod linux {
             if nr == libc::SYS_socketpair || nr == libc::SYS_sendto {
                 continue;
             }
+            if allow_loopback
+                && (nr == libc::SYS_socket
+                    || nr == libc::SYS_connect
+                    || nr == libc::SYS_bind
+                    || nr == libc::SYS_sendmsg)
+            {
+                continue;
+            }
             rules.insert(nr, Vec::new());
+        }
+
+        if allow_loopback {
+            // Permit `socket(AF_UNIX, ...)` and `socket(AF_INET | AF_INET6, SOCK_STREAM [| flags], ...)`.
+            // Deny all other address families (`AF_NETLINK`, `AF_PACKET`, etc.) and all non-stream
+            // IP socket types (`SOCK_DGRAM` UDP, `SOCK_RAW`, `SOCK_SEQPACKET`, etc.) with `EPERM`.
+            // Among 4-bit socket base types `0..=15`, `SOCK_STREAM == 1` is the unique value with
+            // `(type & 1) == 1 && (type & 2) == 0 && (type & 4) == 0 && (type & 8) == 0`
+            // (`SOCK_NONBLOCK = 0x800` and `SOCK_CLOEXEC = 0x80000` do not touch bits `0..=3`).
+            let mut socket_deny = vec![rule(vec![
+                cond(
+                    0,
+                    SeccompCmpArgLen::Dword,
+                    SeccompCmpOp::Ne,
+                    libc::AF_UNIX as u64,
+                )?,
+                cond(
+                    0,
+                    SeccompCmpArgLen::Dword,
+                    SeccompCmpOp::Ne,
+                    libc::AF_INET as u64,
+                )?,
+                cond(
+                    0,
+                    SeccompCmpArgLen::Dword,
+                    SeccompCmpOp::Ne,
+                    libc::AF_INET6 as u64,
+                )?,
+            ])?];
+            for (mask, bad_val) in [(1u64, 0u64), (2, 2), (4, 4), (8, 8)] {
+                socket_deny.push(rule(vec![
+                    cond(
+                        0,
+                        SeccompCmpArgLen::Dword,
+                        SeccompCmpOp::Ne,
+                        libc::AF_UNIX as u64,
+                    )?,
+                    cond(
+                        1,
+                        SeccompCmpArgLen::Dword,
+                        SeccompCmpOp::MaskedEq(mask),
+                        bad_val,
+                    )?,
+                ])?);
+            }
+            rules.insert(libc::SYS_socket, socket_deny);
         }
 
         // Allow `socketpair(AF_UNIX, ...)` and `sendto(..., dest_addr == NULL)`, deny others.
@@ -772,7 +899,7 @@ mod linux {
     ) -> Result<(), String> {
         rustix::thread::set_no_new_privs(true).map_err(|e| format!("no_new_privs: {e}"))?;
 
-        let mut ruleset = create_ruleset_v3_to_v6()?;
+        let mut ruleset = create_ruleset_v3_to_v6(false)?;
         for sys in ["/usr", "/lib", "/lib64", "/etc/ld.so.cache"] {
             ruleset = allow_path(ruleset, Path::new(sys), SYSTEM_READ)?;
         }
@@ -810,10 +937,22 @@ mod linux {
         work_dir: &Path,
         tmp_dir: &Path,
         parent_pid: u32,
+        allow_loopback: bool,
     ) -> Result<(), String> {
         rustix::thread::set_no_new_privs(true).map_err(|e| format!("no_new_privs: {e}"))?;
 
-        let mut ruleset = create_ruleset_v3_to_v6()?;
+        let loopback_ports = if allow_loopback {
+            collect_loopback_listen_ports()
+        } else {
+            Vec::new()
+        };
+
+        let mut ruleset = create_ruleset_v3_to_v6(allow_loopback)?;
+        for port in loopback_ports {
+            ruleset = ruleset
+                .add_rule(NetPort::new(port, AccessNet::ConnectTcp))
+                .map_err(|e| format!("landlock net_port({port}): {e}"))?;
+        }
         for sys in ["/usr", "/bin", "/lib", "/lib64", "/opt/homebrew"] {
             ruleset = allow_path(ruleset, Path::new(sys), SYSTEM_READ)?;
         }
@@ -840,6 +979,6 @@ mod linux {
         )?;
 
         finish_landlock(ruleset)?;
-        apply_command_seccomp(parent_pid)
+        apply_command_seccomp(parent_pid, allow_loopback)
     }
 }

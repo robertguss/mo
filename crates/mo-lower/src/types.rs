@@ -211,6 +211,7 @@ fn make_type(p: &mut Lowering<'_>, source_id: TypeId, args: &[TyId]) -> LowerRes
                     "Command" => Ty::Cap(Cap::Command),
                     "SecureRandom" => Ty::Cap(Cap::SecureRandom),
                     "Files.File" => Ty::Cap(Cap::File),
+                    "Command.Process" => Ty::Cap(Cap::Process),
                     _ => {
                         return p.refuse(
                             ErrorCode::LowerUnfinished,

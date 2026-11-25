@@ -7,7 +7,7 @@ use crate::ids::{ModuleId, NativeSigId, SymRef, TypeId};
 
 /// Built-in capability type names in `MO_CAP_*` order (`src/base/capabilities.c`),
 /// followed by compiler-synthesized test capability handles.
-pub const CAPABILITY_NAMES: [&str; 16] = [
+pub const CAPABILITY_NAMES: [&str; 17] = [
     "Args",
     "Env",
     "Console",
@@ -23,6 +23,7 @@ pub const CAPABILITY_NAMES: [&str; 16] = [
     "Command",
     "SecureRandom",
     "Files.File",
+    "Command.Process",
     "ApiTest.App",
 ];
 

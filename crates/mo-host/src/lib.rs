@@ -151,6 +151,7 @@ pub struct HostContext {
     open_files: Rc<Cell<u32>>,
     open_connections: Rc<Cell<u32>>,
     open_databases: Rc<Cell<u32>>,
+    open_processes: Rc<Cell<u32>>,
     started: bool,
 }
 
@@ -172,6 +173,7 @@ impl HostContext {
             open_files: Rc::new(Cell::new(0)),
             open_connections: Rc::new(Cell::new(0)),
             open_databases: Rc::new(Cell::new(0)),
+            open_processes: Rc::new(Cell::new(0)),
             started: false,
         }
     }
@@ -238,6 +240,7 @@ impl HostContext {
             open_files: Rc::new(Cell::new(0)),
             open_connections: Rc::new(Cell::new(0)),
             open_databases: Rc::new(Cell::new(0)),
+            open_processes: Rc::new(Cell::new(0)),
             started: false,
         }
     }
@@ -665,20 +668,29 @@ impl HostContext {
                 args,
             ),
 
-            // Command (4 ops)
+            // Command & Command.Process (10 ops)
             HostOpId::CommandFake => command::command_fake(heap, result_ty, args[0].clone()),
-            HostOpId::CommandRunRaw | HostOpId::CommandWithin | HostOpId::CommandAllowPrograms => {
-                command::call_command(
-                    heap,
-                    types,
-                    #[cfg(unix)]
-                    &mut self.resolver,
-                    &self.open_folders,
-                    op,
-                    result_ty,
-                    args,
-                )
-            }
+            HostOpId::CommandRunRaw
+            | HostOpId::CommandWithin
+            | HostOpId::CommandAllowPrograms
+            | HostOpId::CommandAllowLoopback
+            | HostOpId::CommandSpawnRaw
+            | HostOpId::CommandProcessPid
+            | HostOpId::CommandProcessAlive
+            | HostOpId::CommandProcessKillRaw
+            | HostOpId::CommandProcessWaitRaw => command::call_command(
+                heap,
+                types,
+                #[cfg(unix)]
+                &mut self.resolver,
+                command::CommandCounters {
+                    open_folders: &self.open_folders,
+                    open_processes: &self.open_processes,
+                },
+                op,
+                result_ty,
+                args,
+            ),
         }
     }
 

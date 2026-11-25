@@ -824,19 +824,35 @@ impl<'a, 'd> Preparation<'a, 'd> {
         {
             let lhs = tree.node_text(lhs_nid).unwrap_or(b"");
             let rhs = tree.node_text(rhs_nid).unwrap_or(b"");
-            if rhs == b"Command"
-                && let Some(mod_id) = self.owner.module()
-            {
-                let scope = self.interfaces.scope(mod_id);
-                if let Some(used) = scope.find_alias(lhs) {
-                    let target = self.interfaces.scope(used.module);
-                    if target.library && target.name.as_deref() == Some("Command") {
-                        let orig = used.origin;
-                        let orig_span = used.origin_span;
-                        if !self.use_origin(name_node.span, orig, orig_span) {
-                            return None;
+            if rhs == b"Command" || rhs == b"Process" {
+                let resolved_name = if rhs == b"Process" {
+                    "Command.Process"
+                } else {
+                    "Command"
+                };
+                match self.owner.module() {
+                    None if lhs == b"Command" => {
+                        ty_name = Some(resolved_name.to_owned());
+                    }
+                    None => {}
+                    Some(mod_id) => {
+                        let scope = self.interfaces.scope(mod_id);
+                        if scope.library
+                            && scope.name.as_deref() == Some("Command")
+                            && lhs == b"Command"
+                        {
+                            ty_name = Some(resolved_name.to_owned());
+                        } else if let Some(used) = scope.find_alias(lhs) {
+                            let target = self.interfaces.scope(used.module);
+                            if target.library && target.name.as_deref() == Some("Command") {
+                                let orig = used.origin;
+                                let orig_span = used.origin_span;
+                                if !self.use_origin(name_node.span, orig, orig_span) {
+                                    return None;
+                                }
+                                ty_name = Some(resolved_name.to_owned());
+                            }
                         }
-                        ty_name = Some("Command".to_owned());
                     }
                 }
             } else if lhs == b"Sqlite" {
