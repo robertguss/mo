@@ -2112,3 +2112,11 @@ fn services_fixes_promises_queries_migrations_and_apis() {
     assert_eq!(prog.apis[0].actors.len(), 1);
     assert_eq!(prog.entry.capabilities.len(), 2);
 }
+
+#[test]
+fn check_internal_limit_error_codes_pinned() {
+    assert_eq!(ErrorCode::LibraryTooBig.number(), 1059);
+    assert_eq!(ErrorCode::TooManyImports.number(), 1060);
+    assert_eq!(ErrorCode::TooManyProgramImports.number(), 1100);
+    assert_eq!(ErrorCode::CheckProgramWork.number(), 1107);
+}

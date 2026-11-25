@@ -6,77 +6,70 @@ Guidance for coding agents (Claude Code, Codex, Cursor and others) working in th
 ## What this is
 
 Mo is a pre-release language and runtime for "living software", designed for agents first. The
-toolchain is one C17 program, `mo` (`check`, `run`, `test`, `format`, `fix`), that compiles a whole
-program from source to bytecode and runs it on its own VM. Commit and PR titles say what the
-change does. Older commits and documents cite decisions as `D2xx` and tasks as `MO-NN`; neither
-numbering continues, and a decision is written as the rule itself in the document it belongs to.
+toolchain is one pure-Rust program, `mo` (`check`, `run`, `test`, `format`, `fix`, `emit`,
+`serve`, `fetch`, `push`, `replay`, `query`, `rehearse`, `history`, `diff`, `install`, `guide`),
+built from an 18-crate Cargo workspace (`#![forbid(unsafe_code)]`, zero OpenSSL, zero system
+`libsqlite3`) that compiles a whole program from source to bytecode and runs it on its own VM.
+Commit and PR titles say what the change does. Older commits and documents cite decisions as `D2xx`
+and tasks as `MO-NN`; neither numbering continues, and a decision is written as the rule itself in
+the document it belongs to.
 
 The documents that define correct behaviour, in order of authority:
 
 - `docs/reference/README.md`: the Mo Language Reference v0.1. It is embedded into the binary
-  (`mo guide --reference`) by `ci/embed_docs.py`, as is `docs/agent-guide.md`.
+  (`mo guide --reference`) by `crates/mo-cli/build.rs`, as is `docs/agent-guide.md`.
 - `docs/design/architecture.md`: how the toolchain is built (sections 2, module boundaries, and
   11, testing strategy, are the ones to know). `docs/design/bytecode.md` is the bytecode spec.
-- `docs/design/implementation.md`: the five conditions every C change must meet.
 - `docs/design/library.md`: where each library function is implemented.
 - `docs/status/sample-blockers.md`: sample status (currently clear).
 
 ## Commands
 
-Requires a C17 compiler, POSIX `make` and Python 3. The full toolchain is gcc, clang, libFuzzer,
-clang-format 14, clang-tidy, bison, CBMC, and Lean via elan (`/opt/elan` is where `ci/check.sh`
-looks first; the Lean version is named in `formal/lean-toolchain`).
+Requires a Rust toolchain (`cargo`, edition 2024, `rustfmt`, `clippy`) and Python 3. Full CI also
+uses `bison` (for `grammar/mo.y`), Lean via `elan` (`/opt/elan` is where `ci/check.sh` looks first;
+the Lean version is named in `formal/lean-toolchain`), and Java + TLC (for `models/`).
 
 ```sh
-make                       # build build/<compiler>/debug/mo (CC=cc by default -> build/cc/)
-make test CC=gcc           # build and run every unit test (each tests/test_*.c is its own program)
-make sanitize CC=clang     # the same tests under ASan + UBSan
-make -j8 build/gcc/debug/tests/test_check.test.run CC=gcc   # build and run ONE test file
-make grammar               # executable grammar (bison) over grammar/tests, examples/, services/, the reference
-make deps                  # module include rules (table at the top of ci/deps.sh)
-make library-map           # docs/design/library.md vs src/base/prims.def and hostops.def
-make format / format-check # clang-format; use clang-format 14.0.6, newer versions can differ
-make tidy                  # clang-tidy cert-err33-c (unused stdlib results)
-make fuzz-smoke            # every fuzz target briefly (needs clang + libFuzzer; FUZZ_SECONDS=5)
-make formal                # build Mo Core in Lean and check every proof (needs elan)
-make cbmc                  # prove the bytecode reader, arena, verifier, primitives, path containment and resolution, refcounts, hash tables, upload pages (needs CBMC)
-bash ci/check.sh [group…]  # every check; groups: gcc clang sanitize fuzz drivers bench lean static cbmc
-ci/wait-for-results FILE [TIMEOUT]  # wait for a detached ci/check.sh run (see Waiting on checks)
+cargo build --release --bin mo                 # build target/release/mo
+cargo test --workspace --all-targets           # run every Rust unit & integration test
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo fmt --all -- --check
+make -C grammar grammar                        # executable Bison grammar over grammar/tests, examples/, services/, the reference
+sh ci/library_map.sh                           # docs/design/library.md vs crates/mo-def/defs/prims.def and hostops.def
+bash ci/check.sh [group…]                      # every check; groups: rust drivers bench lean static models
+ci/wait-for-results FILE [TIMEOUT]             # wait for a detached ci/check.sh run (see Waiting on checks)
 ```
 
-- Each compiler builds into its own `build/<compiler>/` tree, so switching `CC` doesn't rebuild.
-  Changing the Makefile, or adding or removing a file in `src/`, rebuilds everything.
-- Warnings are errors (`-Wconversion`, `-Wsign-conversion`, `-Wshadow`, `-Wswitch-enum`, …), and
-  gcc and clang warn about different things, so a change to C code should build with both.
-- Locally, `ci/check.sh` skips checks whose tool is missing and says so in its summary; with `CI=1`
-  a missing tool fails. A skip is not a pass.
-- The `drivers` group runs Python black-box checks against the built executables
+- Warnings are errors (`cargo clippy --workspace --all-targets --all-features -- -D warnings`,
+  `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`), and every crate uses
+  `#![forbid(unsafe_code)]` with `[lints] workspace = true`.
+- Locally, `ci/check.sh` skips checks whose optional tool is missing and says so in its summary;
+  with `CI=1` a missing tool fails. A skip is not a pass.
+- The `drivers` group runs Python black-box checks against `target/release/mo`
   (`ci/check_cli.py` and its `ci/cli_*.py` topic modules for CLI text/JSON goldens,
-  `ci/check_golden.py`, `ci/check_unicode16.py`, …); the `lean` group builds Mo Core in Lean and
-  compares the executables with it (`ci/check_lower_source.py`, `ci/check_core_differential.py`,
-  …); the `bench` group runs benchmark v0, the three Mo-written tools and the learnability
-  calculators. CLI behaviour changes usually need an edit to the `ci/cli_*.py` module for that
-  topic, to `check()` in `ci/check_cli.py`, or to the goldens under `tests/cli/`. The groups that
-  drive built executables drive the first one found; `MO_ALL_DRIVERS=1` drives every one built.
+  `ci/check_golden.py`, `ci/check_errors.py`, `ci/check_format.py`, …); the `lean` group builds
+  Mo Core in Lean and compares the pure-Rust toolchain with it; the `bench` group runs benchmark v0,
+  the three Mo-written tools and the learnability calculators. CLI behaviour changes usually need an
+  edit to the `ci/cli_*.py` module for that topic, to `check()` in `ci/check_cli.py`, or to the
+  goldens under `tests/cli/`.
 
 ## Checks and merging
 
-Before opening a PR, run `bash ci/check.sh gcc` (build and unit tests) and put its last line in
-the PR body. Say which other groups you ran, if any; do not run groups to be thorough, the nightly
-does that. A skip for a missing tool is not a pass; `CI=1` makes it fail instead. The one
-exception: after editing `docs/agent-guide.md`, `docs/reference/README.md` or
-`docs/design/library.md`, which the build embeds or checks, also run
+Before opening a PR, run `bash ci/check.sh rust` (format, clippy, tests, docs, safety/linkage
+audit, release build) and put its last line in the PR body. Say which other groups you ran, if any;
+do not run groups to be thorough, the nightly does that. A skip for a missing tool is not a pass;
+`CI=1` makes it fail instead. The one exception: after editing `docs/agent-guide.md`,
+`docs/reference/README.md` or `docs/design/library.md`, which the build embeds or checks, also run
 `bash ci/check.sh drivers static` once.
 
 A PR that changes a Mo program under `lib/`, `examples/` or `services/task-queue/` also runs plain
-`mo test` on each changed program and puts its last line in the PR body. For the task queue the
-program is `services/task-queue/queue-tests.mo`.
+`target/release/mo test` on each changed program and puts its last line in the PR body. For the task
+queue the program is `services/task-queue/queue-tests.mo`.
 
 The `nightly` GitHub Actions workflow checks `main` daily at 07:17 UTC and on manual dispatch,
-never on pull requests or pushes. It runs `gcc clang sanitize drivers static lean bench` with
-`CI=1` and `MO_ALL_DRIVERS=1` in seven parallel jobs, the `drivers` group once for each build,
-plus a 1,000-program VM-vs-Lean batch with a fresh, printed seed range each UTC day. A red nightly is the next PR, before any feature. `cbmc` and long fuzz runs
-happen by hand at phase boundaries.
+never on pull requests or pushes. It runs `rust`, `static`, `drivers`, `bench`, and `lean` with
+`CI=1` in parallel jobs, plus a 1,000-program Rust-vs-Lean Core differential check. A red nightly
+is the next PR, before any feature.
 
 `main` requires no status check (only force-pushes are blocked). A PR gets one review and merges
 when Robert says so; he lets agents merge docs-only PRs (Markdown only, other than the three
@@ -93,7 +86,7 @@ while checks run.
 ```sh
 mkdir -p build
 rm -f build/check-results.txt
-nohup timeout --kill-after=30 3600 bash ci/check.sh gcc >build/check-results.txt 2>&1 &
+nohup timeout --kill-after=30 3600 bash ci/check.sh rust >build/check-results.txt 2>&1 &
 ```
 
 `rm -f` keeps an earlier run's marker out of this run's file. `timeout` ends a hung run, which then
@@ -119,77 +112,57 @@ the file counts. `2>&1` matters: the `failed:` lines naming each failed check go
 
 ## Architecture
 
-Pipeline: source → parser (`syntax`) → names, types and rule checks (`check`) → lowering to Mo
-Core and monomorphization (`lower`) → Core checker (`core`) → bytecode compiler with reference
-counting, borrowing and in-place reuse (`codegen`) → loader and verifier (`bytecode`) → VM (`vm`).
-The VM never sees source, syntax trees or Core.
+Pipeline: source → parser (`crates/mo-syntax`) → names, types and rule checks (`crates/mo-check`) →
+lowering to Mo Core and monomorphization (`crates/mo-lower`) → Core checker (`crates/mo-core`) →
+bytecode compiler with reference counting, borrowing and in-place reuse (`crates/mo-codegen`) →
+loader and verifier (`crates/mo-bytecode`) → VM (`crates/mo-vm`). The VM never sees source, syntax
+trees or Core.
 
-Each directory in `src/` is a module with one public header named after it (`check/check.h`); the cross-module exceptions are `base/*.h`, `heap/types.h`, and `syntax/format.h`.
-Headers are included by their path from `src/` (`"base/base.h"`). Allowed dependencies, enforced
-by `make deps`:
+The workspace crates live under `crates/` (`mo-def`, `mo-base`, `mo-core`, `mo-syntax`, `mo-check`,
+`mo-lower`, `mo-codegen`, `mo-fe`, `mo-bytecode`, `mo-heap`, `mo-prim`, `mo-host`, `mo-vm`,
+`mo-rt`, `mo-test`, `mo-service`, `mo-upgrade`, `mo-cli`).
 
-| Module | May use (plus `base`) |
-| --- | --- |
-| `syntax`, `core`, `heap` | nothing |
-| `check` | `syntax` |
-| `lower` | `check`, `core` |
-| `codegen` | `core`, `bytecode`, `heap/types.h` |
-| `bytecode` | `heap/types.h` |
-| `prim`, `host` | `heap` |
-| `vm` | `bytecode`, `heap`, `prim`, `host` |
-| `tools` (the `mo` command, `src/tools/main.c`) | everything |
+Four shared contracts live in `crates/mo-def/defs/` (and are parsed at build time by `crates/mo-def/build.rs`); changing one means changing every side that reads it:
 
-Four shared contracts; changing one means changing every side that reads it:
+- **Mo Core**: `formal/` (Lean, the reference evaluator), `crates/mo-def/defs/{core.h,ops.def}`,
+  and `crates/mo-core`, exchanged as text (`formal/TEXT.md`, `formal/TRANSLATION.md`).
+- **Bytecode**: `docs/design/bytecode.md`, `crates/mo-def/defs/opcodes.def`, and `crates/mo-bytecode`.
+- **Primitives**: `crates/mo-def/defs/prims.def`. Every line needs a row in `docs/design/library.md`
+  (`sh ci/library_map.sh`).
+- **Capability operations**: `crates/mo-def/defs/hostops.def` and `crates/mo-host`. All
+  outside-world effects go through capabilities, which have real and fake implementations.
 
-- **Mo Core**: `formal/` (Lean, the reference evaluator) and `src/core/core.h`, exchanged as text
-  (`formal/TEXT.md`, `formal/TRANSLATION.md`). The C VM is differentially tested against Lean's
-  evaluator; `tests/core/*.core` hold the samples and other fixtures as Core text.
-- **Bytecode**: `docs/design/bytecode.md` and `src/bytecode/bytecode.h`.
-- **Primitives**: `src/base/prims.def`, an X-macro table read by the checker, codegen, verifier and
-  VM. Every line needs a row in `docs/design/library.md` (`make library-map`).
-- **Capability operations**: `src/base/hostops.def`, the same four readers plus `src/host/`.
-  All outside-world effects go through capabilities, which have real and fake implementations.
+## Rust rules
 
-Adding a library function typically touches its `check` signature (`src/check/signatures.c`,
-`constants.c`), lowering (`src/lower/applications.c`), possibly a primitive in `prims.def` and
-`src/prim/`, a `tests/lower-source/<name>/main.mo` fixture, `tests/test_program.c`, and
-`docs/status/sample-blockers.md` when it unblocks a sample.
-
-## C rules (Tiger Style, D207)
-
-- `MO_ASSERT` is never compiled out; use it liberally.
-- Every input has a named limit in `src/base/limits.h`. Compiler-input limits are diagnostics;
-  runtime limits (stack, call depth, heap) are bug reports.
-- Allocate from arenas. Only `base` and `heap` call `malloc` directly.
-- Every result is checked: `MO_MUST_USE` on Mo's functions, `make tidy` for the standard library,
-  and a `(void)` cast to discard on purpose.
-- No silent numeric conversions; `-Wconversion` is on. 128-bit ints are `mo_i128`/`mo_u128`.
-- Anything reading outside input gets a fuzz target in `fuzz/` with seeds in `fuzz/corpus/<target>/`.
-- Fault injection uses compile-time renaming (`-Dcalloc=mo_vm_fault_calloc` etc.) on specific
-  translation units in the Makefile, never runtime hooks. Follow that pattern for new fault tests.
-- Style: `.clang-format` (LLVM base, 4-space indent, 100 columns).
+- `#![forbid(unsafe_code)]` and `[lints] workspace = true` in every crate and binary entry point.
+- Zero OpenSSL (`libssl`/`libcrypto`) and zero system `libsqlite3` dynamic linkage.
+- Every input has a named limit in `crates/mo-def/defs/limits.h`. Compiler-input limits are
+  diagnostics; runtime limits (stack, call depth, heap) are bug reports.
+- Keep `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
+  `cargo test --workspace --all-targets`, `cargo test --workspace --doc`, and
+  `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` clean.
 
 ## Tests
 
-- `tests/test.h` is the whole harness: `CHECK(cond)` records a failure and continues;
-  `mo_test_report(name)` sets the exit status. Tests go through public headers, not internals.
+- Unit and integration tests live in `crates/*/src/*test*.rs` and `crates/*/tests/*.rs`.
 - Checker diagnostics are pinned by `tests/check/diagnostics/eNNNN` inputs with adjacent `.diag`
   expectations (format in that folder's `README.md`). Nothing regenerates them; edit by hand.
-- Every code in `src/base/codes.h` needs a case in `tests/errors/` (exact `mo check` message, see its
-  `README.md`) or a line in `tests/errors/unit.tsv`; `ci/check_errors.py` fails otherwise.
-- `tests/golden/` is the golden corpus: whole programs with their exact stdout, stderr and exit status
-  (format in `ci/check_golden.py`). Write the expected output by hand from the reference; a wrong-looking
-  result is a bug to fix or list in `docs/status/golden-gaps.md`, never a new expectation.
+- Every code in `crates/mo-def/defs/codes.h` needs a case in `tests/errors/` (exact `mo check`
+  message, see its `README.md`) or a line in `tests/errors/unit.tsv`; `ci/check_errors.py` fails
+  otherwise.
+- `tests/golden/` is the golden corpus: whole programs with their exact stdout, stderr and exit
+  status (format in `ci/check_golden.py`). Write the expected output by hand from the reference; a
+  wrong-looking result is a bug to fix or list in `docs/status/golden-gaps.md`, never a new
+  expectation.
 - `docs/agent-guide.md` (`mo guide`) tells agents what this build does. A change to what a `mo`
   command does, or to which forms are unfinished, updates the guide in the same PR;
   `guide_claims` in `ci/cli_guide.py` runs the guide's program and checks each claim it makes.
 - `grammar/mo.y` is an instrument, not the compiler: the real parser is hand-written in
-  `src/syntax/`, and a fuzz target checks both accept and reject the same inputs. Bison refuses any
-  conflict, which keeps the grammar unambiguous.
+  `crates/mo-syntax/`. Bison refuses any conflict, which keeps the grammar unambiguous.
 
 ## Workflow
 
-The PR template asks what changes, which tests prove it, and what `bash ci/check.sh gcc` said.
+The PR template asks what changes, which tests prove it, and what `bash ci/check.sh rust` said.
 A one-line fix keeps each to a sentence; it still gets a test.
 
 `docs/status/agent-mistakes.md` is the ledger of mistake classes agents have repeated here. Read it

@@ -50,10 +50,10 @@ flowchart TD
 
 ## 2. Layer 1: Minimal Mo Runtime & Compiler Additions (C Core)
 
-These additions close the exact gaps verified across [src/tools/api-server.c](../../src/tools/api-server.c), [src/check/apis.c](../../src/check/apis.c), [src/host/sqlite.c](../../src/host/sqlite.c), [src/host/random.c](../../src/host/random.c), and [src/check/load.c](../../src/check/load.c).
+These additions close the exact gaps verified across `src/tools/api-server.c`, `src/check/apis.c`, `src/host/sqlite.c`, `src/host/random.c`, and `src/check/load.c`.
 
 ### 2.1 `Crypto` + CSPRNG + Encoding (`Bytes`)
-Mo already links OpenSSL `libcrypto` ([src/host/tls.c](../../src/host/tls.c)) and ships internal SHA-256 ([src/base/sha256.c](../../src/base/sha256.c)), while `Random` is non-cryptographic `xoshiro256**`.
+Mo already links OpenSSL `libcrypto` (`src/host/tls.c`) and ships internal SHA-256 (`src/base/sha256.c`), while `Random` is non-cryptographic `xoshiro256**`.
 
 - **Pure primitives (`src/base/prims.def`, `lib/crypto.mo`):**
   - `Crypto.sha256(bytes: Bytes) : Bytes`
@@ -66,14 +66,14 @@ Mo already links OpenSSL `libcrypto` ([src/host/tls.c](../../src/host/tls.c)) an
   - `SecureRandom` capability (`rng.bytes(count)` backed by OpenSSL `RAND_bytes`), with deterministic `SecureRandom.seeded(seed)` fake for `mo test` so session tokens, CSRF tokens, and salts remain 100% deterministic in tests.
 
 ### 2.2 `api ... end` & `mo serve` Web Upgrades
-- **Cross-module route handlers ([src/check/apis.c](../../src/check/apis.c)):** Allow qualified imported functions (`get "/bills/:id" Bills.show`) and `scope "/prefix" ... end` blocks inside `api ... end` so large apps stay modular instead of putting every route in `Main`.
-- **Static asset serving:** Add a declarative `static "/assets" from "public/assets"` clause in `api` blocks, served directly by [src/tools/api-server.c](../../src/tools/api-server.c) with symlink-confined path resolution, MIME detection, `HEAD` support, `ETag` / `If-None-Match` (`304`), and `Cache-Control: public, max-age=31536000, immutable` for hashed Vite assets.
+- **Cross-module route handlers (`src/check/apis.c`):** Allow qualified imported functions (`get "/bills/:id" Bills.show`) and `scope "/prefix" ... end` blocks inside `api ... end` so large apps stay modular instead of putting every route in `Main`.
+- **Static asset serving:** Add a declarative `static "/assets" from "public/assets"` clause in `api` blocks, served directly by `src/tools/api-server.c` with symlink-confined path resolution, MIME detection, `HEAD` support, `ETag` / `If-None-Match` (`304`), and `Cache-Control: public, max-age=31536000, immutable` for hashed Vite assets.
 - **Browser HTTP completeness ([lib/api.mo](../../lib/api.mo)):**
   - `res.add_header(name, value)` (appends without clobbering prior headers—essential for multiple `Set-Cookie` headers).
   - `Api.redirect_see_other(location)` (`303 See Other`, required by Inertia after `PUT`/`PATCH`/`DELETE`).
   - `Option(Principal)` route parameter binding: if `auth` succeeds, passes `Some(user)`; if unauthenticated, passes `None` instead of short-circuiting to `401` (needed for login pages, public health/landing routes, and Inertia shared auth state).
   - Multi-value request header helper `req.headers_named(name)` (matching `Http.Response.headers_named`).
-- **Dev & production server ergonomics ([src/tools/api-server.c](../../src/tools/api-server.c)):**
+- **Dev & production server ergonomics (`src/tools/api-server.c`):**
   - `--bind HOST` (default `127.0.0.1`, allows `0.0.0.0` in containers) and `--workers N` (configurable above current fixed `8`).
   - HTTP/1.1 `Connection: keep-alive` with bounded idle timeout + max requests per connection.
   - Structured single-line request logs (`METHOD /path STATUS DURATION_MS`).
@@ -81,7 +81,7 @@ Mo already links OpenSSL `libcrypto` ([src/host/tls.c](../../src/host/tls.c)) an
 
 ### 2.3 Typed `Sqlite` Ergonomics
 - **Compiler-derived row decoding (`Sqlite.decode[T](rows)` / `Sqlite.decode_one[T](rows)`):** Reuses the exact struct-field metadata `Json` already generates, mapping SQL column names to Mo struct fields (`Int`, `Decimal`, `Float`, `Text`, `Bool`, `Bytes`, `Time`, `Option(T)`, and JSON-stored `T: Json`) and returning `Result(List(T), SqliteDecodeError)`. Eliminates every `cell_str(row, 0)` helper.
-- **Connection defaults & write metadata ([src/host/sqlite.c](../../src/host/sqlite.c)):**
+- **Connection defaults & write metadata (`src/host/sqlite.c`):**
   - Enable `PRAGMA foreign_keys = ON;` in `configure_connection` (for both real and fake DBs).
   - Add `db.execute(sql, params) : Result(Sqlite.ExecResult, SqliteError)` returning `ExecResult(changes: Int, last_insert_rowid: Int)`.
   - Reuse a per-worker pooled `sqlite3*` handle in `api-server.c` instead of reopening the DB file and checking `sqlite_schema` on every HTTP request.
@@ -93,7 +93,7 @@ Pure Gregorian calendar value type `Date` (years 1..9999) with `Order`, `Hash`, 
 - `add_days`, `add_months` (clamping month-end safely for `due_day: 31` → Feb 28/29), `days_between`, `days_in_month`, `weekday`, `first_of_month`, `end_of_month`, `year_month` (`"2026-11"`), `short_label`.
 
 ### 2.5 Durable Capability-Confined Background Jobs (Phase 4)
-Because Mo `actor`s are pure state machines without external capabilities ([src/vm/service.c](../../src/vm/service.c)), background work with I/O needs a dedicated worker runner in `mo serve`:
+Because Mo `actor`s are pure state machines without external capabilities (`src/vm/service.c`), background work with I/O needs a dedicated worker runner in `mo serve`:
 - Declared cleanly in `api ... end`:
   ```mo
   job "mercury.sync" MercurySync.run every 15.minutes
@@ -102,14 +102,14 @@ Because Mo `actor`s are pure state machines without external capabilities ([src/
 - Backed by an `_arvo_jobs` SQLite table (enqueued transactionally alongside domain writes, just like Oban / Solid Queue).
 - `mo serve` polls/wakes worker slots, executes each job in an isolated `mo_process` with its declared (and narrowed!) capabilities, retries with exponential backoff on `Error` or defect, and records failure artifacts replayable with `mo replay`.
 
-### 2.6 Package Extraction Hook (Phase 4, [src/check/load.c](../../src/check/load.c))
+### 2.6 Package Extraction Hook (Phase 4, `src/check/load.c`)
 Minimal `mo.toml` supporting local path and pinned Git dependencies (`[dependencies] arvo = { path = "../arvo" }`), allowing `lib/arvo/` to graduate out of `mo` into `github.com/robertguss/arvo` cleanly.
 
 ---
 
 ## 3. Layer 2: The Arvo Framework (`lib/arvo/*.mo`, Pure Mo)
 
-Because [src/check/load.c](../../src/check/load.c) already walks subdirectories in `lib/`, Arvo modules live under `lib/arvo/` and load on demand via `use Arvo.*` with zero compile cost for non-web programs.
+Because `src/check/load.c` already walks subdirectories in `lib/`, Arvo modules live under `lib/arvo/` and load on demand via `use Arvo.*` with zero compile cost for non-web programs.
 
 | Module | Responsibility |
 | --- | --- |
@@ -186,5 +186,5 @@ Combining the best of **`robertguss/hearth-budget`** (proven daily envelope budg
 - **Deliverables:**
   1. Durable SQLite job queue + scheduled worker runner in `mo serve` with capability confinement and `mo replay`.
   2. Read-only Mercury sync job (`network.allow_hosts(["api.mercury.com:443"])`) + fixture tests ported from `hearth-budget`/`household-finance`, plus authenticated MCP tools.
-  3. Minimal `mo.toml` path/git dependency loader in [src/check/load.c](../../src/check/load.c), extracting `lib/arvo/` into a clean standalone `robertguss/arvo` repository and writing a tiny `arvo gen` scaffolder based on the real patterns proven in Phase 3.
+  3. Minimal `mo.toml` path/git dependency loader in `src/check/load.c`, extracting `lib/arvo/` into a clean standalone `robertguss/arvo` repository and writing a tiny `arvo gen` scaffolder based on the real patterns proven in Phase 3.
 - **Exit Gate:** Budget app runs cleanly importing `arvo` via `mo.toml`, Mercury syncs reliably on schedule, and `mo` core stays lean.

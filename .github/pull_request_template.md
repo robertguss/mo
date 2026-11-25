@@ -12,4 +12,4 @@ After:
 
 ## Checks
 
-<!-- The last line of `bash ci/check.sh gcc` on the final commit, and any other group you ran. -->
+<!-- The last line of `bash ci/check.sh rust` on the final commit, and any other group you ran. -->

@@ -5,7 +5,7 @@ import resource
 import subprocess
 import tempfile
 
-from cli_common import records, root, run
+from cli_common import records, root, run, test_helper
 
 
 def small_stack():
@@ -32,7 +32,7 @@ def runner(binary):
         for name, result in (("core", core), ("bytecode", bytecode)):
             emitted = pathlib.Path(directory) / f"program.{name}"
             emitted.write_bytes(result.stdout)
-            decoded = run(binary.parent / "tests/test_cli.test",
+            decoded = run(test_helper(binary, "test-cli"),
                           [f"--roundtrip-{name}", str(emitted)], 0)
             assert not decoded.stdout and not decoded.stderr
 
@@ -138,7 +138,7 @@ def runner(binary):
         for name in ("core", "bytecode"):
             emitted = pathlib.Path(directory) / f"capabilities.{name}"
             emitted.write_bytes(run(binary, ["check", f"--emit={name}", str(path)], 0).stdout)
-            decoded = run(binary.parent / "tests/test_cli.test",
+            decoded = run(test_helper(binary, "test-cli"),
                           [f"--roundtrip-{name}", str(emitted)], 0)
             assert not decoded.stdout and not decoded.stderr
 

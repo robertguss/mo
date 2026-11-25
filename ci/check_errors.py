@@ -32,8 +32,12 @@ errors = root / "tests/errors"
 
 
 def codes():
-    text = (root / "src/base/codes.h").read_text()
+    text = (root / "crates/mo-def/defs/codes.h").read_text()
     return {int(n): name for n, name in re.findall(r"X\((\d+), ([A-Z_0-9]+),", text)}
+
+
+def pascal_case(name):
+    return "".join(part[0].upper() + part[1:].lower() for part in name.split("_") if part)
 
 
 def write_lines(folder, text, name="main.mo"):
@@ -224,7 +228,7 @@ def check_cases(binary, table):
         match = re.fullmatch(r"e(\d{4})(-[a-z0-9-]+)?", case.name)
         assert match, f"{case.name}: a case is named eNNNN or eNNNN-variant"
         code = int(match.group(1))
-        assert code in table, f"{case.name}: E{code:04d} is not in src/base/codes.h"
+        assert code in table, f"{case.name}: E{code:04d} is not in crates/mo-def/defs/codes.h"
         seen.add(code)
         result = run_case(binary, case)
         assert result.returncode == 1, (case.name, result.returncode)
@@ -260,8 +264,12 @@ def check_units(table, seen):
             and number not in unreachable, line
         assert not reason.startswith("UNTESTED:"), f"{code} has no message test: {reason}"
         text = (root / test).read_text()
-        assert f"MO_CODE_{table[number]}" in text or code in text, \
-            f"{test} does not name {code}"
+        variant = pascal_case(table[number])
+        assert (
+            f"ErrorCode::{variant}" in text
+            or f"MO_CODE_{table[number]}" in text
+            or code in text
+        ), f"{test} does not name {code} or ErrorCode::{variant}"
         assert reason.strip(), line
         if reason.startswith("UNREACHABLE:"):
             assert test.endswith(".md"), f"{code} needs a reachability explanation"

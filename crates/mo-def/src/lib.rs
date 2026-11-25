@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
-//! Build-time generated contract tables parsed directly from `src/bytecode/opcodes.def`,
-//! `src/base/prims.def`, `src/base/hostops.def`, `src/base/limits.h`, `src/base/codes.h`,
-//! `src/core/core.h`, and `src/core/ops.def`.
+//! Build-time generated contract tables parsed directly from `crates/mo-def/defs/`:
+//! `opcodes.def`, `prims.def`, `hostops.def`, `limits.h`, `codes.h`, `core.h`,
+//! `ops.def`, and `version.def`.
 
 use std::fmt;
 
@@ -255,6 +255,8 @@ mod tests {
         assert_eq!(ErrorCode::FailureIgnored.number(), 412);
         assert_eq!(ErrorCode::FailureIgnored.section(), Some("8.3"));
         assert_eq!(ErrorCode::FailureIgnored.to_string(), "E0412");
+        assert_eq!(ErrorCode::InstantiationsTooDeep.number(), 1012);
+        assert_eq!(ErrorCode::InstantiationsTooDeep.section(), None);
         assert_eq!(ErrorCode::CoreTextLimit.number(), 1016);
         assert_eq!(ErrorCode::CoreTextLimit.section(), None);
         assert_eq!(ErrorCode::CoreCheckMetadata.number(), 1027);

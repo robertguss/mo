@@ -19,7 +19,7 @@ import time
 
 VERSION = re.search(
     r'#define MO_CORE_TEXT_VERSION "([^"]+)"',
-    pathlib.Path("src/core/core.h").read_text(),
+    pathlib.Path("crates/mo-def/defs/core.h").read_text(),
 )[1]
 
 

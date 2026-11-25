@@ -2,7 +2,7 @@ import os
 import pathlib
 import tempfile
 
-from cli_common import records, run
+from cli_common import records, run, test_helper
 
 
 def imported_constants(binary):
@@ -57,7 +57,7 @@ def imported_constants(binary):
             emitted = run(binary, ['check', '--emit=' + codec, str(path)], 0)
             artifact = path.parent / ('initialized.' + codec)
             artifact.write_bytes(emitted.stdout)
-            run(binary.parent / 'tests/test_cli.test', ['--roundtrip-' + codec, str(artifact)], 0)
+            run(test_helper(binary, "test-cli"), ['--roundtrip-' + codec, str(artifact)], 0)
 
         # The subject returns an imported owned nominal constant. The smallest
         # failure needs true, not the minimum false; its original second line
@@ -94,7 +94,7 @@ def imported_constants(binary):
             emitted = run(binary, ['check', '--emit=' + codec, str(path)], 0)
             artifact = path.parent / ('owned-constant.' + codec)
             artifact.write_bytes(emitted.stdout)
-            run(binary.parent / 'tests/test_cli.test', ['--roundtrip-' + codec, str(artifact)], 0)
+            run(test_helper(binary, "test-cli"), ['--roundtrip-' + codec, str(artifact)], 0)
 
         # Initialization is before anchors/observations and outside the promise
         # clock. Unsupported selected inputs must still refuse before it.
@@ -118,7 +118,7 @@ def imported_constants(binary):
             assert len(items) == 3 and items[1]['code'] == ('E1406' if supported else 'E1400')
             assert all(items[-1][key] == 0 for key in ('passed', 'failed', 'stopped'))
             if supported:
-                clock = binary.parent / 'tests/test_deadline.test'
+                clock = test_helper(binary, "test-deadline")
                 timed = records(run(clock, ['start-failure', 'test', '--json', '--seconds', '1',
                                              str(path)], 1), 'test')
                 assert timed[1]['code'] == 'E1406'
@@ -439,7 +439,7 @@ def captures(binary):
             assert emitted.stdout and not emitted.stderr
             artifact = pathlib.Path(directory) / f"capture.{codec}"
             artifact.write_bytes(emitted.stdout)
-            decoded = run(binary.parent / "tests/test_cli.test", [f"--roundtrip-{codec}", str(artifact)], 0)
+            decoded = run(test_helper(binary, "test-cli"), [f"--roundtrip-{codec}", str(artifact)], 0)
             assert not decoded.stdout and not decoded.stderr
     print(f"{binary}: escaped captures, snapshots, stopped spans and codec roundtrips passed")
 
@@ -522,7 +522,7 @@ def imports(binary):
             assert emitted.stdout and not emitted.stderr
             artifact = path.parent / f"imports.{codec}"
             artifact.write_bytes(emitted.stdout)
-            decoded = run(binary.parent / "tests/test_cli.test", [f"--roundtrip-{codec}", str(artifact)], 0)
+            decoded = run(test_helper(binary, "test-cli"), [f"--roundtrip-{codec}", str(artifact)], 0)
             assert not decoded.stdout and not decoded.stderr
         # ratio is used only by a test. Removing that test must diagnose the
         # original listed import before resolving even a deliberately bad name.
@@ -633,7 +633,7 @@ def generic_imports(binary):
             assert emitted.stdout and not emitted.stderr
             artifact = path.parent / f"generic-imports.{codec}"
             artifact.write_bytes(emitted.stdout)
-            decoded = run(binary.parent / "tests/test_cli.test", [f"--roundtrip-{codec}", str(artifact)], 0)
+            decoded = run(test_helper(binary, "test-cli"), [f"--roundtrip-{codec}", str(artifact)], 0)
             assert not decoded.stdout and not decoded.stderr
         # A missing actual ability is a source error, not a selection mistake;
         # it must suppress all observations and artifacts before any execution.

@@ -307,3 +307,11 @@ fn embedded_protocol_image_compiles_and_initializes() {
     let (img, _fns) = build_protocol_image().expect("embedded protocol compiles cleanly");
     assert!(!img.file().functions.is_empty());
 }
+
+#[test]
+fn upgrade_protocol_and_compile_error_codes_pinned() {
+    use mo_def::ErrorCode;
+    assert_eq!(ErrorCode::UpgradeStaleBase.number(), 1416);
+    assert_eq!(ErrorCode::UpgradeCompileBudget.number(), 1420);
+    assert_eq!(ErrorCode::UpgradeUnconfined.number(), 1438);
+}

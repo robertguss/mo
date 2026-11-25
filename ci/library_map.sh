@@ -1,6 +1,6 @@
 #!/bin/sh
-# Checks docs/design/library.md against the two tables it maps, src/base/prims.def and
-# src/base/hostops.def: every row that says a primitive or a host operation implements a
+# Checks docs/design/library.md against the two tables it maps, crates/mo-def/defs/prims.def and
+# crates/mo-def/defs/hostops.def: every row that says a primitive or a host operation implements a
 # function names a line of the right table, and every line of both tables has such a row.
 # Prints every disagreement, with its file and line, and fails if there is one.
 # ci/test_library_map.sh tests this check.
@@ -25,8 +25,8 @@ if [ $# -gt 1 ]; then
 fi
 root=${1:-.}
 map=$root/docs/design/library.md
-prims=$root/src/base/prims.def
-hostops=$root/src/base/hostops.def
+prims=$root/crates/mo-def/defs/prims.def
+hostops=$root/crates/mo-def/defs/hostops.def
 for file in "$map" "$prims" "$hostops"; do
 	if [ ! -f "$file" ]; then
 		echo "ci/library_map.sh: $file is not a file" >&2
@@ -36,8 +36,10 @@ done
 
 if [ -z "${MO_MODULE_PATH:-}" ]; then
 	repo=$(cd "$(dirname "$0")/.." && pwd)
-	make -s -C "$repo" build/cc/debug/module-path CC=cc
-	MO_MODULE_PATH=$repo/build/cc/debug/module-path
+	if [ ! -x "$repo/target/release/mo-test-cli" ]; then
+		(cd "$repo" && cargo build --release --bin mo-test-cli >/dev/null)
+	fi
+	MO_MODULE_PATH=$repo/target/release/mo-test-cli
 	export MO_MODULE_PATH
 fi
 
@@ -82,7 +84,7 @@ function module_file(name,    command, file, status) {
 		problem(map ":" FNR, "invalid module name " name)
 		return ""
 	}
-	command = "\"$MO_MODULE_PATH\" \"" name "\""
+	command = "\"$MO_MODULE_PATH\" --module-path \"" name "\""
 	status = (command | getline file)
 	if (close(command) != 0 || status != 1) {
 		problem(map ":" FNR, "module path conversion failed for " name)

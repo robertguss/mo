@@ -57,30 +57,24 @@ in-place updates) and Elm (helpful error messages).
 
 ## Building
 
-Mo is implemented in C. Building requires a C17 compiler, POSIX, `make`,
-OpenSSL (`libssl` and `libcrypto`) and Python 3 (to embed the version-matched
-reference and guide):
+Mo is implemented in pure safe Rust (`#![forbid(unsafe_code)]`, zero OpenSSL, zero system
+`libsqlite3`). Building requires a Rust toolchain (`cargo`, edition 2024):
 
 ```sh
-make              # build build/<compiler>/debug/mo
-bash ci/check.sh  # every check, run locally
+cargo build --release --bin mo   # build target/release/mo
+bash ci/check.sh                 # every check, run locally
 ```
 
-See [docs/design/implementation.md](docs/design/implementation.md) for the
-rules the implementation follows and how it is checked.
+## Install from source
 
-## Install v0.2.0 from source
-
-Check out the release tag and build it in its permanent location. Its build inputs
-match the evaluated candidate recorded in [the freeze](learnability/phase5/results/experiment-4/freeze/build-inputs.json):
+Check out the repository and build the standalone `mo` binary in its permanent location:
 
 ```sh
-git clone https://github.com/robertguss/mo mo-v0.2
-cd mo-v0.2
-git checkout --detach v0.2.0
-make CC=gcc build/gcc/debug/mo
-./build/gcc/debug/mo --version
-./build/gcc/debug/mo guide
+git clone https://github.com/robertguss/mo
+cd mo
+cargo build --release --bin mo
+./target/release/mo --version
+./target/release/mo guide
 ```
 
 Keep the tree where it was built: the executable contains its `lib/` path.

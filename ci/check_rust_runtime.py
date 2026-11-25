@@ -98,23 +98,13 @@ def find_or_build_mo(explicit: str | None) -> pathlib.Path:
         path = pathlib.Path(explicit).resolve()
         assert path.is_file(), f"mo binary not found: {path}"
         return path
-    for candidate in (
-        ROOT / "build/gcc/debug/mo",
-        ROOT / "build/clang/debug/mo",
-        ROOT / "build/cc/debug/mo",
-        ROOT / "build/gcc/release/mo",
-        ROOT / "build/clang/release/mo",
-        ROOT / "build/cc/release/mo",
-    ):
-        if candidate.is_file():
-            return candidate
-    subprocess.run(
-        ["make", "build/generated/tools/embedded.h"],
-        cwd=ROOT,
-        check=True,
-    )
-    subprocess.run(["make", "-j8", "CC=gcc"], cwd=ROOT, check=True)
-    built = ROOT / "build/gcc/debug/mo"
+    built = ROOT / "target/release/mo"
+    if not built.is_file():
+        subprocess.run(
+            ["cargo", "build", "--release", "--bin", "mo"],
+            cwd=ROOT,
+            check=True,
+        )
     assert built.is_file(), f"failed to build {built}"
     return built
 

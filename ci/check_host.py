@@ -17,7 +17,7 @@ import tempfile
 from check_core_check import VERSION, WORLD, parse, wire
 
 
-ROWS = re.findall(r'^HOSTOP\((\w+),', pathlib.Path("src/base/hostops.def").read_text(), re.M)
+ROWS = re.findall(r'^HOSTOP\((\w+),', pathlib.Path("crates/mo-def/defs/hostops.def").read_text(), re.M)
 IDS = {name: i for i, name in enumerate(ROWS)}
 OPS = {
     "ARGS_LIST": ("argsList", "(list (text))"),

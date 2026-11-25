@@ -4,7 +4,7 @@ import pathlib
 import subprocess
 import tempfile
 
-from cli_common import records, root, run, utf8_locale
+from cli_common import records, root, run, test_helper, utf8_locale
 from cli_runner import small_stack
 
 
@@ -305,7 +305,7 @@ def constants(binary):
             assert result.stdout and not result.stderr
             emitted = pathlib.Path(directory) / f"constants.{kind}"
             emitted.write_bytes(result.stdout)
-            result = run(binary.parent / "tests/test_cli.test",
+            result = run(test_helper(binary, "test-cli"),
                          [f"--roundtrip-{kind}", str(emitted)], 0)
             assert not result.stdout and not result.stderr
         path.write_text(source.replace("result: 26", "result: 27"))
@@ -397,7 +397,7 @@ def constants(binary):
                 assert result.stdout and not result.stderr
                 emitted = pathlib.Path(directory) / f"constant-functions.{kind}"
                 emitted.write_bytes(result.stdout)
-                result = run(binary.parent / "tests/test_cli.test",
+                result = run(test_helper(binary, "test-cli"),
                              [f"--roundtrip-{kind}", str(emitted)], 0)
                 assert not result.stdout and not result.stderr
 
@@ -452,7 +452,7 @@ def filenames(binary):
             assert not result.stderr and path.hex().encode() in result.stdout
             emitted = pathlib.Path(directory) / "program.bytecode"
             emitted.write_bytes(result.stdout)
-            run(binary.parent / "tests/test_cli.test", ["--roundtrip-bytecode", str(emitted)], 0)
+            run(test_helper(binary, "test-cli"), ["--roundtrip-bytecode", str(emitted)], 0)
 
             with open(path, "wb") as file:
                 file.write(b'module Main\nfn main()\nstop "chosen stop"\nend\n')

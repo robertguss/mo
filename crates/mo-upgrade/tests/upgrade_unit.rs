@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Unit tests for `mo-upgrade`: offline verdict classification, rehearsal refusals, and structural diffing.
 
 use std::path::Path;
@@ -182,4 +184,10 @@ fn diff_reports_added_and_changed_public_functions() {
         "{stdout}"
     );
     assert!(stdout.contains("\"record\":\"totals\""), "{stdout}");
+}
+
+#[test]
+fn ambiguous_retained_program_error_code_pinned() {
+    use mo_def::ErrorCode;
+    assert_eq!(ErrorCode::UpgradeAmbiguousProgram.number(), 1431);
 }

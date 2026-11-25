@@ -1,65 +1,65 @@
 # code, the unit test that pins it, why no source program raises it
-E1012	tests/test_codes.c	registry only: generic instantiation depth is reported as E1153 by lowering, so no program raises E1012
-E1014	tests/test_codegen.c	needs a function over 262144 instructions or a bytecode file over 256 MiB, which the Core path limit (E1153) and source limits stop first
-E1015	tests/test_codegen.c	needs a function over 262144 instructions or a bytecode file over 256 MiB, which the Core path limit (E1153) and source limits stop first
-E1016	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
-E1017	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
-E1018	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
-E1019	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
-E1020	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
-E1021	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
-E1022	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
-E1023	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
-E1024	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
-E1025	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
-E1026	tests/test_core_text.c	Core text is read only by the Core tools and tests, never from Mo source
-E1027	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1028	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1029	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1030	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1031	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1032	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1033	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1034	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1035	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1036	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1037	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1038	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1039	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1040	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1041	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1042	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1043	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1044	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1045	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1046	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1047	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1048	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1049	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1050	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1051	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1052	tests/test_core_check.c	invalid Core is produced only by a compiler bug, so no source program raises it
-E1055	tests/test_codegen.c	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
-E1056	tests/test_codegen.c	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
-E1200	tests/test_codegen.c	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
-E1201	tests/test_codegen.c	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
-E1202	tests/test_codegen.c	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
-E1203	tests/test_codegen.c	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
-E1204	tests/test_codegen.c	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
-E1059	tests/test_check.c	library discovery and import counts beyond what a program can write, or an unreadable toolchain folder
-E1060	tests/test_check.c	library discovery and import counts beyond what a program can write, or an unreadable toolchain folder
-E1100	tests/test_check.c	library discovery and import counts beyond what a program can write, or an unreadable toolchain folder
-E1102	tests/test_check.c	library discovery and import counts beyond what a program can write, or an unreadable toolchain folder
-E1107	tests/test_check_bodies.c	needs 2^28 units of checking work, set by the test directly
-E1401	tests/test_cli_faults.c	the OS refusing the explicit source stack, raised only by fault injection
-E1053	tests/test_compiler_faults.c	Core scratch allocation failure, raised through the public checker with compile-time fault injection
-E1057	tests/test_compiler_faults.c	compiler output corrupted at the writer boundary, refused by the real bytecode writer
+E1012	crates/mo-def/src/lib.rs	registry only: generic instantiation depth is reported as E1153 by lowering, so no program raises E1012
+E1014	crates/mo-codegen/src/tests.rs	needs a function over 262144 instructions or a bytecode file over 256 MiB, which the Core path limit (E1153) and source limits stop first
+E1015	crates/mo-codegen/src/tests.rs	needs a function over 262144 instructions or a bytecode file over 256 MiB, which the Core path limit (E1153) and source limits stop first
+E1016	crates/mo-core/src/tests.rs	Core text is read only by the Core tools and tests, never from Mo source
+E1017	crates/mo-core/src/tests.rs	Core text is read only by the Core tools and tests, never from Mo source
+E1018	crates/mo-core/src/tests.rs	Core text is read only by the Core tools and tests, never from Mo source
+E1019	crates/mo-core/src/tests.rs	Core text is read only by the Core tools and tests, never from Mo source
+E1020	crates/mo-core/src/tests.rs	Core text is read only by the Core tools and tests, never from Mo source
+E1021	crates/mo-core/src/tests.rs	Core text is read only by the Core tools and tests, never from Mo source
+E1022	crates/mo-core/src/tests.rs	Core text is read only by the Core tools and tests, never from Mo source
+E1023	crates/mo-core/src/tests.rs	Core text is read only by the Core tools and tests, never from Mo source
+E1024	crates/mo-core/src/tests.rs	Core text is read only by the Core tools and tests, never from Mo source
+E1025	crates/mo-core/src/tests.rs	Core text is read only by the Core tools and tests, never from Mo source
+E1026	crates/mo-core/src/tests.rs	Core text is read only by the Core tools and tests, never from Mo source
+E1027	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1028	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1029	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1030	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1031	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1032	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1033	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1034	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1035	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1036	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1037	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1038	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1039	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1040	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1041	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1042	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1043	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1044	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1045	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1046	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1047	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1048	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1049	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1050	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1051	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1052	crates/mo-core/src/tests.rs	invalid Core is produced only by a compiler bug, so no source program raises it
+E1055	crates/mo-codegen/src/tests.rs	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
+E1056	crates/mo-codegen/src/tests.rs	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
+E1200	crates/mo-codegen/src/tests.rs	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
+E1201	crates/mo-codegen/src/tests.rs	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
+E1202	crates/mo-codegen/src/tests.rs	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
+E1203	crates/mo-codegen/src/tests.rs	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
+E1204	crates/mo-codegen/src/tests.rs	internal code generation refusals and allocation failures, raised only by hand-written Core or fault injection
+E1059	crates/mo-check/src/tests.rs	library discovery and import counts beyond what a program can write, or an unreadable toolchain folder
+E1060	crates/mo-check/src/tests.rs	library discovery and import counts beyond what a program can write, or an unreadable toolchain folder
+E1100	crates/mo-check/src/tests.rs	library discovery and import counts beyond what a program can write, or an unreadable toolchain folder
+E1102	crates/mo-check/src/tests.rs	library discovery and import counts beyond what a program can write, or an unreadable toolchain folder
+E1107	crates/mo-check/src/tests.rs	needs 2^28 units of checking work, set by the test directly
+E1401	crates/mo-cli/src/bin/test_cli.rs	the OS refusing the explicit source stack, raised only by fault injection
+E1053	crates/mo-core/src/tests.rs	Core scratch allocation failure, raised through the public checker with fault injection
+E1057	crates/mo-codegen/src/tests.rs	compiler output corrupted at the writer boundary, refused by the real bytecode writer
 E1106	tests/errors/README.md	UNREACHABLE: parser-produced bodies cannot reach the conservative inference-frame bound; retain the defensive guard and registered code
 E1415	ci/check_upgrade_context.py	a recorded-program precheck refuses the live owner without waiting or writing
-E1416	tests/test_protocol_server.c	an upload naming a base other than the active program is refused naming the active digest
+E1416	crates/mo-service/tests/service_unit.rs	an upload naming a base other than the active program is refused naming the active digest
 E1417	ci/check_upgrades.py	a source bundle beyond one MiB is refused before candidate compilation
 E1419	ci/check_upgrades.py	candidate body compilation fails with the shared upgrade compile diagnostic
-E1420	tests/test_compile_child.c	real subprocess CPU and wall exhaustion return the compile-budget status rendered by upgrade admission
+E1420	crates/mo-service/tests/service_unit.rs	real subprocess CPU and wall exhaustion return the compile-budget status rendered by upgrade admission
 E1421	ci/check_upgrades.py	changed state without a selected migration is refused
 E1422	ci/check_upgrades.py	generic, capability-bearing and wrong-result migration functions are refused
 E1423	ci/check_upgrades.py	division by zero during migration refuses and preserves the folder
@@ -70,5 +70,5 @@ E1427	tests/errors/README.md	UNREACHABLE: checked source timer intervals are pos
 E1428	tests/errors/README.md	UNREACHABLE: mo serve exits when its supervisor stops the service, and the only other boundary refusal needs a request from before the last upgrade to outlive the commit deadline
 E1429	ci/check_upgrade_fallback.py	recorded source compilation failure names the recording build before explicit schema-backed fallback
 E1430	ci/check_upgrades.py	different source without explicit upgrade refuses and preserves the folder
-E1431	tests/test_service_store.c	two retained programs with one image key, build and schema but different sources are reported as an ambiguous match
-E1438	tests/test_protocol_server.c	mo serve refuses every upgrade when the host cannot confine the compile children and --unconfined was not given
+E1431	crates/mo-upgrade/tests/upgrade_unit.rs	two retained programs with one image key, build and schema but different sources are reported as an ambiguous match
+E1438	crates/mo-service/tests/service_unit.rs	mo serve refuses every upgrade when the host cannot confine the compile children and --unconfined was not given

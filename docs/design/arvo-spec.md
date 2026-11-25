@@ -9,7 +9,7 @@ Everything here is written against Mo’s actual language rules ([docs/reference
 
 ### 1.1 `Crypto`, `SecureRandom`, and `Bytes` Encoding
 
-Backed by OpenSSL `libcrypto` (already linked for [src/host/tls.c](../../src/host/tls.c)). Pure cryptographic transforms live in `src/base/prims.def` + `lib/crypto.mo`; OS entropy (`RAND_bytes`) is an explicit capability in `src/base/hostops.def` so tests stay 100% deterministic.
+Backed by OpenSSL `libcrypto` (already linked for `src/host/tls.c`). Pure cryptographic transforms live in `src/base/prims.def` + `lib/crypto.mo`; OS entropy (`RAND_bytes`) is an explicit capability in `src/base/hostops.def` so tests stay 100% deterministic.
 
 ```mo
 ## Pure primitives (use Crypto)
@@ -43,18 +43,18 @@ SecureRandom.seeded(seed: Int) : SecureRandom                # spec-only fake fo
 ```
 
 **Design & verification notes:**
-- **Zero hand-rolled crypto:** Every cryptographic algorithm is a thin C wrapper over OpenSSL 3 `libcrypto` (already linked via `-lssl -lcrypto` in [Makefile](../../Makefile))—never re-implemented in C or in Mo bytecode (avoiding both interpreter timing side-channels and KDF slowness).
+- **Zero hand-rolled crypto:** Every cryptographic algorithm is a thin C wrapper over OpenSSL 3 `libcrypto` (already linked via `-lssl -lcrypto` in `Makefile`)—never re-implemented in C or in Mo bytecode (avoiding both interpreter timing side-channels and KDF slowness).
 - `Crypto.seal` / `Crypto.open` wrap `EVP_aes_256_gcm()` (32-byte key, 12-byte nonce, 16-byte tag verified before releasing plaintext, returning `DecryptionFailed` on any mismatch). `Arvo.Session` always draws a fresh 12-byte nonce from `SecureRandom` per `seal` and binds cookie name/purpose in `aad`.
 - `Crypto.hash_password` wraps `EVP_PBE_scrypt` (available on OpenSSL 3.0+ across both Linux 3.0.13 and macOS Homebrew OpenSSL 3; Argon2id requires 3.2+), encoding parameters + salt + digest in self-describing PHC format (`$scrypt$ln=15,r=8,p=1$<b64salt>$<b64hash>`) and checking with `CRYPTO_memcmp`.
 - C wrappers call `OPENSSL_cleanse` on temporary key/password/plaintext buffers and clear OpenSSL's error queue per call.
 - **Verification gate for PR 1:** Official NIST/RFC test vectors (FIPS 180-4 SHA-256, RFC 4231 HMAC-SHA256, NIST SP 800-38D AES-256-GCM including bit-flip/AAD/truncation rejections, RFC 7914 scrypt, RFC 4648 base64url/hex), cross-check against Python `hashlib`/`hmac`, plus ASan/UBSan/TSan and a `fuzz_crypto.c` target hammering `open`, `verify_password`, and decoders.
-- In `api` blocks, `SecureRandom` joins `api_cap_order` in [src/check/apis.c](../../src/check/apis.c) and `ApiTest.send` synthesizes a deterministic `SecureRandom.seeded(0)` unless the test supplies one.
+- In `api` blocks, `SecureRandom` joins `api_cap_order` in `src/check/apis.c` and `ApiTest.send` synthesizes a deterministic `SecureRandom.seeded(0)` unless the test supplies one.
 
 ---
 
 ### 1.2 `api ... end` & `mo serve` Upgrades
 
-#### Declarative `api` block additions ([src/check/apis.c](../../src/check/apis.c))
+#### Declarative `api` block additions (`src/check/apis.c`)
 ```mo
 api
   port 8080
@@ -81,16 +81,16 @@ api
 end
 ```
 
-1. **Qualified cross-module handlers:** `resolve_route_fn` accepts either a local `fn` or an imported `Module.fn` (still non-generic, non-overloaded, statically checked in [src/check/apis.c](../../src/check/apis.c)).
+1. **Qualified cross-module handlers:** `resolve_route_fn` accepts either a local `fn` or an imported `Module.fn` (still non-generic, non-overloaded, statically checked in `src/check/apis.c`).
 2. **`scope "/prefix" ... end`:** Pure compile-time prefix concatenation (`scope "/bills"` + `""` → `"/bills"`, `"/:id"` → `"/bills/:id"`). Nestable up to 8 levels; duplicate `(method, shape)` checks run on the flattened path.
-3. **`static "/prefix" from "rel/dir"`:** Up to 8 static mounts per `api` block. Served directly in [src/tools/api-server.c](../../src/tools/api-server.c) before VM dispatch using `openat2`/`RealFiles`-style confinement (zero `..` traversal, no symlink escape). Sets MIME type (`.js`, `.css`, `.svg`, `.png`, `.woff2`, `.json`, `.webmanifest`, `.ico`, `.html`), `ETag` (size + mtime), `304 Not Modified` on `If-None-Match`, `HEAD` support, and `Cache-Control: public, max-age=31536000, immutable` for fingerprinted assets.
+3. **`static "/prefix" from "rel/dir"`:** Up to 8 static mounts per `api` block. Served directly in `src/tools/api-server.c` before VM dispatch using `openat2`/`RealFiles`-style confinement (zero `..` traversal, no symlink escape). Sets MIME type (`.js`, `.css`, `.svg`, `.png`, `.woff2`, `.json`, `.webmanifest`, `.ico`, `.html`), `ETag` (size + mtime), `304 Not Modified` on `If-None-Match`, `HEAD` support, and `Cache-Control: public, max-age=31536000, immutable` for fingerprinted assets.
 4. **Optional auth (`Option(Principal)`):** A route handler taking `user: Option(Member)` calls `authenticate`; `Ok(m)` passes `Some(m)`, while `Error(_)` passes `None` instead of returning an error response. Required auth (`user: Member`) keeps existing short-circuit behavior.
 5. **`lib/api.mo` additions:**
    - `res.add_header(name: Text, value: Text) : Response` (appends; never replaces existing `Set-Cookie` headers).
    - `req.headers_named(name: Text) : List(Text)` (case-insensitive multi-header lookup).
    - `Api.redirect_see_other(location: Text) : Response` (`303 See Other`).
    - `Api.redirect_with(status: Int, location: Text) : Response` (`301`/`302`/`303`/`307`/`308`).
-6. **`mo serve` CLI & server upgrades ([src/tools/api-server.c](../../src/tools/api-server.c)):**
+6. **`mo serve` CLI & server upgrades (`src/tools/api-server.c`):**
    - `--bind HOST` (default `127.0.0.1`, accepts `0.0.0.0` or IPv4 literal).
    - `--workers N` (default `8`, range `1..64`).
    - HTTP/1.1 keep-alive (bounded 15s idle timeout, max 100 requests per connection).
@@ -100,7 +100,7 @@ end
 
 ### 1.3 `Sqlite` Web Ergonomics
 
-1. **Connection defaults ([src/host/sqlite.c](../../src/host/sqlite.c)):**
+1. **Connection defaults (`src/host/sqlite.c`):**
    - Enable `PRAGMA foreign_keys = ON;` in `configure_connection` for both real and fake DBs.
    - Reuse a per-worker `sqlite3*` pool keyed by `(worker, path)` in `api-server.c` (closing cleanly on worker shutdown or if a request leaves an open transaction, rolling back before returning to the pool!).
 2. **Write metadata (`src/base/hostops.def`):**

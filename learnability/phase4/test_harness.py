@@ -4,7 +4,7 @@ with the stub client (testdata/stub_client.py) installed as both clients, run as
 user of their own, mo-session-test, which the tests create when it is absent. They need
 passwordless sudo and take a few minutes.
 
-Run: python3 learnability/phase4/test_harness.py build/gcc/debug/mo
+Run: python3 learnability/phase4/test_harness.py target/release/mo
 """
 
 import json
@@ -43,12 +43,20 @@ def write_as_user(path, text):
                    stdout=subprocess.DEVNULL, check=True, timeout=60)
 
 
+def public_tempdir():
+    """Returns a short temp root searchable by others (falls back to /tmp when TMPDIR is private or long)."""
+    base = pathlib.Path(tempfile.gettempdir()).resolve()
+    if len(str(base)) <= 40 and all(os.stat(p).st_mode & 0o001 for p in (*base.parents, base)):
+        return str(base)
+    return '/tmp' if os.path.isdir('/tmp') else str(base)
+
+
 def setUpModule():
     global PRIVATE, INSTALL, LAYOUT, ROOT, BUILT
     if subprocess.run(['sudo', '-n', 'true'], capture_output=True).returncode != 0:
         raise RuntimeError('these tests need passwordless sudo')
-    PRIVATE = pathlib.Path(tempfile.mkdtemp(prefix='phase4-harness-private-'))
-    INSTALL = pathlib.Path(tempfile.mkdtemp(prefix='phase4-harness-install-'))
+    PRIVATE = pathlib.Path(tempfile.mkdtemp(prefix='phase4-harness-private-', dir=public_tempdir()))
+    INSTALL = pathlib.Path(tempfile.mkdtemp(prefix='phase4-harness-install-', dir=public_tempdir()))
     os.chmod(INSTALL, 0o755)
     LAYOUT = ['--user', USER, '--install', INSTALL, '--state', PRIVATE / 'state',
               '--private', PRIVATE]
@@ -143,7 +151,7 @@ class Setup(unittest.TestCase):
         self.assertIn('grants others access', result.stderr)
 
     def test_a_folder_is_reachable_by_its_others_or_its_group_bits(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory(dir=public_tempdir()) as folder:
             inner = pathlib.Path(folder) / 'a' / 'b'
             inner.mkdir(parents=True)
             os.chmod(folder, 0o755)
@@ -340,30 +348,9 @@ class Sessions(unittest.TestCase):
         self.assert_session_user_idle()
 
     def test_a_session_can_fetch_read_history_and_check_a_fix_against_the_deployed_source(self):
-        # mo reads its library from the tree it was built in, so replay as the session user
-        # needs an mo built where that user can read, as the evaluation's candidate is.
-        tree = pathlib.Path(tempfile.mkdtemp(prefix='phase4-harness-tree-'))
-        try:
-            os.chmod(tree, 0o755)
-            listed = subprocess.run(['git', '-C', str(here.parents[1]), 'ls-files', '-z'],
-                                    capture_output=True, check=True).stdout
-            for name in listed.decode().split('\0')[:-1]:
-                source = here.parents[1] / name
-                if source.is_file():
-                    (tree / name).parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(source, tree / name)
-            subprocess.run(['make', '-s', '-C', str(tree), f'-j{os.cpu_count()}', 'CC=gcc',
-                            'build/gcc/debug/mo'], check=True, capture_output=True, timeout=1800)
-            candidate = tree / 'build' / 'gcc' / 'debug' / 'mo'
-            self.assertEqual(harness_command('setup', candidate, STUB, STUB).returncode, 0)
-            root, built = PRIVATE / 'root-candidate', PRIVATE / 'built-candidate'
-            shutil.copytree(SYNTHETIC, root / 'variants' / 'synthetic')
-            made = harness_command('build', candidate, root, built)
-            self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
-            self.instruments(built)
-        finally:
-            self.assertEqual(harness_command('setup', MO, STUB, STUB).returncode, 0)
-            shutil.rmtree(tree, ignore_errors=True)
+        # The standalone pure-Rust mo binary embeds its library, so the installed candidate works
+        # directly as the session user without a separate world-readable source tree.
+        self.instruments(BUILT)
 
     def instruments(self, built):
         for client in harness.CLIENTS:

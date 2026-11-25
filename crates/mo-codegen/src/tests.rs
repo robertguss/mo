@@ -672,3 +672,30 @@ fn deterministic_fuzz_core_to_vm_never_panics_or_fails_verify() {
         }
     }
 }
+
+#[test]
+fn codegen_internal_error_codes_and_entry_refusal() {
+    // Two distinct Core functions whose runtime names collide trigger E1200 (CodegenEntry).
+    let src = r#"(core 0.11 (Program () ((FunDecl "a.b" () (int) (lit (int 1)) "M" (function) 0) (FunDecl "b" () (int) (lit (int 2)) "M.a" (function) 0)) () "a.b" (noSource)))"#;
+    let mut diags = DiagBag::new();
+    let parsed = parse_program(src.as_bytes(), &mut diags).expect("core parses");
+    assert!(compile(&parsed.arena, &parsed.value, &mut diags).is_none());
+    assert!(
+        diags
+            .items()
+            .iter()
+            .any(|d| d.code == ErrorCode::CodegenEntry),
+        "expected E1200 CodegenEntry, got {:?}",
+        diags.items()
+    );
+
+    assert_eq!(ErrorCode::FunctionTooLong.number(), 1014);
+    assert_eq!(ErrorCode::BytecodeTooBig.number(), 1015);
+    assert_eq!(ErrorCode::CodegenUnsupported.number(), 1055);
+    assert_eq!(ErrorCode::CodegenMemory.number(), 1056);
+    assert_eq!(ErrorCode::CodegenInvalid.number(), 1057);
+    assert_eq!(ErrorCode::CodegenRepresentation.number(), 1201);
+    assert_eq!(ErrorCode::CodegenBigintWork.number(), 1202);
+    assert_eq!(ErrorCode::CodegenLiveWork.number(), 1203);
+    assert_eq!(ErrorCode::CodegenRegisterWork.number(), 1204);
+}

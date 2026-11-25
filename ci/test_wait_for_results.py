@@ -46,8 +46,11 @@ class WaitForResults(unittest.TestCase):
         shutil.copyfile(ROOT / "ci/check.sh", self.root / "ci/check.sh")
         self.commands = self.root / "commands"
         self.commands.mkdir()
-        for name in ("make", "gcc", "clang"):
+        for name in ("cargo", "python3"):
             self.fake(self.commands, name, SUCCEED)
+        release_dir = self.root / "target/release"
+        release_dir.mkdir(parents=True)
+        self.fake(release_dir, "mo", SUCCEED)
         self.results = self.root / "results.txt"
 
     def fake(self, directory, name, text):
@@ -58,7 +61,7 @@ class WaitForResults(unittest.TestCase):
     def check_environment(self, **settings):
         environment = dict(os.environ, PATH=f"{self.commands}:{os.environ['PATH']}")
         environment.pop("CI", None)
-        environment.pop("CC", None)
+        environment.pop("MO_BIN", None)
         environment.update(settings)
         return environment
 
@@ -75,13 +78,13 @@ class WaitForResults(unittest.TestCase):
         self.hold = self.root / "hold"
         blocked = self.root / "blocked"
         self.hold.touch()
-        self.fake(self.commands, "make", BLOCK_WHILE_HOLD_EXISTS)
-        process = self.start("gcc", HOLD=str(self.hold), BLOCKED=str(blocked))
+        self.fake(self.commands, "cargo", BLOCK_WHILE_HOLD_EXISTS)
+        process = self.start("rust", HOLD=str(self.hold), BLOCKED=str(blocked))
         self.addCleanup(process.wait, timeout=LIMIT_SECONDS)
         self.addCleanup(self.hold.unlink, missing_ok=True)
         deadline = time.monotonic() + LIMIT_SECONDS
         while not blocked.exists():
-            self.assertLess(time.monotonic(), deadline, "check.sh never reached make")
+            self.assertLess(time.monotonic(), deadline, "check.sh never reached cargo")
             time.sleep(0.01)
         return process
 
@@ -107,30 +110,32 @@ class WaitForResults(unittest.TestCase):
         return self.results.read_text().splitlines()[-1]
 
     def test_pass(self):
-        self.assertEqual(self.check("gcc"), 0)
+        self.assertEqual(self.check("rust"), 0)
         self.assertEqual(self.last_line(), PASS)
         self.assertNotIn("skipped", self.assert_waited(0))
 
     def test_pass_with_a_skip_names_what_was_skipped(self):
-        self.assertEqual(self.check("sanitize", CC="mo-no-such-compiler"), 0)
+        self.fake(self.commands, "python3", "#!/bin/sh\nexit 77\n")
+        self.assertEqual(self.check("models"), 0)
         self.assertEqual(self.last_line(), PASS)
-        self.assertIn("mo-no-such-compiler", self.assert_waited(0))
+        self.assertIn("Java or pinned TLC jar", self.assert_waited(0))
 
-    def test_failure_in_make(self):
-        self.fake(self.commands, "make", FAILING)
-        self.assertEqual(self.check("gcc"), 1)
+    def test_failure_in_cargo(self):
+        self.fake(self.commands, "cargo", FAILING)
+        self.assertEqual(self.check("rust"), 1)
         self.assertEqual(self.last_line(), FAIL)
-        self.assertIn("failed group: gcc", self.assert_waited(1))
+        self.assertIn("failed group: rust", self.assert_waited(1))
 
     def test_failure_names_the_group_in_force_not_the_last_one_asked_for(self):
-        self.fake(self.commands, "make", FAILING)
-        self.assertEqual(self.check("gcc", "clang"), 1)
-        self.assertIn("failed group: gcc", self.assert_waited(1))
+        self.fake(self.commands, "cargo", FAILING)
+        self.assertEqual(self.check("rust", "drivers"), 1)
+        self.assertIn("failed group: rust", self.assert_waited(1))
 
     def test_missing_tool_under_ci(self):
-        self.assertEqual(self.check("sanitize", CI="1", CC="mo-no-such-compiler"), 1)
+        self.fake(self.commands, "python3", "#!/bin/sh\nexit 77\n")
+        self.assertEqual(self.check("models", CI="1"), 1)
         self.assertEqual(self.last_line(), FAIL)
-        self.assertIn("failed group: sanitize", self.assert_waited(1))
+        self.assertIn("failed group: models", self.assert_waited(1))
 
     def test_failure_of_a_check_that_ran_later(self):
         self.fake(self.commands, "python3", FAILING)

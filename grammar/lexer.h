@@ -6,9 +6,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#include "base/arena.h"
-#include "base/base.h"
-#include "base/limits.h"
+#include "limits.h"
+#include "support.h"
 
 struct node;
 

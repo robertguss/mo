@@ -16,7 +16,6 @@ import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DATA = ROOT / "ci/unicode16"
-TARGET = ROOT / "src/prim/unicode16-data.h"
 ARCHIVE_SHA256 = "c86dd81f2b14a43b0cc064aa5f89aa7241386801e35c59c7984e579832634eb2"
 SOURCES = ("UnicodeData.txt", "SpecialCasing.txt", "DerivedCoreProperties.txt",
            "DerivedNormalizationProps.txt", "EastAsianWidth.txt",
@@ -289,22 +288,13 @@ def main():
     if args.archive:
         import_archive(args.archive)
     sources = read_sources()
-    if args.rust:
-        result = generate_rust(sources)
-        if args.check:
-            if RUST_TARGET.read_text() != result:
-                raise AssertionError("generated Rust Unicode 16 tables differ; regenerate them")
-        else:
-            RUST_TARGET.write_text(result)
-        print(f"Unicode 16 (Rust): source hashes and generated tables agree ({len(result)} source bytes)")
-        return
-    result = generate(sources)
+    result = generate_rust(sources)
     if args.check:
-        if TARGET.read_text() != result:
-            raise AssertionError("generated Unicode 16 tables differ; regenerate them")
+        if RUST_TARGET.read_text() != result:
+            raise AssertionError("generated Rust Unicode 16 tables differ; regenerate them")
     else:
-        TARGET.write_text(result)
-    print(f"Unicode 16: source hashes and generated tables agree ({len(result)} source bytes)")
+        RUST_TARGET.write_text(result)
+    print(f"Unicode 16 (Rust): source hashes and generated tables agree ({len(result)} source bytes)")
 
 
 if __name__ == "__main__":

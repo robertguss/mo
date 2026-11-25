@@ -1,15 +1,10 @@
 #!/usr/bin/env bash
 # Every check robertguss/mo has, in order, except that the drivers, bench and lean groups run
-# their checks side by side. GitHub's nightly workflow runs gcc clang sanitize drivers static
-# lean bench on main with MO_ALL_DRIVERS=1, split across parallel jobs. Before a pull request, run `bash ci/check.sh gcc`.
+# their checks side by side. GitHub's nightly workflow runs rust, drivers, bench, lean and static
+# on main in parallel jobs. Before a pull request, run `bash ci/check.sh rust`.
 #
-# The drivers, bench and lean groups drive built executables. By default they drive one: the debug
-# build of an installed compiler (gcc before clang), else a sanitize build of one; MO_ALL_DRIVERS=1
-# drives every one that is built. MO_DRIVERS names the builds to make and drive instead, such as
-# "clang/sanitize", and MO_SHARED_CHECKS=0 leaves out the drivers checks that do not depend on the
-# build; the nightly workflow uses both to run the drivers group for each build in its own job.
-# MO_SIDE_BY_SIDE caps how many checks run side by side; the nightly sets it for the sanitize
-# build, which runs each check about three times slower than a debug build.
+# All compiler and runtime checks drive the pure-Rust `mo` binary (`target/release/mo`, or $MO_BIN).
+# MO_SIDE_BY_SIDE caps how many checks run side by side.
 #
 # A check whose tool is missing is skipped with a note, and the summary at the end counts what
 # was skipped instead of claiming that all checks passed. Set CI=1 to make a missing tool an
@@ -21,20 +16,17 @@
 #
 # With no arguments every check runs. Arguments pick groups of checks; together the groups are
 # every check:
-#   gcc clang   build and run the unit tests with that compiler
-#   sanitize    the unit tests under AddressSanitizer and UndefinedBehaviorSanitizer, built by $CC if set, otherwise clang, otherwise gcc
-#   fuzz        every fuzz target briefly
-#   drivers     black-box drivers of the built executables
+#   rust        pure-Rust workspace: fmt, clippy, unit/doc tests, rustdoc, safety/linkage audit, release build
+#   drivers     black-box drivers of the built pure-Rust mo executable
 #   bench       benchmark v0, the three Mo-written tools and the learnability protocol's calculators
-#   lean        Mo Core in Lean, and the checks that compare the test executables with it
-#   static      grammar, module dependencies, library map, fuzz seeds, formatting, clang-tidy
-#   cbmc        the CBMC proofs of the bytecode reader, the arena, the verifier, the primitives, path containment and resolution, reference counts and hash tables (cbmc/README.md)
-#   rust        pure-Rust runtime & front-end: fmt, clippy, unit/fuzz tests, and differential parity against C mo and Lean mocore
+#   lean        Mo Core in Lean, and the pure-Rust <-> Lean differential checks
+#   static      executable Bison grammar, library map, editor grammars and reference conformance
+#   models      finite TLA+ export, capture and swap models (TLC)
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 echo "check.sh started: pid $$"
 
-all_groups=" gcc clang sanitize fuzz drivers bench lean static cbmc models rust "
+all_groups=" rust drivers bench lean static models "
 groups="$*"
 for group in $groups; do
 	if [[ "$all_groups" != *" $group "* ]]; then
@@ -58,24 +50,11 @@ missing() {
 	echo "skipped: $1"
 	skipped+=("$1")
 }
-has_libfuzzer() {
-	local dir err
-	dir=$(mktemp -d)
-	printf 'int LLVMFuzzerTestOneInput(const unsigned char *d, unsigned long n);\nint LLVMFuzzerTestOneInput(const unsigned char *d, unsigned long n) { (void)d; (void)n; return 0; }\n' >"$dir/probe.c"
-	if ! err=$(clang -fsanitize=fuzzer "$dir/probe.c" -o "$dir/probe" 2>&1); then
-		printf '%s\n' "$err" >&2
-		rm -rf "$dir"
-		return 1
-	fi
-	rm -rf "$dir"
-	return 0
-}
 
 # Checks that don't depend on each other run side by side, as many at a time as there are
 # processors, or MO_SIDE_BY_SIDE. `later TITLE COMMAND...` starts one in the background, and
 # `report` prints each one's output under its title as it finishes, with how long it took, and
-# fails if any of them failed. A command that is a shell function runs without `set -e`, so chain
-# its steps with &&.
+# fails if any of them failed.
 later_limit=${MO_SIDE_BY_SIDE:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}
 later_dir=
 later_titles=()
@@ -122,8 +101,6 @@ report() {
 		return 1
 	fi
 }
-# If the script stops early (a missing tool under CI=1, a failed build), checks it started
-# don't outlive it.
 stop_later() {
 	local pid
 	for pid in "${later_pids[@]}"; do
@@ -145,237 +122,128 @@ finish() {
 }
 trap finish EXIT
 
-built() { # sets drivers to the built executables at $1 under build/<compiler>/<mode>/: every one
-	# when MO_ALL_DRIVERS=1, else the first debug build of an installed compiler (a leftover build
-	# of a compiler that is not installed would be stale), else the first sanitize build of one
-	local mode compiler driver
-	drivers=()
-	if [[ -n "${MO_DRIVERS:-}" ]]; then
-		for driver in $MO_DRIVERS; do
-			if [[ -x "build/$driver/$1" ]]; then drivers+=("build/$driver/$1"); fi
-		done
-		return
+mo_bin=${MO_BIN:-target/release/mo}
+built_rust=0
+ensure_rust_binaries() {
+	if ((built_rust)); then return 0; fi
+	if [[ -n "${MO_BIN:-}" && -x "$mo_bin" ]]; then
+		built_rust=1
+		return 0
 	fi
-	for mode in debug sanitize; do
-		for compiler in gcc clang; do
-			driver=build/$compiler/$mode/$1
-			if [[ ! -x "$driver" ]]; then continue; fi
-			if [[ "${MO_ALL_DRIVERS:-}" == 1 ]]; then
-				drivers+=("$driver")
-			elif have "$compiler"; then
-				drivers=("$driver")
-				return
-			fi
-		done
-	done
+	if ! have cargo; then
+		missing "cargo is not installed"
+		return 1
+	fi
+	step "Build pure-Rust release binaries (mo, mo-fe, mo-rt, mo-test-cli, mo-test-deadline)"
+	cargo build --release --bin mo --bin mo-fe --bin mo-rt --bin mo-test-cli --bin mo-test-deadline
+	built_rust=1
+	return 0
 }
 
-if enter gcc; then
-step "Build, test and build release with gcc (warnings are errors)"
-if have gcc; then make --no-print-directory test release CC=gcc; else missing "gcc is not installed"; fi
-
-fi
-
-if enter clang; then
-step "Build, test and build release with clang (warnings are errors)"
-if have clang; then make --no-print-directory test release CC=clang; else missing "clang is not installed"; fi
-fi
-
-if enter sanitize; then
-
-step "Tests under AddressSanitizer and UndefinedBehaviorSanitizer"
-if [[ -n "${CC:-}" ]]; then
-	if have "${CC%% *}"; then make --no-print-directory sanitize CC="$CC"; else missing "$CC is not installed"; fi
-elif have clang; then
-	make --no-print-directory sanitize CC=clang
-elif have gcc; then
-	make --no-print-directory sanitize CC=gcc
+if enter rust; then
+step "Pure-Rust workspace: formatting, clippy, tests, docs, safety & linkage audit"
+if ! have cargo; then
+	missing "cargo is not installed"
+elif ! have python3; then
+	missing "python3 is not installed"
 else
-	missing "no compiler with sanitizers is installed"
+	step "Rust formatting (cargo fmt --all -- --check)"
+	cargo fmt --all -- --check
+	step "Rust lints (cargo clippy --workspace --all-targets --all-features -- -D warnings)"
+	cargo clippy --workspace --all-targets --all-features -- -D warnings
+	step "Rust workspace tests (cargo test --workspace --all-targets)"
+	cargo test --workspace --all-targets
+	step "Rust doc tests (cargo test --workspace --doc)"
+	cargo test --workspace --doc
+	step "Rust documentation (RUSTDOCFLAGS=\"-D warnings\" cargo doc --workspace --no-deps)"
+	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+	ensure_rust_binaries
+	step "Rust crate safety/lint audit (#![forbid(unsafe_code)]) and dynamic linkage audit (ldd)"
+	python3 ci/check_rust_frontend.py --audit-only --mo "$mo_bin"
 fi
-fi
-
-# Run alone, the drivers, bench and lean groups build the executables they drive, as the
-# gcc, clang and sanitize groups would have: one compiler's debug build by default, every
-# compiler's when MO_ALL_DRIVERS=1 (and the sanitize build too for the lean group).
-if [[ -n "$groups" ]] && { enter drivers || enter bench || enter lean; }; then
-	step "Build the test executables the checks below drive"
-	if [[ -n "${MO_DRIVERS:-}" ]]; then
-		for driver in $MO_DRIVERS; do
-			if [[ "${driver#*/}" == sanitize ]]; then
-				make --no-print-directory sanitize-executables CC="${driver%/*}"
-			else
-				make --no-print-directory test-executables CC="${driver%/*}"
-			fi
-		done
-	elif [[ "${MO_ALL_DRIVERS:-}" == 1 ]]; then
-		if have gcc; then make --no-print-directory test-executables CC=gcc; fi
-		if have clang; then make --no-print-directory test-executables CC=clang; fi
-		if want lean; then
-			if have clang; then
-				make --no-print-directory sanitize-executables CC=clang
-			elif have gcc; then
-				make --no-print-directory sanitize-executables CC=gcc
-			fi
-		fi
-	elif have gcc; then
-		make --no-print-directory test-executables CC=gcc
-	elif have clang; then
-		make --no-print-directory test-executables CC=clang
-	fi
 fi
 
 if enter drivers; then
 shared=${MO_SHARED_CHECKS:-1}
 if have python3; then
-	if ((shared)); then
-		later "Check runner: timed checks run alone and failures propagate" python3 ci/test_check.py
-		later "Waiting on check results: running, passed, failed, killed and missing runs" \
-			python3 ci/test_wait_for_results.py
-		later "Reference conformance: every rule has programs or an explicit gap" \
-			python3 ci/check_conformance.py
-		later "Reference conformance: coverage-check regression tests" \
-			python3 ci/test_conformance.py
-	fi
-	built mo
-	if ((${#drivers[@]})); then
-		for driver in "${drivers[@]}"; do
-			later "The mo command: text/JSON goldens, argument matrix and JSON validity ($driver)" \
-				python3 ci/check_cli.py "$driver"
-			later "Authenticated operator views ($driver)" python3 ci/check_operator.py "$driver"
-			later "Typed upgrades and checked restart ($driver)" python3 ci/check_upgrades.py "$driver"
-			later "Recorded schema fallback ($driver)" python3 ci/check_upgrade_fallback.py "$driver"
-			later "Upgrade adoption replay ($driver)" python3 ci/check_upgrade_adoption.py "$driver"
-			later "Recorded-context upgrade checks ($driver)" python3 ci/check_upgrade_context.py "$driver"
-			later "Live upgrades: push, streams, kills and recovery ($driver)" \
-				python3 ci/check_upgrade_live.py "$driver"
-			later "Remote upgrades: proxy, tunnel and rate retry ($driver)" \
-				python3 ci/check_upgrade_remote.py "$driver"
-			later "Private state fetch ($driver)" python3 ci/check_fetch.py "$driver"
-			later "The Http client against a live peer on loopback ($driver)" \
-				python3 ci/check_network.py "$driver"
-			later "Offline history, replay and query ($driver)" python3 ci/check_offline.py "$driver"
-			later "Immutable state exports ($driver)" python3 ci/check_export.py "$driver"
-			later "Service simulation: deterministic lifecycle and real persistence ($driver)" \
-				python3 ci/check_simulation.py "$driver"
-			later "Task queue: simulation tests and the real service over loopback ($driver)" \
-				python3 ci/check_task_queue.py "$driver"
-			later "Task queue: SIGKILL a real mo serve and reconcile what its client saw ($driver)" \
-				python3 ci/check_kill_loop.py "$driver" --kills "${MO_KILL_COUNT:-15}" \
-				--seed "${MO_KILL_SEED:-1}" --keep
-		done
-		for driver in "${drivers[@]}"; do
-			later "Reference examples: check every block and run complete programs ($driver)" \
-				python3 ci/check_reference_examples.py "$driver"
-			later "Reference examples: driver regression tests ($driver)" \
-				python3 ci/test_reference_examples.py "$driver"
-		done
-		for driver in "${drivers[@]}"; do
-			later "The golden corpus: whole programs match their expected output and exit status ($driver)" \
-				python3 ci/check_golden.py "$driver"
-		done
-		for driver in "${drivers[@]}"; do
-			later "The library: every file passes mo test ($driver)" \
-				python3 ci/check_lib.py "$driver"
-			later "Crypto & Bytes encodings: differential cross-check vs Python stdlib ($driver)" \
-				python3 ci/check_crypto.py "$driver"
-		done
-		for driver in "${drivers[@]}"; do
-			later "Tools and services: every program in tools/ and services/mo-*/ passes mo test ($driver)" \
-				python3 ci/check_programs.py "$driver"
-		done
-		for driver in "${drivers[@]}"; do
-			later "Every tracked Mo source: formatter idempotence, trees, check and execution ($driver)" \
-				python3 ci/check_format.py "$driver"
-		done
-		for driver in "${drivers[@]}"; do
-			later "Every error code has a message test or reachability explanation ($driver)" \
-				python3 ci/check_errors.py "$driver"
-		done
-	else
-		missing "no mo command executable is built"
-	fi
+	if ensure_rust_binaries && [[ -x "$mo_bin" ]]; then
+		if ((shared)); then
+			later "Check runner: timed checks run alone and failures propagate" python3 ci/test_check.py
+			later "Waiting on check results: running, passed, failed, killed and missing runs" \
+				python3 ci/test_wait_for_results.py
+			later "Reference conformance: every rule has programs or an explicit gap" \
+				python3 ci/check_conformance.py
+			later "Reference conformance: coverage-check regression tests" \
+				python3 ci/test_conformance.py
+			later "Unicode 16: the pinned tables match the UCD files" \
+				python3 ci/generate_unicode16.py --check
+		fi
+		later "The mo command: text/JSON goldens, argument matrix and JSON validity ($mo_bin)" \
+			python3 ci/check_cli.py "$mo_bin"
+		later "Authenticated operator views ($mo_bin)" python3 ci/check_operator.py "$mo_bin"
+		later "Typed upgrades and checked restart ($mo_bin)" python3 ci/check_upgrades.py "$mo_bin"
+		later "Recorded schema fallback ($mo_bin)" python3 ci/check_upgrade_fallback.py "$mo_bin"
+		later "Upgrade adoption replay ($mo_bin)" python3 ci/check_upgrade_adoption.py "$mo_bin"
+		later "Recorded-context upgrade checks ($mo_bin)" python3 ci/check_upgrade_context.py "$mo_bin"
+		later "Live upgrades: push, streams, kills and recovery ($mo_bin)" \
+			python3 ci/check_upgrade_live.py "$mo_bin"
+		later "Remote upgrades: proxy, tunnel and rate retry ($mo_bin)" \
+			python3 ci/check_upgrade_remote.py "$mo_bin"
+		later "Private state fetch ($mo_bin)" python3 ci/check_fetch.py "$mo_bin"
+		later "The Http client against a live peer on loopback ($mo_bin)" \
+			python3 ci/check_network.py "$mo_bin"
+		later "Offline history, replay and query ($mo_bin)" python3 ci/check_offline.py "$mo_bin"
+		later "Immutable state exports ($mo_bin)" python3 ci/check_export.py "$mo_bin"
+		later "Service simulation: deterministic lifecycle and real persistence ($mo_bin)" \
+			python3 ci/check_simulation.py "$mo_bin"
+		later "Task queue: simulation tests and the real service over loopback ($mo_bin)" \
+			python3 ci/check_task_queue.py "$mo_bin"
+		later "Task queue: SIGKILL a real mo serve and reconcile what its client saw ($mo_bin)" \
+			python3 ci/check_kill_loop.py "$mo_bin" --kills "${MO_KILL_COUNT:-15}" \
+			--seed "${MO_KILL_SEED:-1}" --keep
+		later "Reference examples: check every block and run complete programs ($mo_bin)" \
+			python3 ci/check_reference_examples.py "$mo_bin"
+		later "Reference examples: driver regression tests ($mo_bin)" \
+			python3 ci/test_reference_examples.py "$mo_bin"
+		later "The golden corpus: whole programs match their expected output and exit status ($mo_bin)" \
+			python3 ci/check_golden.py "$mo_bin"
+		later "The library: every file passes mo test ($mo_bin)" \
+			python3 ci/check_lib.py "$mo_bin"
+		later "Crypto & Bytes encodings: differential cross-check vs Python stdlib ($mo_bin)" \
+			python3 ci/check_crypto.py "$mo_bin"
+		later "Tools and services: every program in tools/ and services/mo-*/ passes mo test ($mo_bin)" \
+			python3 ci/check_programs.py "$mo_bin"
+		later "Every tracked Mo source: formatter idempotence, trees, check and execution ($mo_bin)" \
+			python3 ci/check_format.py "$mo_bin"
+		later "Every error code has a message test or reachability explanation ($mo_bin)" \
+			python3 ci/check_errors.py "$mo_bin"
 
-	built tests/test_bytecode_text.test
-	if ((${#drivers[@]})); then
-		later "Bytecode text: repeated layout and BigInt conversion stay within work ceilings" \
-			python3 ci/check_bytecode_text.py "${drivers[@]}"
+		report_status=0
+		report || report_status=$?
+		# Timed alone, after the checks that ran side by side, so their load does not inflate it.
+		# It runs even when one of them failed.
+		timing_status=0
+		if ((shared)); then
+			step "mo check stays under 0.1 s on each sample ($mo_bin)"
+			python3 ci/check_check_time.py "$mo_bin" || timing_status=$?
+		fi
+		if ((report_status != 0 || timing_status != 0)); then exit 1; fi
 	else
-		missing "no bytecode text test executable is built"
-	fi
-
-	built tests/test_codegen.test
-	if ((${#drivers[@]})); then
-		later "Core code generation: deterministic writer-checked fixtures, corpora and generated programs" \
-			python3 ci/check_codegen.py "${drivers[@]}"
-	else
-		missing "no code generation test executable is built"
-	fi
-
-	if ((shared)); then
-		later "Unicode 16: the pinned tables match the UCD files" python3 ci/generate_unicode16.py --check
-	fi
-	built tests/test_unicode16.test
-	if ((${#drivers[@]})); then
-		later "Unicode 16: UCD conformance and long-text work bounds" python3 ci/check_unicode16.py "${drivers[@]}"
-	else
-		missing "no Unicode primitive test executable is built"
+		missing "no mo executable is built"
 	fi
 else
 	missing "python3 is not installed"
 fi
-
-formatter_driver=
-for driver in build/{gcc,clang}/debug/tests/test_format.test; do
-	if [[ -x "$driver" ]]; then formatter_driver=$driver; break; fi
-done
-if ((shared)); then
-	if [[ -n "$formatter_driver" ]]; then
-		later "The source formatter: reference, examples, library and good grammar are fixed points" \
-			"$formatter_driver" --fixed-points
-	else
-		missing "no source formatter test executable is built"
-	fi
-fi
-report_status=0
-report || report_status=$?
-# Timed alone, after the checks that ran side by side, so their load does not inflate it.
-# It runs even when one of them failed.
-timed_driver=
-for driver in build/{gcc,clang}/debug/mo; do
-	if [[ -x "$driver" ]]; then timed_driver=$driver; break; fi
-done
-timing_status=0
-if ((shared)); then
-	if [[ -z "$timed_driver" ]]; then
-		missing "no mo command executable is built to time"
-	elif have python3; then
-		step "mo check stays under 0.1 s on each sample ($timed_driver)"
-		python3 ci/check_check_time.py "$timed_driver" || timing_status=$?
-	else
-		missing "python3 is not installed, so mo check is not timed"
-	fi
-fi
-if ((report_status != 0 || timing_status != 0)); then exit 1; fi
 fi
 
 if enter bench; then
 step "Benchmark v0, the three Mo-written tools and the learnability protocol"
 if have python3; then
-	built mo
-	if ((${#drivers[@]})); then
+	if ensure_rust_binaries && [[ -x "$mo_bin" ]]; then
 		later "The session-recording harness: a recorded session's log reads to tally's example table" \
-			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/harness/test_session.py "${drivers[@]}"
-		for driver in "${drivers[@]}"; do
-			later "Benchmark v0: tasks frozen, references pass, broken solutions and start folders fail ($driver)" \
-				python3 bench/v0/grade.py --check --mo "$driver"
-		done
-		# The frozen tasks' time limits were set for one gcc debug build, so only the first
-		# executable runs the hidden tests, alone, after the checks that ran side by side.
-		for driver in "${drivers[@]:1}"; do
-			later "The three tools: linkcheck, tally and notioncopy pass their tests and do their jobs here ($driver)" \
-				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_tools.py "$driver" --no-hidden
-		done
+			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/harness/test_session.py "$mo_bin"
+		later "Benchmark v0: tasks frozen, references pass, broken solutions and start folders fail ($mo_bin)" \
+			python3 bench/v0/grade.py --check --mo "$mo_bin"
 		later "The learnability protocol's Wilson and kappa calculator" \
 			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/test_wilson.py
 		later "The round report's first-retry numbers, from the reference tally" \
@@ -383,13 +251,13 @@ if have python3; then
 		later "The Phase 4 evaluation's between-round comparison and its power" \
 			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_compare.py
 		later "Phase 4 scenario fixtures: a step list builds, renders, checks and keys" \
-			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_fixture.py "${drivers[@]}"
+			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_fixture.py "$mo_bin"
 		later "Phase 4 grading: hidden tests, answers and each variant's controls" \
-			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_grade.py "${drivers[@]}"
+			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_grade.py "$mo_bin"
 		later "Phase 4 fix check against the grader: a fix the grader passes is never not_fixed" \
-			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_offline.py "${drivers[@]}"
+			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_offline.py "$mo_bin"
 		later "Phase 4 recording proxy: bodies, statuses, no token, and the record match" \
-			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_proxy.py "${drivers[@]}"
+			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_proxy.py "$mo_bin"
 		later "Phase 4 publication scanner: a token in any transport encoding is refused" \
 			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_scan.py
 		later "Phase 4 published grades: the hidden tests' names and details are left out" \
@@ -400,8 +268,8 @@ if have python3; then
 		# stub sessions as a user of their own, which needs passwordless sudo.
 		harness_status=0
 		if sudo -n true 2>/dev/null; then
-			step "Phase 4 session harness: stub sessions as their own user, killed, recorded and graded (${drivers[0]})"
-			PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_harness.py "${drivers[0]}" || harness_status=$?
+			step "Phase 4 session harness: stub sessions as their own user, killed, recorded and graded ($mo_bin)"
+			PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_harness.py "$mo_bin" || harness_status=$?
 		else
 			missing "passwordless sudo is not available, so the Phase 4 session harness is not tested"
 		fi
@@ -410,49 +278,20 @@ if have python3; then
 		step "The three tools' frozen tasks: hashes match and each reference passes its hidden tests"
 		frozen_status=0
 		python3 bench/tools/grade.py --check || frozen_status=$?
-		step "The three tools: tests, frozen tasks and repository checks (${drivers[0]})"
+		step "The three tools: tests, frozen tasks and repository checks ($mo_bin)"
 		tools_status=0
-		PYTHONDONTWRITEBYTECODE=1 python3 ci/check_tools.py "${drivers[0]}" || tools_status=$?
+		PYTHONDONTWRITEBYTECODE=1 python3 ci/check_tools.py "$mo_bin" || tools_status=$?
 		if ((report_status != 0 || harness_status != 0 || frozen_status != 0 || tools_status != 0)); then exit 1; fi
 	else
-		missing "no mo command executable is built"
+		missing "no mo executable is built"
 	fi
 else
 	missing "python3 is not installed"
 fi
 fi
 
-if enter fuzz; then
-step "Fuzz every target briefly"
-if ! have clang; then
-	missing "clang with libFuzzer is not installed"
-elif has_libfuzzer; then
-	make --no-print-directory fuzz-smoke
-else
-	missing "clang -fsanitize=fuzzer failed (compiler output above)"
-fi
-fi
-
-if enter static; then
-step "The executable grammar: its tests, the examples and the reference's code parse"
-if have bison && (have clang || have gcc); then
-	if have clang; then make --no-print-directory grammar CC=clang; else make --no-print-directory grammar CC=gcc; fi
-	# Benchmark v0's references and broken solutions must parse (step 1 of its grading).
-	for grammar in build/{clang,gcc}/debug/mo-grammar; do
-		if [[ -x "$grammar" ]]; then
-			"$grammar" bench/v0/*/hidden/reference/*.mo bench/v0/*/hidden/broken/*.mo
-			break
-		fi
-	done
-else
-	missing "bison or a C compiler is not installed"
-fi
-fi
-
 if enter lean; then
 step "Mo Core in Lean: the model builds and every proof checks"
-# elan lives in /opt/elan where the nightly workflow installs it, since the CI orb runs with a
-# fresh HOME, or else in the usual ~/.elan.
 for elan_home in "${ELAN_HOME:-}" /opt/elan "$HOME/.elan"; do
 	if [[ -n "$elan_home" && -x "$elan_home/bin/lake" ]]; then
 		export ELAN_HOME="$elan_home" PATH="$elan_home/bin:$PATH"
@@ -460,81 +299,24 @@ for elan_home in "${ELAN_HOME:-}" /opt/elan "$HOME/.elan"; do
 	fi
 done
 if have lake; then
-	make --no-print-directory formal
+	(cd formal && lake build MoCore mocore)
+	sh ci/test_mocore.sh
 	step "Core text fixtures match the Lean reference printer"
 	sh ci/check_core_fixtures.sh
 	step "Offline-diagnosis theorems pin only the standard axioms; a planted sorry is caught"
 	sh ci/check_lean_axioms.sh
 	if have python3; then
-		# The comparisons below don't depend on each other, so they run side by side
-		# (`later`). check_primitives goes first: its work bounds have timeouts, and they
-		# keep their margin best while the others are still starting.
-		built tests/test_prim.test
-		if ((${#drivers[@]})); then
-			later "Primitive results and stops match Lean; large inputs keep their work bounds" \
-				python3 ci/check_primitives.py "${drivers[@]}"
-		else
-			missing "no primitive test executable is built"
-		fi
-		built tests/test_vm.test
-		vm_drivers=("${drivers[@]}")
-		if ((${#vm_drivers[@]})); then
-			later "Compiled Core outcomes match the Lean VM model" \
-				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_vm.py "${vm_drivers[@]}"
-		else
-			missing "no VM test executable is built"
-		fi
-		built tests/test_lower.test
-		lower_drivers=("${drivers[@]}")
-		for driver in "${lower_drivers[@]}"; do
-			compiler=${driver#build/}; compiler=${compiler%%/*}
-			make --no-print-directory CC="$compiler" "${driver%/tests/*}/lower-source"
-		done
-		for driver in "${lower_drivers[@]}"; do
-			later "Source/check/lower programs match expected outcomes, Lean and the host-entry VM (${driver%/tests/*})" \
-				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_lower_source.py "${driver%/tests/*}/lower-source" "${driver%/tests/*}/lower-source"
-		done
-		built tests/test_heap.test
-		if ((${#drivers[@]})); then
-			later "Heap Float spellings match Lean and BigInt digits match Python" \
-				python3 ci/check_heap_numbers.py "${drivers[@]}"
-		else
-			missing "no heap test executable is built"
-		fi
-		built tests/test_core_check.test
-		if ((${#drivers[@]})); then
-			later "Core checker verdicts match Lean on fixtures, generated variants and fuzz corpora" \
-				python3 ci/check_core_check.py "${drivers[@]}"
-			later "Generated well-typed Core programs pass both checkers and print identically in C and Lean" \
-				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_core_generated.py "${drivers[@]}"
-		else
-			missing "no Core checker test executable is built"
-		fi
-		if ((${#vm_drivers[@]})); then
-			later "Generated Core programs give the same outcome on the VM and in Lean" \
-				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_core_differential.py "${vm_drivers[@]}"
-		fi
-		if ((${#lower_drivers[@]})); then
-			later "Lowered checked-program fixtures match expected outcomes and Lean" \
-				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_lower.py "${lower_drivers[@]}"
-		else
-			missing "no lowering test executable is built"
-		fi
-		built tests/test_host.test
-		if ((${#drivers[@]})); then
-			later "Fake capability operations match the Lean host model" \
-				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_host.py "${drivers[@]}"
-		else
-			missing "no host test executable is built"
-		fi
-		built mo
-		if ((${#drivers[@]})); then
+		if ensure_rust_binaries && [[ -x "$mo_bin" ]]; then
 			later "Defect replays: mo replay and Lean stop the same way on hand-written handler inputs" \
-				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_offline_core.py "${drivers[@]}"
+				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_offline_core.py "$mo_bin"
+			later "Pure-Rust <-> Lean MoCore differential parity (fixtures, Core checker, generated Core, lowering)" \
+				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_rust_frontend.py \
+				--mo "$mo_bin" --mo-fe target/release/mo-fe --mo-rt target/release/mo-rt \
+				--skip-build --require-lean --lean-only
+			report
 		else
 			missing "no mo executable is built"
 		fi
-		report
 	else
 		missing "python3 is not installed"
 	fi
@@ -544,92 +326,45 @@ fi
 fi
 
 if enter static; then
-step "Module dependencies: each module includes only what architecture section 2 allows"
-make --no-print-directory deps
+step "The executable grammar: its tests, the examples, the reference and benchmark v0 parse"
+if have bison && (have clang || have gcc || have cc); then
+	if have clang; then
+		make --no-print-directory -C grammar grammar CC=clang
+	elif have gcc; then
+		make --no-print-directory -C grammar grammar CC=gcc
+	else
+		make --no-print-directory -C grammar grammar CC=cc
+	fi
+else
+	missing "bison or a C compiler is not installed"
+fi
 
 step "The library map: docs/design/library.md has a row for every primitive and host operation"
-make --no-print-directory library-map
-
-step "Every fuzz target has a committed corpus or a Makefile generated-seed branch"
-if have python3; then python3 ci/check_fuzz_seeds.py; else missing "python3 is not installed"; fi
+if ensure_rust_binaries; then
+	sh ci/library_map.sh
+	sh ci/test_library_map.sh
+fi
 
 step "Editor grammars, queries and installer (Zed & Cursor/VS Code)"
 if have python3; then python3 ci/check_editors.py; else missing "python3 is not installed"; fi
 
-step "Formatting"
-if have clang-format; then make --no-print-directory format-check; else missing "clang-format is not installed"; fi
-
-step "Results of standard-library calls are used (clang-tidy)"
-if have clang-tidy; then make --no-print-directory tidy; else missing "clang-tidy is not installed"; fi
-fi
-
-if enter cbmc; then
-step "CBMC: the bytecode reader on every small input, the arena, the verifier's transfer functions, the primitives' arithmetic and UTF-8, lexical path containment, path resolution, reference counts and hash tables (cbmc/README.md)"
-if have cbmc && have goto-cc && have goto-instrument; then
-	# The proofs and the check that every block they prove runs on some input take about
-	# thirty and twenty-seven minutes one at a time (the verifier's step proof alone about
-	# eleven), so they share the machine's processors.
-	jobs=$(($(getconf _NPROCESSORS_ONLN) / 2))
-	((jobs >= 1)) || jobs=1
-	mkdir -p build
-	MO_CBMC_JOBS=$jobs bash cbmc/prove.sh --reach >build/cbmc-reach.txt 2>&1 &
-	reach=$!
-	proofs_status=0
-	MO_CBMC_JOBS=$jobs make --no-print-directory cbmc || proofs_status=$?
-	step "CBMC: every block of each proved function runs on some input, so no proof is vacuous"
-	reach_status=0
-	wait "$reach" || reach_status=$?
-	cat build/cbmc-reach.txt
-	((proofs_status == 0 && reach_status == 0))
+step "Reference conformance: every rule has programs or an explicit gap"
+if have python3; then
+	python3 ci/check_conformance.py
+	python3 ci/test_conformance.py
 else
-	missing "cbmc is not installed"
+	missing "python3 is not installed"
 fi
 fi
 
 if enter models; then
-step "Finite export generation models and negative controls"
+step "Finite export, capture and swap models and negative controls"
 model_status=0
 python3 ci/check_models.py || model_status=$?
 if ((model_status == 77)); then
-    missing "Java or pinned TLC jar is not installed (see models/README.md)"
+	missing "Java or pinned TLC jar is not installed (see models/README.md)"
 elif ((model_status != 0)); then
-    exit "$model_status"
-fi
-fi
-
-if enter rust; then
-step "Pure-Rust runtime & front-end: formatting, clippy, workspace tests, and differential parity"
-if ! have cargo; then
-	missing "cargo is not installed"
-elif ! have python3; then
-	missing "python3 is not installed"
-else
-	built mo
-	if ((${#drivers[@]} == 0)); then
-		if have gcc; then
-			make --no-print-directory CC=gcc
-		elif have clang; then
-			make --no-print-directory CC=clang
-		fi
-		built mo
-	fi
-	if ((${#drivers[@]})); then
-		mo_driver="${drivers[0]}"
-		step "Rust formatting (cargo fmt --all -- --check)"
-		cargo fmt --all -- --check
-		step "Rust lints (cargo clippy --workspace --all-targets -- -D warnings)"
-		cargo clippy --workspace --all-targets -- -D warnings
-		step "Rust workspace tests and bytecode/VM/Core fuzz smoke (cargo test --workspace)"
-		cargo test --workspace
-		step "Rust runtime differential parity (ci/check_rust_runtime.py --mo $mo_driver)"
-		python3 ci/check_rust_runtime.py --mo "$mo_driver"
-		step "Rust front-end differential parity (ci/check_rust_frontend.py --mo $mo_driver)"
-		python3 ci/check_rust_frontend.py --mo "$mo_driver"
-		step "Rust unified mo CLI verification (ci/check_rust_cli.py)"
-		python3 ci/check_rust_cli.py
-	else
-		missing "no C compiler or mo executable is available for Rust differential checks"
-	fi
+	exit "$model_status"
 fi
 fi
 

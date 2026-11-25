@@ -11,7 +11,7 @@ import time
 
 sys.set_int_max_str_digits(0)
 VERSION = re.search(r'#define MO_CORE_TEXT_VERSION "([^"]+)"',
-                    pathlib.Path("src/core/core.h").read_text())[1]
+                    pathlib.Path("crates/mo-def/defs/core.h").read_text())[1]
 
 
 def quote(s):
@@ -317,7 +317,7 @@ def time_cases(rng):
 def cases():
     rng = random.Random(1300)
     rows = re.findall(r'^PRIM\((\w+),\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*"([ob]*)",',
-                      pathlib.Path("src/base/prims.def").read_text(), re.M)
+                      pathlib.Path("crates/mo-def/defs/prims.def").read_text(), re.M)
     ints = [-(1 << 63), -(1 << 63) + 1, -257, -1, 0, 1, 255, 256, (1 << 53) + 1,
             (1 << 63) - 2, (1 << 63) - 1]
     scale, maximum = 10**18, (1 << 127) - 1
@@ -499,7 +499,7 @@ def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--corpus":
         directory = pathlib.Path(sys.argv[2])
         directory.mkdir(parents=True, exist_ok=True)
-        ids = re.findall(r'^PRIM\((\w+),', pathlib.Path("src/base/prims.def").read_text(), re.M)
+        ids = re.findall(r'^PRIM\((\w+),', pathlib.Path("crates/mo-def/defs/prims.def").read_text(), re.M)
         rng = random.Random(1300)
         for i, name in enumerate(ids):
             for variant in range(6):
@@ -526,7 +526,7 @@ def main():
         return
     generated = list(cases()) + list(extended_cases())
     rows = re.findall(r'^PRIM\(\w+,\s*"([^"]+)",\s*"([^"]+)"',
-                      pathlib.Path("src/base/prims.def").read_text(), re.M)
+                      pathlib.Path("crates/mo-def/defs/prims.def").read_text(), re.M)
     expected_rows = {f"{module}.{name}" for module, name in rows
                      if module not in {"Unicode16", "Crypto"}}
     covered = {re.search(r'\(text "([^"]+)"\)', raw)[1] for _, raw in generated}

@@ -70,8 +70,6 @@ def execute(binary, folder, path, command="run", arguments=(), stdin=b""):
 
 def audit(binary, tracked):
     programs = [p for p in tracked if p.suffix == ".mo"]
-    subprocess.run([str(binary.parent / "tests/test_format.test"), "--files",
-                    *map(str, programs)], cwd=ROOT, check=True)
     counts = Counter()
     failures = []
     with tempfile.TemporaryDirectory(prefix="mo-format-corpus-") as work:
