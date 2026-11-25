@@ -5,13 +5,13 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-mo-base = { path = "../mo-base" }
-mo-def = { path = "../mo-def" }
-mo-syntax = { path = "../mo-syntax" }
-thiserror = "2"
+mo-base.workspace = true
+mo-def.workspace = true
+mo-syntax.workspace = true
+thiserror.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1", default-features = false, features = ["std", "fs"] }
+rustix = { workspace = true, features = ["fs"] }
 
 [lints]
 workspace = true

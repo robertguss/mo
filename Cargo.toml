@@ -14,7 +14,6 @@ members = [
     "crates/mo-prim",
     "crates/mo-host",
     "crates/mo-vm",
-    "crates/mo-rt",
     "crates/mo-test",
     "crates/mo-service",
     "crates/mo-upgrade",
@@ -25,6 +24,46 @@ members = [
 edition = "2024"
 license = "MIT OR Apache-2.0"
 version = "0.1.0"
+
+[workspace.dependencies]
+# Internal workspace crates
+mo-base = { path = "crates/mo-base" }
+mo-bytecode = { path = "crates/mo-bytecode" }
+mo-check = { path = "crates/mo-check" }
+mo-codegen = { path = "crates/mo-codegen" }
+mo-core = { path = "crates/mo-core" }
+mo-def = { path = "crates/mo-def" }
+mo-heap = { path = "crates/mo-heap" }
+mo-host = { path = "crates/mo-host" }
+mo-lower = { path = "crates/mo-lower" }
+mo-prim = { path = "crates/mo-prim" }
+mo-service = { path = "crates/mo-service" }
+mo-syntax = { path = "crates/mo-syntax" }
+mo-test = { path = "crates/mo-test" }
+mo-upgrade = { path = "crates/mo-upgrade" }
+mo-vm = { path = "crates/mo-vm" }
+
+# External dependencies (single source of truth for version pins and security features)
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc", "zeroize"] }
+getrandom = "0.4"
+hmac = { version = "0.13", features = ["zeroize"] }
+landlock = "0.4"
+libc = "0.2"
+rcgen = "0.14"
+rusqlite = { version = "0.39", features = ["bundled", "hooks", "limits", "serialize"] }
+rustix = { version = "1.1", default-features = false, features = ["std"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8"
+rustls-pemfile = "2.2"
+rustls-pki-types = "1.16"
+scrypt = { version = "0.12", default-features = false }
+seccompiler = { version = "0.5", default-features = false }
+sha2 = { version = "0.11", features = ["zeroize"] }
+signal-hook = "0.3"
+subtle = "2.6"
+thiserror = "2"
+webpki-roots = "1.0"
+zeroize = "1.9"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

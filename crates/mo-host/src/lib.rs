@@ -6,6 +6,7 @@
 
 mod clock_random;
 mod command;
+pub mod confine;
 mod fake_files;
 mod files_common;
 mod network;

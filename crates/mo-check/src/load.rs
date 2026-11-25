@@ -216,6 +216,8 @@ struct Loader<'s, 'd> {
     memory_only: bool,
     upgrade: bool,
     arena_remaining: usize,
+    #[cfg(test)]
+    library_entries_limit: u64,
 }
 
 impl<'s, 'd> Loader<'s, 'd> {
@@ -244,6 +246,8 @@ impl<'s, 'd> Loader<'s, 'd> {
             memory_only,
             upgrade,
             arena_remaining: arena_limit,
+            #[cfg(test)]
+            library_entries_limit: MO_LIMIT_LIBRARY_ENTRIES,
         }
     }
 
@@ -696,7 +700,11 @@ impl<'s, 'd> Loader<'s, 'd> {
                     continue;
                 }
                 entries += 1;
-                if entries > MO_LIMIT_LIBRARY_ENTRIES {
+                #[cfg(test)]
+                let max_entries = self.library_entries_limit;
+                #[cfg(not(test))]
+                let max_entries = MO_LIMIT_LIBRARY_ENTRIES;
+                if entries > max_entries {
                     self.report_bytes(
                         ErrorCode::LibraryTooBig,
                         Span::NONE,
@@ -2123,6 +2131,44 @@ fn load_entry(loader: &mut Loader<'_, '_>, raw_entry: &[u8], options: &LoadOptio
     }
 
     true
+}
+
+#[cfg(test)]
+pub(crate) fn load_bundle_with_library_entry_limit(
+    sources: &mut SourceMap,
+    options: &LoadOptions,
+    library_entries_limit: u64,
+    diags: &mut DiagBag,
+) -> Option<ModuleSet> {
+    let count = sources.len();
+    if count == 0 || u64::from(count) > MO_LIMIT_FILES {
+        return None;
+    }
+    let mut loader = Loader::new(
+        sources,
+        diags,
+        None,
+        false,
+        options.upgrade,
+        options.syntax_arena_limit,
+    );
+    loader.library_entries_limit = library_entries_limit;
+    for i in 0..count {
+        loader.index_module(i, None, Span::NONE, false)?;
+    }
+    if let LibraryMode::Directory(lib_path) = &options.library {
+        let lib_bytes = path_to_bytes(lib_path);
+        let norm_lib = loader.normal_path(&lib_bytes)?;
+        let real_lib = loader.real_path(&norm_lib, Span::NONE, true)?;
+        loader.real_library = Some(real_lib);
+        if !loader.library_files(&norm_lib) {
+            return None;
+        }
+    }
+    loader.memory_only = true;
+    let set = loader.parse_modules();
+    diags.sort();
+    set
 }
 
 /// Loads an in-memory set of non-library modules already added to `sources`,

@@ -187,7 +187,166 @@ fn diff_reports_added_and_changed_public_functions() {
 }
 
 #[test]
-fn ambiguous_retained_program_error_code_pinned() {
-    use mo_def::ErrorCode;
-    assert_eq!(ErrorCode::UpgradeAmbiguousProgram.number(), 1431);
+fn ambiguous_retained_program_returns_e1431() {
+    use mo_service::binary::bundle::{BundleFile, write_bundle};
+    use mo_service::binary::compile_context::write_compile_context;
+    use mo_service::binary::failure::{FailureContextStatus, FailureRecord, write_failure_record};
+    use mo_service::store::failures::CaptureStatus;
+    use mo_service::store::programs::{ActivationStatus, StoreActivation, StoredProgram};
+    use mo_service::store::{ServiceStore, StoreRecord, StoreRecordKind};
+    use mo_upgrade::offline::{ReplayOptions, run_replay};
+
+    let tmp =
+        std::env::temp_dir().join(format!("mo-upgrade-ambiguous-e1431-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).expect("create temp dir");
+    let db_path = tmp.join("service.sqlite");
+
+    // Two distinct source bundles sharing the same `(image, build, schema)` key.
+    let (bundle1, source1) = write_bundle(
+        "main.mo",
+        &[BundleFile {
+            path: "main.mo".to_string(),
+            content: b"module Main\n# version 1\n".to_vec(),
+        }],
+    )
+    .expect("bundle 1");
+    let (bundle2, source2) = write_bundle(
+        "main.mo",
+        &[BundleFile {
+            path: "main.mo".to_string(),
+            content: b"module Main\n# version 2\n".to_vec(),
+        }],
+    )
+    .expect("bundle 2");
+    assert_ne!(source1, source2);
+
+    let (context, context_digest) = write_compile_context("", &[], None).expect("compile context");
+    let shared_image = 42u64;
+    let shared_build = [0xaa; 32];
+    let shared_schema = [0xbb; 32];
+
+    let p1 = StoredProgram {
+        source: source1,
+        build: shared_build,
+        schema: shared_schema,
+        context_digest,
+        image: shared_image,
+        ordinal: 0,
+        bundle: bundle1,
+        context: context.clone(),
+    };
+    let p2 = StoredProgram {
+        source: source2,
+        build: shared_build,
+        schema: shared_schema,
+        context_digest,
+        image: shared_image,
+        ordinal: 1,
+        bundle: bundle2,
+        context,
+    };
+
+    let saved_state = b"MOSV\x01\x01\x00\x00\x00\x03\x05\x00\x00\x00\x00\x00\x00\x00".to_vec();
+    let snap0 = StoreRecord {
+        kind: StoreRecordKind::State,
+        sequence: 0,
+        image: shared_image,
+        bytes: saved_state.clone(),
+    };
+
+    {
+        let mut store = ServiceStore::open(Some(&db_path)).expect("open store");
+        store.record_program(&p1, &snap0).expect("record p1");
+        let act = StoreActivation {
+            previous: p1,
+            candidate: p2,
+            previous_state: snap0.clone(),
+            candidate_state: snap0,
+            migration: String::new(),
+            report_json: "{}".to_string(),
+        };
+        assert_eq!(store.activate(&act), ActivationStatus::Activated);
+
+        let frec = FailureRecord {
+            id: 1,
+            sequence: 0,
+            arrival: 1_700_000_000_000_000,
+            timer: false,
+            handler: 0,
+            name: "op".to_string(),
+            read_only: false,
+            arguments: Vec::new(),
+            signature_version: 1,
+            class: 0,
+            reason: "stop".to_string(),
+            limit: String::new(),
+            limit_value: 0,
+            function: 0,
+            file: 0,
+            start: 0,
+            end: 0,
+            work: 100,
+            heap: 1024,
+            stack: 1024,
+            depth: 1,
+            saved: 1024,
+            program: shared_image,
+            build: shared_build,
+            label: "mo 0.3.0".to_string(),
+            schema: shared_schema,
+            context_status: FailureContextStatus::Complete,
+            context: String::new(),
+        };
+        let fraw = write_failure_record(&frec).expect("encode failure");
+        let fail_state = StoreRecord {
+            kind: StoreRecordKind::FailureState,
+            sequence: 0,
+            image: shared_image,
+            bytes: saved_state,
+        };
+        let fail_msg = StoreRecord {
+            kind: StoreRecordKind::FailureMessage,
+            sequence: 0,
+            image: shared_image,
+            bytes: fraw,
+        };
+        assert_eq!(
+            store.capture_failure("stop", &fail_state, &fail_msg),
+            CaptureStatus::Ok(1)
+        );
+    }
+
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let opts = ReplayOptions {
+        file: None,
+        failure_id: 1,
+        data_dir: Some(&tmp),
+        artifact: None,
+        revised: None,
+        recover: false,
+        json: false,
+        library: None,
+        version: mo_def::MO_VERSION,
+        build_digest: shared_build,
+    };
+    let status = run_replay(&opts, &mut out, &mut err);
+    let _ = std::fs::remove_dir_all(&tmp);
+
+    let err_text = String::from_utf8_lossy(&err);
+    assert_ne!(
+        status,
+        0,
+        "expected E1431 refusal, stdout={}",
+        String::from_utf8_lossy(&out)
+    );
+    assert!(
+        err_text.contains("E1431"),
+        "expected E1431 UpgradeAmbiguousProgram, got stderr:\n{err_text}"
+    );
+    assert!(
+        err_text.contains("2 retained programs with different sources match failure 1"),
+        "unexpected stderr:\n{err_text}"
+    );
 }

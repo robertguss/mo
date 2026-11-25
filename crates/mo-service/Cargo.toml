@@ -6,30 +6,28 @@ license.workspace = true
 build = "build.rs"
 
 [dependencies]
-mo-base = { path = "../mo-base" }
-mo-bytecode = { path = "../mo-bytecode" }
-mo-check = { path = "../mo-check" }
-mo-codegen = { path = "../mo-codegen" }
-mo-core = { path = "../mo-core" }
-mo-def = { path = "../mo-def" }
-mo-heap = { path = "../mo-heap" }
-mo-host = { path = "../mo-host" }
-mo-lower = { path = "../mo-lower" }
-mo-prim = { path = "../mo-prim" }
-mo-syntax = { path = "../mo-syntax" }
-mo-vm = { path = "../mo-vm" }
-getrandom = "0.4"
-rusqlite = { version = "0.39", features = ["bundled", "hooks", "limits", "serialize", "blob"] }
-sha2 = { version = "0.11", features = ["zeroize"] }
-thiserror = "2"
-zeroize = "1.9"
+getrandom.workspace = true
+mo-base.workspace = true
+mo-bytecode.workspace = true
+mo-check.workspace = true
+mo-codegen.workspace = true
+mo-core.workspace = true
+mo-def.workspace = true
+mo-heap.workspace = true
+mo-host.workspace = true
+mo-lower.workspace = true
+mo-prim.workspace = true
+mo-syntax.workspace = true
+mo-vm.workspace = true
+rusqlite = { workspace = true, features = ["blob"] }
+sha2.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1", features = ["event", "fs", "net", "pipe", "process", "time"] }
-signal-hook = "0.3"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-landlock = "0.4"
+rustix = { workspace = true, features = ["event", "fs", "net", "pipe", "process", "time"] }
+signal-hook.workspace = true
 
 [lints]
 workspace = true

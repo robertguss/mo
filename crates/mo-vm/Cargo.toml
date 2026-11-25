@@ -5,11 +5,11 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-mo-def = { path = "../mo-def" }
-mo-bytecode = { path = "../mo-bytecode" }
-mo-heap = { path = "../mo-heap" }
-mo-prim = { path = "../mo-prim" }
-mo-host = { path = "../mo-host" }
+mo-bytecode.workspace = true
+mo-def.workspace = true
+mo-heap.workspace = true
+mo-host.workspace = true
+mo-prim.workspace = true
 
 [lints]
 workspace = true

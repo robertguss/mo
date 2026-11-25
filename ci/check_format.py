@@ -141,8 +141,10 @@ def audit(binary, tracked):
 
 def main():
     assert len(sys.argv) > 1, "usage: check_format.py MO..."
+    deleted = set(subprocess.check_output(
+        ["git", "ls-files", "-z", "--deleted"], cwd=ROOT).split(b"\0"))
     tracked = [pathlib.Path(p.decode()) for p in subprocess.check_output(
-        ["git", "ls-files", "-z"], cwd=ROOT).split(b"\0") if p]
+        ["git", "ls-files", "-z"], cwd=ROOT).split(b"\0") if p and p not in deleted]
     for binary in sys.argv[1:]:
         audit(pathlib.Path(binary).resolve(), tracked)
 

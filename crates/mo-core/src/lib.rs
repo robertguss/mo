@@ -12,10 +12,10 @@ pub mod metadata;
 #[cfg(test)]
 mod tests;
 
-pub use check::{check_program, check_program_services};
+pub use check::{check_program, check_program_services, check_program_with_scratch_limit};
 pub use codec::{
-    CorePrintError, detect_kind, parse_document, parse_program, parse_run, print_document,
-    print_program, print_run,
+    CorePrintError, detect_kind, parse_document, parse_document_with_scratch_limit, parse_program,
+    parse_run, print_document, print_program, print_run,
 };
 pub use ir::*;
 pub use metadata::metadata_valid;

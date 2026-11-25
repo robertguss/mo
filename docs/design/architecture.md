@@ -1,6 +1,6 @@
 # Mo Architecture
 
-This document describes the pure-Rust `mo` toolchain: its compiler pipeline, 18-crate workspace boundaries, shared contracts, Perceus memory model, bytecode verifier, virtual machine, service/API runtime, and testing strategy.
+This document describes the pure-Rust `mo` toolchain: its compiler pipeline, 17-crate workspace boundaries, shared contracts, Perceus memory model, bytecode verifier, virtual machine, service/API runtime, and testing strategy.
 
 The [Mo Language Reference](../reference/README.md) defines correct language behavior and wins wherever any two documents disagree. The bytecode format and load-time verification rules live in [`bytecode.md`](bytecode.md), the capability and sandbox threat model in [`sandbox-properties.md`](sandbox-properties.md), the core library map in [`library.md`](library.md), and the formal Core specification in [`formal/README.md`](../../formal/README.md).
 
@@ -45,7 +45,7 @@ Two additional definition files in `crates/mo-def/defs/` pin shared constants: `
 
 ## 2. Crate layout and dependency boundaries
 
-Mo is organized as an **18-crate Cargo workspace** (Rust edition 2024). Every crate and binary enforces `#![forbid(unsafe_code)]`, `[lints] workspace = true` (denying `unwrap_used`, `todo`, `unimplemented`, `dbg_macro`, `await_holding_lock`, and warnings), **zero OpenSSL** (`libssl`/`libcrypto`), and **zero system `libsqlite3`** dynamic linkage.
+Mo is organized as a **17-crate Cargo workspace** (Rust edition 2024). Every crate and binary enforces `#![forbid(unsafe_code)]`, `[lints] workspace = true` (denying `unwrap_used`, `todo`, `unimplemented`, `dbg_macro`, `await_holding_lock`, and warnings), **zero OpenSSL** (`libssl`/`libcrypto`), and **zero system `libsqlite3`** dynamic linkage.
 
 ```text
 crates/
@@ -65,8 +65,7 @@ crates/
   mo-service/   Durable MCP service loop, SQLite snapshot/log store, operator views, immutable export/fetch, live upgrades, multi-worker api server
   mo-upgrade/   mo diff (authority/wire/state/behavioral contract checks), offline mo replay & mo query, mo rehearse
   mo-cli/       Unified `mo` CLI (17 commands, embedded docs & lib/), plus test helper binaries
-  mo-fe/        Thin front-end differential driver (batch Core/format/check verification against Bison and Lean)
-  mo-rt/        Thin runtime driver (`verify`, `run`, `test` directly on `.bc` files)
+  mo-fe/        Thin differential driver (Core execution, format, and check verification against Bison and Lean)
 
 lib/            Standard library written in Mo (embedded into `mo`), including `lib/arvo/` web framework
 runtime/        Embedded Mo HTTP/MCP protocol and operator-view modules compiled into `mo-service`
@@ -178,7 +177,7 @@ Every check is orchestrated by [`ci/check.sh`](../../ci/check.sh) in six indepen
 
 | Group | Command | What it verifies |
 | --- | --- | --- |
-| `rust` | `bash ci/check.sh rust` | `cargo fmt`, `cargo clippy -- -D warnings`, all workspace unit/integration & doc tests, `rustdoc -D warnings`, `#![forbid(unsafe_code)]` audit, `ldd` dynamic linkage audit (zero OpenSSL, zero system `libsqlite3`), release builds, and Rust VM/bytecode fuzz smoke tests. |
+| `rust` | `bash ci/check.sh rust` | `cargo fmt`, `cargo clippy -- -D warnings`, all workspace unit/integration & doc tests (including 48-directory `fuzz/corpus/` replay in `crates/mo-cli/tests/corpus_replay.rs` and Linux child confinement tests in `crates/mo-cli/tests/confinement_tests.rs`), `rustdoc -D warnings`, `#![forbid(unsafe_code)]` audit, `ldd` dynamic linkage audit (zero OpenSSL, zero system `libsqlite3`), release builds, and Rust VM/bytecode fuzz smoke tests. |
 | `drivers` | `bash ci/check.sh drivers` | Black-box CLI goldens & flag matrix (`ci/check_cli.py`), `docs/agent-guide.md` claim verification (`ci/cli_guide.py`), reference example execution (`ci/check_reference_examples.py`), golden corpus (`ci/check_golden.py`), full error-code coverage (`ci/check_errors.py`), formatter idempotence on every tracked `.mo` file (`ci/check_format.py`), `lib/`, `tools/`, and `services/` tests, crypto cross-check against Python stdlib, live HTTP/TLS/service/upgrade/fetch/offline/kill-loop tests, and `< 0.1 s` check-time budget. |
 | `static` | `bash ci/check.sh static` | Executable Bison grammar over all corpora (`make -C grammar grammar`), `docs/design/library.md` vs. `prims.def`/`hostops.def`/`ops.def` (`ci/library_map.sh`), Zed & Cursor/VS Code editor grammars (`ci/check_editors.py`), and reference conformance inventory (`ci/check_conformance.py`). |
 | `lean` | `bash ci/check.sh lean` | Lean 4 `MoCore` build and proof checks, pinned-axiom audit (`ci/check_lean_axioms.sh`), Core text fixture parity, defect-replay parity, and pure-Rust vs. Lean Core differential testing. |

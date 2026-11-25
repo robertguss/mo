@@ -405,6 +405,7 @@ pub fn run_serve_service(
             } else {
                 cand_ctx_input
             },
+            children == UpgradeChildren::Confined,
             opts.build_digest,
             next_ordinal,
         )
@@ -1018,6 +1019,7 @@ fn run_startup_check_child(
     old_bundle: Option<&[u8]>,
     migration: Option<&str>,
     context: Option<&[u8]>,
+    confine: bool,
     build_digest: [u8; 32],
     ordinal: u64,
 ) -> Result<(), (u16, &'static str, String)> {
@@ -1029,6 +1031,7 @@ fn run_startup_check_child(
         migration,
         context,
         true,
+        confine,
         build_digest,
         ordinal,
     )

@@ -309,9 +309,82 @@ fn embedded_protocol_image_compiles_and_initializes() {
 }
 
 #[test]
-fn upgrade_protocol_and_compile_error_codes_pinned() {
+fn upgrade_protocol_and_compile_error_codes_exercised() {
     use mo_def::ErrorCode;
-    assert_eq!(ErrorCode::UpgradeStaleBase.number(), 1416);
-    assert_eq!(ErrorCode::UpgradeCompileBudget.number(), 1420);
-    assert_eq!(ErrorCode::UpgradeUnconfined.number(), 1438);
+    use mo_service::upgrade::compile::{CompileJob, CompilePoll};
+    use mo_service::upgrade::{BaseCheck, UpgradeChildren, UpgradeReport};
+    use std::time::{Duration, Instant};
+
+    // 1. E1416 (UpgradeStaleBase): stale base refused naming the active digest.
+    let active = [0x11u8; 32];
+    let wrong_base = [0x22u8; 32];
+    let cand = [0x33u8; 32];
+    let mut rep_stale = UpgradeReport::default();
+    assert_eq!(
+        rep_stale.check_base(&active, &wrong_base, &cand),
+        BaseCheck::StaleBase
+    );
+    assert_eq!(rep_stale.code, ErrorCode::UpgradeStaleBase as u16);
+    assert_eq!(rep_stale.class, "stale_base");
+    let stale_json = rep_stale.to_json(None);
+    assert!(stale_json.contains("\"code\":\"E1416\""), "{stale_json}");
+    assert!(
+        stale_json.contains(&hex_encode(&active)),
+        "expected active digest in {stale_json}"
+    );
+
+    // Retry of already-active candidate returns already_active (not E1416).
+    let mut rep_active = UpgradeReport::default();
+    assert_eq!(
+        rep_active.check_base(&active, &wrong_base, &active),
+        BaseCheck::AlreadyActive
+    );
+    assert!(rep_active.already_active);
+
+    // 2. E1438 (UpgradeUnconfined): Refused children mode rejects with confinement diagnostic.
+    let mut rep_unconf = UpgradeReport::default();
+    assert!(!rep_unconf.check_children(UpgradeChildren::Refused));
+    assert_eq!(rep_unconf.code, ErrorCode::UpgradeUnconfined as u16);
+    assert_eq!(rep_unconf.class, "confinement");
+    let unconf_json = rep_unconf.to_json(None);
+    assert!(unconf_json.contains("\"code\":\"E1438\""), "{unconf_json}");
+    assert!(unconf_json.contains("--unconfined"), "{unconf_json}");
+
+    // 3. E1420 (UpgradeCompileBudget): real CompileJob wall-clock budget exhaustion.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("mo-svc-budget-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let script = dir.join("hang.sh");
+        std::fs::write(&script, "#!/bin/sh\nwhile :; do :; done\n").expect("write hang.sh");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700))
+            .expect("chmod hang.sh");
+        let (bundle, _) = write_bundle(
+            "main.mo",
+            &[BundleFile {
+                path: "main.mo".to_string(),
+                content: b"module Main\n".to_vec(),
+            }],
+        )
+        .expect("write bundle");
+        let mut job = CompileJob::start(
+            &script, None, bundle, None, None, None, false, false, [0x44; 32], 1,
+        )
+        .expect("start hang job");
+        job.set_deadline_for_test(Instant::now() + Duration::from_millis(80));
+        let err = loop {
+            match job.poll() {
+                CompilePoll::Running => std::thread::sleep(Duration::from_millis(10)),
+                CompilePoll::Finished(res) => match *res {
+                    Ok(_) => unreachable!("expected E1420 compile budget refusal"),
+                    Err(e) => break e,
+                },
+            }
+        };
+        assert_eq!(err.0, ErrorCode::UpgradeCompileBudget as u16);
+        assert_eq!(err.1, "budget");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

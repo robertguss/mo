@@ -5,11 +5,11 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-mo-def = { path = "../mo-def" }
-thiserror = "2"
+mo-def.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
-mo-prim = { path = "../mo-prim" }
+mo-prim.workspace = true
 
 [lints]
 workspace = true

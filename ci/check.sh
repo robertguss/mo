@@ -134,8 +134,8 @@ ensure_rust_binaries() {
 		missing "cargo is not installed"
 		return 1
 	fi
-	step "Build pure-Rust release binaries (mo, mo-fe, mo-rt, mo-test-cli, mo-test-deadline)"
-	cargo build --release --bin mo --bin mo-fe --bin mo-rt --bin mo-test-cli --bin mo-test-deadline
+	step "Build pure-Rust release binaries (mo, mo-fe, mo-test-cli, mo-test-deadline)"
+	cargo build --release --bin mo --bin mo-fe --bin mo-test-cli --bin mo-test-deadline
 	built_rust=1
 	return 0
 }
@@ -309,9 +309,12 @@ if have lake; then
 		if ensure_rust_binaries && [[ -x "$mo_bin" ]]; then
 			later "Defect replays: mo replay and Lean stop the same way on hand-written handler inputs" \
 				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_offline_core.py "$mo_bin"
+			later "Core differential: generated Core programs give the same outcome in Lean and the VM (target/release/mo-fe)" \
+				env PYTHONDONTWRITEBYTECODE=1 MO_CORE_DIFF="${MO_CORE_DIFF:-200}" \
+				python3 ci/check_core_differential.py target/release/mo-fe
 			later "Pure-Rust <-> Lean MoCore differential parity (fixtures, Core checker, generated Core, lowering)" \
 				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_rust_frontend.py \
-				--mo "$mo_bin" --mo-fe target/release/mo-fe --mo-rt target/release/mo-rt \
+				--mo "$mo_bin" --mo-fe target/release/mo-fe \
 				--skip-build --require-lean --lean-only
 			report
 		else

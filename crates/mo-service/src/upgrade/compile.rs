@@ -1,8 +1,12 @@
 //! Safe Landlock confinement check + child process compilation for live upgrades
 //! (`src/host/confine.c`, `src/host/compile.c`, and `mo emit --bundle` parity).
 
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -12,7 +16,10 @@ use mo_base::{
     render_diagnostic_default,
 };
 use mo_def::ErrorCode;
-use mo_def::limits::{MO_LIMIT_CHECK_WALL_US, MO_LIMIT_UPGRADE_COMPILE_WALL_US};
+use mo_def::limits::{
+    MO_LIMIT_CHECK_WALL_US, MO_LIMIT_UPGRADE_COMPILE_CPU_SECONDS, MO_LIMIT_UPGRADE_COMPILE_MEMORY,
+    MO_LIMIT_UPGRADE_COMPILE_WALL_US,
+};
 
 const UNICODE_METRICS: DisplayMetrics = DisplayMetrics {
     next_grapheme: mo_prim::unicode16::next_grapheme_bytes,
@@ -44,71 +51,43 @@ use crate::store::programs::StoredProgram;
 use super::bundle::compile_bundle;
 use super::{UpgradeImage, UpgradeReport, load_service_image};
 
-/// Returns `true` if the running kernel supports Linux Landlock ABI >= 3
-/// (`src/host/confine.c:mo_compile_can_confine`).
+/// Returns `true` if the running kernel supports Linux Landlock ABI >= 3 and Seccomp
+/// `SECCOMP_RET_KILL_PROCESS` on a supported architecture.
 #[must_use]
 pub fn can_confine() -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        use landlock::{ABI, Access, AccessFs, Ruleset, RulesetAttr};
-        Ruleset::default()
-            .handle_access(AccessFs::from_all(ABI::V3))
-            .and_then(Ruleset::create)
-            .is_ok()
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        false
-    }
+    mo_host::confine::can_confine()
 }
 
-/// Applies Landlock filesystem confinement to the current child process when invoked for
-/// `--bundle` compilation on Linux (zero `unsafe`).
-pub fn confine_self_for_bundle(work_dir: &Path, library: Option<&Path>) {
-    #[cfg(target_os = "linux")]
-    {
-        use landlock::{
-            ABI, Access, AccessFs, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr,
-        };
-        let abi = ABI::V3;
-        let Ok(ruleset) = Ruleset::default()
-            .handle_access(AccessFs::from_all(abi))
-            .and_then(Ruleset::create)
-        else {
-            return;
-        };
-        let read_only = AccessFs::from_read(abi);
-        let read_write = AccessFs::from_all(abi);
-        let mut created = ruleset;
-        for sys in ["/usr", "/lib", "/lib64", "/etc/ld.so.cache", "/dev/null"] {
-            if let Ok(fd) = PathFd::new(sys) {
-                if let Ok(next) = created.add_rule(PathBeneath::new(fd, read_only)) {
-                    created = next;
-                } else {
-                    return;
+fn create_private_work_dir() -> Result<PathBuf, String> {
+    let base = std::env::temp_dir();
+    let mut rnd = [0u8; 8];
+    for _ in 0..32 {
+        getrandom::fill(&mut rnd).map_err(|e| format!("entropy for compile dir: {e}"))?;
+        let name = format!("mo-upgrade-{:016x}", u64::from_le_bytes(rnd));
+        let candidate = base.join(name);
+        match fs::create_dir(&candidate) {
+            Ok(()) => {
+                #[cfg(unix)]
+                {
+                    fs::set_permissions(&candidate, fs::Permissions::from_mode(0o700))
+                        .map_err(|e| format!("chmod compile dir: {e}"))?;
                 }
+                return Ok(candidate);
             }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("create compile dir: {e}")),
         }
-        if let Some(lib_dir) = library
-            && let Ok(fd) = PathFd::new(lib_dir)
-        {
-            match created.add_rule(PathBeneath::new(fd, read_only)) {
-                Ok(next) => created = next,
-                Err(_) => return,
-            }
-        }
-        if let Ok(fd) = PathFd::new(work_dir) {
-            match created.add_rule(PathBeneath::new(fd, read_write)) {
-                Ok(next) => created = next,
-                Err(_) => return,
-            }
-        }
-        let _ = created.restrict_self();
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (work_dir, library);
-    }
+    Err("create compile dir: exhausted unique directory names".to_string())
+}
+
+fn create_private_diag_file(path: &Path) -> Result<fs::File, String> {
+    let mut opts = OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    opts.mode(0o600);
+    opts.open(path)
+        .map_err(|e| format!("create diag file {}: {e}", path.display()))
 }
 
 /// Nonblocking background compilation (+ optional door-check) job spawned by live upgrade
@@ -127,6 +106,7 @@ pub struct CompileJob {
     child: Child,
     deadline: Instant,
     run_checks: bool,
+    confine: bool,
     checking: bool,
     bundle: Vec<u8>,
     build_digest: [u8; 32],
@@ -142,11 +122,13 @@ pub enum CompilePoll {
 }
 
 impl CompileJob {
-    /// Starts an asynchronous child compile (`<exe> emit --bundle ...`) in a private temp dir,
-    /// followed by `<exe> test --bundle ...` when `run_checks` is `true`.
+    /// Starts an asynchronous child compile (`<exe> emit --bundle ...`) in a private `0700` temp
+    /// dir with cleared environment, followed by `<exe> test --bundle ...` when `run_checks` is
+    /// `true`. When `confine` is `true`, both child stages enforce Landlock + Seccomp-BPF +
+    /// `RLIMIT_AS`/`RLIMIT_CPU`/`RLIMIT_CORE` fail-closed.
     #[expect(
         clippy::too_many_arguments,
-        reason = "spawning a compile child requires executable, library, bundle, old/migration/context inputs, check flag, and identity"
+        reason = "spawning a compile child requires executable, library, bundle, old/migration/context inputs, check/confine flags, and identity"
     )]
     pub fn start(
         executable: &Path,
@@ -156,14 +138,11 @@ impl CompileJob {
         migration: Option<&str>,
         context: Option<&[u8]>,
         run_checks: bool,
+        confine: bool,
         build_digest: [u8; 32],
         ordinal: u64,
     ) -> Result<Self, String> {
-        let mut rnd = [0u8; 8];
-        let _ = getrandom::fill(&mut rnd);
-        let name = format!("mo-upgrade-{:016x}", u64::from_le_bytes(rnd));
-        let work_dir = std::env::temp_dir().join(name);
-        fs::create_dir_all(&work_dir).map_err(|e| format!("create compile dir: {e}"))?;
+        let work_dir = create_private_work_dir()?;
 
         let source_path = work_dir.join("candidate.mosb");
         fs::write(&source_path, &bundle).map_err(|e| format!("write candidate bundle: {e}"))?;
@@ -178,7 +157,11 @@ impl CompileJob {
             .arg(&source_path)
             .arg("--bundle")
             .arg("-o")
-            .arg(&output_bc);
+            .arg(&output_bc)
+            .arg("--rlimit-child");
+        if confine {
+            cmd.arg("--confine-child");
+        }
         if let Some(lib) = library {
             cmd.arg("--lib").arg(lib);
         }
@@ -201,15 +184,17 @@ impl CompileJob {
         } else {
             None
         };
-        let err_handle =
-            fs::File::create(&diag_file).map_err(|e| format!("create diag file: {e}"))?;
-        cmd.stdin(Stdio::null())
+        let err_handle = create_private_diag_file(&diag_file)?;
+        cmd.current_dir(&work_dir)
+            .env_clear()
+            .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::from(err_handle));
 
         let child = cmd
             .spawn()
             .map_err(|e| format!("spawn compiler child: {e}"))?;
+        mo_host::confine::set_child_process_group(child.id());
         let deadline = Instant::now() + Duration::from_micros(MO_LIMIT_UPGRADE_COMPILE_WALL_US);
         Ok(Self {
             work_dir,
@@ -225,6 +210,7 @@ impl CompileJob {
             child,
             deadline,
             run_checks,
+            confine,
             checking: false,
             bundle,
             build_digest,
@@ -232,9 +218,26 @@ impl CompileJob {
         })
     }
 
+    /// Overrides the active stage wall-clock deadline (used by compile-budget tests).
+    pub fn set_deadline_for_test(&mut self, deadline: Instant) {
+        self.deadline = deadline;
+    }
+
+    /// Returns the diagnostics log file path of the first compile stage.
+    #[must_use]
+    pub fn diag_file_path(&self) -> &Path {
+        &self.diag_file
+    }
+
     fn start_check_stage(&mut self) -> Result<(), String> {
         let mut cmd = Command::new(&self.executable);
-        cmd.arg("test").arg(&self.source_path).arg("--bundle");
+        cmd.arg("test")
+            .arg(&self.source_path)
+            .arg("--bundle")
+            .arg("--rlimit-child");
+        if self.confine {
+            cmd.arg("--confine-child");
+        }
         if let Some(ref lib) = self.library {
             cmd.arg("--lib").arg(lib);
         }
@@ -244,12 +247,14 @@ impl CompileJob {
         if let Some(ref ctx_p) = self.ctx_path {
             cmd.arg("--context").arg(ctx_p);
         }
-        let err_handle = fs::File::create(&self.check_diag_file)
-            .map_err(|e| format!("create check diag file: {e}"))?;
-        cmd.stdin(Stdio::null())
+        let err_handle = create_private_diag_file(&self.check_diag_file)?;
+        cmd.current_dir(&self.work_dir)
+            .env_clear()
+            .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::from(err_handle));
         self.child = cmd.spawn().map_err(|e| format!("spawn check child: {e}"))?;
+        mo_host::confine::set_child_process_group(self.child.id());
         self.checking = true;
         self.deadline = Instant::now() + Duration::from_micros(MO_LIMIT_CHECK_WALL_US);
         Ok(())
@@ -260,6 +265,7 @@ impl CompileJob {
         match self.child.try_wait() {
             Ok(None) => {
                 if Instant::now() >= self.deadline {
+                    mo_host::confine::kill_child_tree(self.child.id());
                     let _ = self.child.kill();
                     let _ = self.child.wait();
                     return if self.checking {
@@ -280,6 +286,25 @@ impl CompileJob {
             }
             Ok(Some(status)) => {
                 if !status.success() {
+                    #[cfg(unix)]
+                    let sig_xcpu = status.signal() == Some(24);
+                    #[cfg(not(unix))]
+                    let sig_xcpu = false;
+                    if sig_xcpu {
+                        return if self.checking {
+                            CompilePoll::Finished(Box::new(Err((
+                                ErrorCode::PlanUnfinished as u16,
+                                "check",
+                                "the checks did not finish inside their limits".to_string(),
+                            ))))
+                        } else {
+                            CompilePoll::Finished(Box::new(Err((
+                                ErrorCode::UpgradeCompileBudget as u16,
+                                "budget",
+                                "candidate compilation exceeded its time limit".to_string(),
+                            ))))
+                        };
+                    }
                     let diag_path = if self.checking {
                         &self.check_diag_file
                     } else {
@@ -404,8 +429,9 @@ impl CompileJob {
         }
     }
 
-    /// Kills and reaps the child if still running.
+    /// Kills and reaps the child (and its process group) if still running.
     pub fn cancel(&mut self) {
+        mo_host::confine::kill_child_tree(self.child.id());
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -433,10 +459,46 @@ pub fn execute_emit_bundle(
     context_out_path: Option<&Path>,
     library: Option<&Path>,
     build_digest: [u8; 32],
+    rlimit_child: bool,
+    confine_child: bool,
     errors: &mut dyn Write,
 ) -> i32 {
-    if let Some(parent) = output_path.parent() {
-        confine_self_for_bundle(parent, library);
+    if rlimit_child || confine_child {
+        mo_host::confine::enter_own_process_group();
+    }
+    if rlimit_child
+        && let Err(step) = mo_host::confine::apply_child_rlimits(
+            MO_LIMIT_UPGRADE_COMPILE_MEMORY,
+            MO_LIMIT_UPGRADE_COMPILE_CPU_SECONDS,
+        )
+    {
+        let _ = writeln!(errors, "mo: cannot confine the child: {step}");
+        let _ = errors.flush();
+        return 125;
+    }
+    if confine_child {
+        let exe = std::env::current_exe()
+            .ok()
+            .map(|p| fs::canonicalize(&p).unwrap_or(p))
+            .unwrap_or_else(|| PathBuf::from("/proc/self/exe"));
+        let work_dir = output_path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let mut read_files: Vec<&Path> = vec![bundle_path];
+        if let Some(p) = old_bundle_path {
+            read_files.push(p);
+        }
+        if let Some(p) = context_path {
+            read_files.push(p);
+        }
+        if let Err(step) =
+            mo_host::confine::confine_compile_child(&exe, work_dir, library, &read_files)
+        {
+            let _ = writeln!(errors, "mo: cannot confine the child: {step}");
+            let _ = errors.flush();
+            return 125;
+        }
     }
     let emit_bad_bundle = |err: &mut dyn Write| {
         let s = SourceMap::new();

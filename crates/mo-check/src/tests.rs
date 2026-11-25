@@ -2114,9 +2114,119 @@ fn services_fixes_promises_queries_migrations_and_apis() {
 }
 
 #[test]
-fn check_internal_limit_error_codes_pinned() {
-    assert_eq!(ErrorCode::LibraryTooBig.number(), 1059);
-    assert_eq!(ErrorCode::TooManyImports.number(), 1060);
-    assert_eq!(ErrorCode::TooManyProgramImports.number(), 1100);
-    assert_eq!(ErrorCode::CheckProgramWork.number(), 1107);
+fn check_internal_limit_error_codes_exercised() {
+    use mo_def::limits::MO_LIMIT_PROGRAM_CHECK_WORK;
+
+    // 1. E1059 (LibraryTooBig): real library folder walk exceeding entry limit.
+    let lib_dir = std::env::temp_dir().join(format!("mo-check-lib-limit-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&lib_dir);
+    std::fs::create_dir_all(&lib_dir).unwrap();
+    for i in 0..4 {
+        std::fs::write(lib_dir.join(format!("f{i}.txt")), b"").unwrap();
+    }
+    let mut sources = SourceMap::new();
+    sources
+        .add_bytes(
+            b"main.mo".to_vec(),
+            b"module Main\nfn main()\nend\n".to_vec(),
+        )
+        .unwrap();
+    let opts = LoadOptions {
+        library: LibraryMode::Directory(lib_dir.clone()),
+        ..LoadOptions::default()
+    };
+    let mut diags = DiagBag::new();
+    assert!(
+        crate::load::load_bundle_with_library_entry_limit(&mut sources, &opts, 3, &mut diags)
+            .is_none()
+    );
+    assert!(
+        diags
+            .items()
+            .iter()
+            .any(|d| d.code == ErrorCode::LibraryTooBig),
+        "expected E1059 LibraryTooBig, got {:?}",
+        diags.items()
+    );
+    let _ = std::fs::remove_dir_all(&lib_dir);
+
+    // 2. E1060 (TooManyImports) & E1100 (TooManyProgramImports): real import expansion.
+    let mut sources = SourceMap::new();
+    sources
+        .add_bytes(
+            b"main.mo".to_vec(),
+            b"module Main\nuse A\nuse B\nfn main() : Int\n  A.fa() + B.fb()\nend\n".to_vec(),
+        )
+        .unwrap();
+    sources
+        .add_bytes(
+            b"a.mo".to_vec(),
+            b"module A\nexpose fa\nuse Lib{x1, x2, x3}\nfn fa() : Int\n  x1 + x2 + x3\nend\n"
+                .to_vec(),
+        )
+        .unwrap();
+    sources
+        .add_bytes(
+            b"b.mo".to_vec(),
+            b"module B\nexpose fb\nuse Lib{x1, x2, x3}\nfn fb() : Int\n  x1 + x2 + x3\nend\n"
+                .to_vec(),
+        )
+        .unwrap();
+    sources
+        .add_bytes(
+            b"lib.mo".to_vec(),
+            b"module Lib\nexpose x1, x2, x3\nx1 = 1\nx2 = 2\nx3 = 3\n".to_vec(),
+        )
+        .unwrap();
+    let mut load_diags = DiagBag::new();
+    let no_lib = LoadOptions {
+        library: LibraryMode::None,
+        ..LoadOptions::default()
+    };
+    let set = crate::load_bundle_with_library(&mut sources, &no_lib, &mut load_diags)
+        .unwrap_or_else(|| unreachable!("load 4-module bundle failed: {:?}", load_diags.items()));
+
+    let mut d_mod = DiagBag::new();
+    assert!(crate::modules::resolve_modules_with_limits(&set, 2, 100, &mut d_mod).is_none());
+    assert!(
+        d_mod
+            .items()
+            .iter()
+            .any(|d| d.code == ErrorCode::TooManyImports),
+        "expected E1060 TooManyImports, got {:?}",
+        d_mod.items()
+    );
+
+    let mut d_prog = DiagBag::new();
+    assert!(crate::modules::resolve_modules_with_limits(&set, 10, 4, &mut d_prog).is_none());
+    assert!(
+        d_prog
+            .items()
+            .iter()
+            .any(|d| d.code == ErrorCode::TooManyProgramImports),
+        "expected E1100 TooManyProgramImports, got {:?}",
+        d_prog.items()
+    );
+
+    // 3. E1107 (CheckProgramWork): real check_imports guard when work reaches budget.
+    let mut full_diags = DiagBag::new();
+    let interfaces = resolve_modules(&set, &mut full_diags).expect("resolve modules");
+    let mut signatures = crate::prepare_available_signatures(&set, &interfaces, &mut full_diags)
+        .expect("prepare signatures");
+    assert!(!signatures.imports.is_empty());
+    signatures.work = MO_LIMIT_PROGRAM_CHECK_WORK;
+    let mut work_diags = DiagBag::new();
+    assert!(!crate::program::check_imports(
+        &set,
+        &mut signatures,
+        &mut work_diags
+    ));
+    assert!(
+        work_diags
+            .items()
+            .iter()
+            .any(|d| d.code == ErrorCode::CheckProgramWork),
+        "expected E1107 CheckProgramWork, got {:?}",
+        work_diags.items()
+    );
 }

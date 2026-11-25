@@ -60,7 +60,13 @@ fn run() -> BuildResult<()> {
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").map_err(|e| format!("OUT_DIR: {e}"))?);
     let mut out = String::new();
-    writeln!(&mut out, "pub const MO_VERSION: &str = {mo_version:?};\n").map_err(fmt_err)?;
+    let mo_version_banner = format!("mo {mo_version}");
+    writeln!(&mut out, "pub const MO_VERSION: &str = {mo_version:?};").map_err(fmt_err)?;
+    writeln!(
+        &mut out,
+        "pub const MO_VERSION_BANNER: &str = {mo_version_banner:?};\n"
+    )
+    .map_err(fmt_err)?;
     emit_limits(&mut out, &limits)?;
     emit_opcodes(&mut out, &opcodes)?;
     emit_prims(&mut out, &prims)?;

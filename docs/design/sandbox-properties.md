@@ -14,7 +14,7 @@ The untrusted input is a **bytecode file** (`.bc`, whether compiled locally or u
 2. reaching the outside world except through capabilities explicitly granted to it; or
 3. exceeding its configured stack, call-depth, heap, or work budgets.
 
-**Trusted computing base (TCB):** The pure-Rust runtime crates—`mo-def`, `mo-bytecode`, `mo-heap`, `mo-prim`, `mo-host`, `mo-vm`, and `mo-service`—plus the Rust standard library and their audited third-party dependencies (`rustls`/`ring`, RustCrypto `sha2`/`hmac`/`aes-gcm`/`scrypt`/`subtle`, `rustix`, `landlock`, and bundled SQLite via `rusqlite`). Every crate in `crates/` enforces `#![forbid(unsafe_code)]`, with zero OpenSSL and zero system `libsqlite3` dynamic linkage (audited in `ci/check_rust_frontend.py --audit-only`).
+**Trusted computing base (TCB):** The pure-Rust runtime crates—`mo-def`, `mo-bytecode`, `mo-heap`, `mo-prim`, `mo-host`, `mo-vm`, and `mo-service`—plus the Rust standard library and their audited third-party dependencies (`rustls`/`ring`, RustCrypto `sha2`/`hmac`/`aes-gcm`/`scrypt`/`subtle`, `rustix`, `landlock`, `seccompiler`, and bundled SQLite via `rusqlite`). Every crate in `crates/` enforces `#![forbid(unsafe_code)]`, with zero OpenSSL and zero system `libsqlite3` dynamic linkage (audited in `ci/check_rust_frontend.py --audit-only`).
 
 The compiler front end (`mo-syntax`, `mo-check`, `mo-lower`, `mo-core`, `mo-codegen`) is **not** trusted by the VM for memory or capability safety: `mo-vm` never sees source or Core, and `mo-bytecode` verifies every loaded image regardless of what produced it.
 
@@ -26,9 +26,9 @@ The compiler front end (`mo-syntax`, `mo-check`, `mo-lower`, `mo-core`, `mo-code
 
 | Evidence | What it is | How it runs |
 | --- | --- | --- |
-| **Safe Rust (`#![forbid(unsafe_code)]`)** | Compiler-enforced memory safety across all 18 workspace crates; linkage audit forbids OpenSSL and system `libsqlite3`. | Every `cargo build` and `bash ci/check.sh rust` |
+| **Safe Rust (`#![forbid(unsafe_code)]`)** | Compiler-enforced memory safety across all 17 workspace crates; linkage audit forbids OpenSSL and system `libsqlite3`. | Every `cargo build` and `bash ci/check.sh rust` |
 | **Load-time verifier** | `crates/mo-bytecode/src/{read,validate,verify}.rs`: refuses malformed, ill-typed, ownership-invalid, or spec-leaking bytecode before execution. | Every image load |
-| **Workspace tests** | Rust unit and integration tests across `crates/*/src/*` and `crates/*/tests/*`, including VM/verifier property and fuzz-smoke tests. | `bash ci/check.sh rust` |
+| **Workspace tests** | Rust unit and integration tests across `crates/*/src/*` and `crates/*/tests/*`, including 48-directory `fuzz/corpus/` replay (`corpus_replay.rs`), Linux Landlock/Seccomp/rlimit child confinement tests (`confinement_tests.rs`), and VM/verifier property and fuzz-smoke tests. | `bash ci/check.sh rust` |
 | **Black-box drivers** | End-to-end tests of CLI, host confinement, live HTTP/TLS, SQLite, Command, services, upgrades, fetch, offline replay, and SIGKILL recovery. | `bash ci/check.sh drivers` |
 | **Lean 4 formal proofs** | Mechanized type-safety, saved-value round-trip, and replay-verdict theorems (`formal/`), plus Rust-vs-Lean Core differential tests. | `bash ci/check.sh lean` |
 | **TLA+ models** | Finite state-machine verification of export generations, failure capture, and live upgrade swaps with negative controls (`models/`). | `bash ci/check.sh models` |
@@ -147,7 +147,7 @@ The compiler front end (`mo-syntax`, `mo-check`, `mo-lower`, `mo-core`, `mo-code
 
 These are explicitly not guaranteed today:
 
-1. **Bundled C dependency (SQLite).** While all 18 Mo crates enforce `#![forbid(unsafe_code)]` with zero OpenSSL, SQLite itself is C code compiled into `rusqlite` (`bundled` feature), and `ring` contains assembly/C cryptographic primitives.
+1. **Bundled C dependency (SQLite).** While all 17 Mo crates enforce `#![forbid(unsafe_code)]` with zero OpenSSL, SQLite itself is C code compiled into `rusqlite` (`bundled` feature), and `ring` contains assembly/C cryptographic primitives.
 2. **OS-level confinement is child-only and Linux-specific.** Landlock + seccomp confine `Command` subprocesses and live-upgrade compiler children on Linux kernels with Landlock ABI 3+. On macOS and other non-Landlock hosts, `Command` enforces `allow_programs`, working-directory confinement, scrubbed environments, closed descriptors, and process-group timeouts without a kernel filesystem/syscall sandbox. `mo run`, `mo test`, and `mo serve` parent processes rely on Mo's capability boundary and safe-Rust runtime rather than OS sandboxing.
 3. **No default CPU/time limit on `mo run`.** See P9.
 4. **Verified bytecode, not verified compiler.** A bug in `mo-check`, `mo-lower`, or `mo-codegen` can produce verified bytecode that miscompiles the source semantics (a correctness bug, not a sandbox escape); the Lean differential suite and golden corpus guard against this.

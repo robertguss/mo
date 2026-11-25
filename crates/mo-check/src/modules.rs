@@ -253,6 +253,8 @@ struct Resolver<'a, 'd> {
     failed: bool,
     errors: bool,
     import_limit: bool,
+    module_imports_limit: u64,
+    program_imports_limit: u64,
 }
 
 impl<'a, 'd> Resolver<'a, 'd> {
@@ -905,7 +907,7 @@ impl<'a, 'd> Resolver<'a, 'd> {
                 }
 
                 let added = 1 + if insides { case_count } else { 0 };
-                if added > MO_LIMIT_MODULE_IMPORTS.saturating_sub(import_count) {
+                if added > self.module_imports_limit.saturating_sub(import_count) {
                     let _ = self.error(
                         ErrorCode::TooManyImports,
                         node_span,
@@ -916,7 +918,7 @@ impl<'a, 'd> Resolver<'a, 'd> {
                     );
                     return false;
                 }
-                if added > MO_LIMIT_PROGRAM_IMPORTS.saturating_sub(self.expanded) {
+                if added > self.program_imports_limit.saturating_sub(self.expanded) {
                     self.import_limit = true;
                     let _ = self.error(
                         ErrorCode::TooManyProgramImports,
@@ -1049,6 +1051,30 @@ impl<'a, 'd> Resolver<'a, 'd> {
 /// (`src/check/modules.c:mo_resolve_modules`).
 #[must_use]
 pub fn resolve_modules(set: &ModuleSet, diags: &mut DiagBag) -> Option<ModuleInterfaces> {
+    resolve_modules_inner(
+        set,
+        diags,
+        MO_LIMIT_MODULE_IMPORTS,
+        MO_LIMIT_PROGRAM_IMPORTS,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn resolve_modules_with_limits(
+    set: &ModuleSet,
+    module_imports_limit: u64,
+    program_imports_limit: u64,
+    diags: &mut DiagBag,
+) -> Option<ModuleInterfaces> {
+    resolve_modules_inner(set, diags, module_imports_limit, program_imports_limit)
+}
+
+fn resolve_modules_inner(
+    set: &ModuleSet,
+    diags: &mut DiagBag,
+    module_imports_limit: u64,
+    program_imports_limit: u64,
+) -> Option<ModuleInterfaces> {
     if set.is_empty() {
         return None;
     }
@@ -1079,6 +1105,8 @@ pub fn resolve_modules(set: &ModuleSet, diags: &mut DiagBag) -> Option<ModuleInt
         failed: false,
         errors: false,
         import_limit: false,
+        module_imports_limit,
+        program_imports_limit,
     };
 
     for i in 0..count {

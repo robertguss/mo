@@ -70,6 +70,7 @@ struct Allocation<'a> {
     clear: u32,
     has_joins: bool,
     work: u64,
+    work_limit: u64,
 }
 
 const fn is_terminal(op: Opcode) -> bool {
@@ -85,7 +86,7 @@ const fn is_transfer(op: Opcode) -> bool {
 
 impl<'a> Allocation<'a> {
     fn charge(&mut self, work: u64) -> Result<(), ErrorCode> {
-        if work > MO_LIMIT_CODEGEN_REGISTER_WORK - self.work {
+        if work > self.work_limit - self.work {
             return Err(ErrorCode::CodegenRegisterWork);
         }
         self.work += work;
@@ -538,6 +539,43 @@ pub fn allocate_registers(
     debug: &mut DebugEntry,
     prologue: u32,
 ) -> Result<(), ErrorCode> {
+    allocate_registers_inner(
+        types,
+        param_ownership,
+        function,
+        debug,
+        prologue,
+        MO_LIMIT_CODEGEN_REGISTER_WORK,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn allocate_registers_with_limit(
+    types: &[TypeDef],
+    param_ownership: &[Vec<ParamOwnership>],
+    function: &mut FunctionDef,
+    debug: &mut DebugEntry,
+    prologue: u32,
+    work_limit: u64,
+) -> Result<(), ErrorCode> {
+    allocate_registers_inner(
+        types,
+        param_ownership,
+        function,
+        debug,
+        prologue,
+        work_limit,
+    )
+}
+
+fn allocate_registers_inner(
+    types: &[TypeDef],
+    param_ownership: &[Vec<ParamOwnership>],
+    function: &mut FunctionDef,
+    debug: &mut DebugEntry,
+    prologue: u32,
+    work_limit: u64,
+) -> Result<(), ErrorCode> {
     let registers = function.register_types.len();
     let words = function.code.len();
     let capacity_u64 = (words as u64) + 2 * (registers as u64);
@@ -577,6 +615,7 @@ pub fn allocate_registers(
         clear: NO_INDEX,
         has_joins: false,
         work: 0,
+        work_limit,
     };
 
     a.charge((registers as u64) + 2 * (words as u64) + (types.len() as u64))?;
