@@ -675,7 +675,15 @@ fn deterministic_fuzz_core_to_vm_never_panics_or_fails_verify() {
 
 #[test]
 fn codegen_internal_error_codes_and_entry_refusal() {
-    // Two distinct Core functions whose runtime names collide trigger E1200 (CodegenEntry).
+    use mo_bytecode::{ParamOwnership, load};
+    use mo_core::{CoreInteger, Lit, Service, Services};
+    use mo_def::Opcode;
+    use mo_def::limits::{
+        MO_LIMIT_CODEGEN_BIGINT_WORK, MO_LIMIT_CODEGEN_LIVE_WORK, MO_LIMIT_FUNCTION_INSTRUCTIONS,
+        MO_LIMIT_STRING_SIZE,
+    };
+
+    // E1200 (CodegenEntry): two distinct Core functions whose runtime names collide.
     let src = r#"(core 0.11 (Program () ((FunDecl "a.b" () (int) (lit (int 1)) "M" (function) 0) (FunDecl "b" () (int) (lit (int 2)) "M.a" (function) 0)) () "a.b" (noSource)))"#;
     let mut diags = DiagBag::new();
     let parsed = parse_program(src.as_bytes(), &mut diags).expect("core parses");
@@ -689,13 +697,133 @@ fn codegen_internal_error_codes_and_entry_refusal() {
         diags.items()
     );
 
-    assert_eq!(ErrorCode::FunctionTooLong.number(), 1014);
-    assert_eq!(ErrorCode::BytecodeTooBig.number(), 1015);
-    assert_eq!(ErrorCode::CodegenUnsupported.number(), 1055);
-    assert_eq!(ErrorCode::CodegenMemory.number(), 1056);
-    assert_eq!(ErrorCode::CodegenInvalid.number(), 1057);
-    assert_eq!(ErrorCode::CodegenRepresentation.number(), 1201);
-    assert_eq!(ErrorCode::CodegenBigintWork.number(), 1202);
-    assert_eq!(ErrorCode::CodegenLiveWork.number(), 1203);
-    assert_eq!(ErrorCode::CodegenRegisterWork.number(), 1204);
+    let simple_src = r#"(core 0.11 (Program () ((FunDecl "entry" () (int) (lit (int 1)) "M" (function) 0)) () "entry" (noSource)))"#;
+    let mut simple_diags = DiagBag::new();
+    let simple = parse_program(simple_src.as_bytes(), &mut simple_diags).expect("simple parses");
+
+    // E1014 (FunctionTooLong): instruction count hits MO_LIMIT_FUNCTION_INSTRUCTIONS.
+    {
+        let mut c = crate::compiler::Compiler::new(&simple.arena, &simple.value, None);
+        assert!(c.declarations());
+        c.bodies[0].instructions = MO_LIMIT_FUNCTION_INSTRUCTIONS as u32;
+        assert!(c.emit(0, None, Opcode::Ret, &[0], &[]).is_none());
+        assert_eq!(c.error.map(|e| e.0), Some(ErrorCode::FunctionTooLong));
+    }
+
+    // E1015 (BytecodeTooBig): string exceeding MO_LIMIT_STRING_SIZE.
+    {
+        let mut c = crate::compiler::Compiler::new(&simple.arena, &simple.value, None);
+        let huge = "a".repeat(MO_LIMIT_STRING_SIZE as usize + 1);
+        assert!(c.intern_string(&huge).is_none());
+        assert_eq!(c.error.map(|e| e.0), Some(ErrorCode::BytecodeTooBig));
+    }
+
+    // E1055 (CodegenUnsupported): staged unsupported refusal through Compiler::fail_unsupported.
+    {
+        let mut c = crate::compiler::Compiler::new(&simple.arena, &simple.value, None);
+        assert!(!c.fail_unsupported("unsupported Core primitive"));
+        assert_eq!(c.error.map(|e| e.0), Some(ErrorCode::CodegenUnsupported));
+        assert!(
+            !crate::compiler::CodegenError::headline_for(ErrorCode::CodegenUnsupported).is_empty()
+        );
+    }
+
+    // E1056 (CodegenMemory): ownership slot limit exhausted during real body preparation.
+    {
+        let mut c = crate::compiler::Compiler::new(&simple.arena, &simple.value, None);
+        c.ownership_slot_limit = 0;
+        assert!(c.declarations());
+        assert!(c.setup_globals());
+        assert!(!c.prepare_bodies());
+        assert_eq!(c.error.map(|e| e.0), Some(ErrorCode::CodegenMemory));
+    }
+
+    // E1057 (CodegenInvalid): invalid service descriptor (start index out of range).
+    {
+        let bad_services = Services {
+            items: vec![Service {
+                start: 99,
+                token_env: "TOK".to_string(),
+                tools: Vec::new(),
+                timers: Vec::new(),
+            }],
+            data_shapes: Vec::new(),
+        };
+        let mut s_diags = DiagBag::new();
+        assert!(
+            crate::compile_services(
+                &simple.arena,
+                &simple.value,
+                Some(&bad_services),
+                &mut s_diags
+            )
+            .is_none()
+        );
+        assert!(
+            s_diags
+                .items()
+                .iter()
+                .any(|d| d.code == ErrorCode::CodegenInvalid),
+            "expected E1057 CodegenInvalid, got {:?}",
+            s_diags.items()
+        );
+    }
+
+    // E1201 (CodegenRepresentation): Map with non-Eq/Hash function key violates representation contract.
+    {
+        let bad_map = r#"(core 0.11 (Program () ((FunDecl "entry" (("f" (fn () (int)))) (map (fn () (int)) (int)) (prim (map (fn () (int)) (int) (lit 0)) ()) "M" (function) 0)) () "entry" (noSource)))"#;
+        let mut m_diags = DiagBag::new();
+        let parsed_map = parse_program(bad_map.as_bytes(), &mut m_diags).expect("map core parses");
+        let mut c_diags = DiagBag::new();
+        assert!(compile(&parsed_map.arena, &parsed_map.value, &mut c_diags).is_none());
+        assert!(
+            c_diags
+                .items()
+                .iter()
+                .any(|d| d.code == ErrorCode::CodegenRepresentation),
+            "expected E1201 CodegenRepresentation, got {:?}",
+            c_diags.items()
+        );
+    }
+
+    // E1202 (CodegenBigintWork): BigInt conversion hits MO_LIMIT_CODEGEN_BIGINT_WORK.
+    {
+        let mut c = crate::compiler::Compiler::new(&simple.arena, &simple.value, None);
+        c.bigint_work = MO_LIMIT_CODEGEN_BIGINT_WORK as usize;
+        let big = Lit::BigInt(CoreInteger {
+            negative: false,
+            digits: "123456789012345678901234567890".to_string(),
+        });
+        assert!(c.intern_literal(&big).is_none());
+        assert_eq!(c.error.map(|e| e.0), Some(ErrorCode::CodegenBigintWork));
+    }
+
+    // E1203 (CodegenLiveWork): backward liveness work exceeds MO_LIMIT_CODEGEN_LIVE_WORK.
+    {
+        let mut c = crate::compiler::Compiler::new(&simple.arena, &simple.value, None);
+        assert!(c.declarations());
+        assert!(!c.live_charge(0, MO_LIMIT_CODEGEN_LIVE_WORK + 1));
+        assert_eq!(c.error.map(|e| e.0), Some(ErrorCode::CodegenLiveWork));
+    }
+
+    // E1204 (CodegenRegisterWork): register allocator work exceeds its budget on real bytecode.
+    {
+        let mut c_diags = DiagBag::new();
+        let wire = compile(&simple.arena, &simple.value, &mut c_diags).expect("simple compiles");
+        let mut bc = load(&wire).expect("loads");
+        let ownership: Vec<Vec<ParamOwnership>> = bc
+            .functions
+            .iter()
+            .map(|f| f.parameters.iter().map(|p| p.ownership).collect())
+            .collect();
+        let res = crate::registers::allocate_registers_with_limit(
+            &bc.types.items,
+            &ownership,
+            &mut bc.functions[0],
+            &mut bc.debug[0],
+            0,
+            1,
+        );
+        assert_eq!(res, Err(ErrorCode::CodegenRegisterWork));
+    }
 }

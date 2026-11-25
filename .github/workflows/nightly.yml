@@ -74,11 +74,14 @@ jobs:
       - name: Compare a fresh Core differential seed range against Lean
         if: matrix.lean
         run: |
+          day=$(( $(date -u +%s) / 86400 ))
+          export MO_CORE_DIFF_SEED=$(( day * 1000 ))
+          MO_CORE_DIFF=1000 python3 ci/check_core_differential.py target/release/mo-fe
           python3 ci/check_rust_frontend.py \
             --mo target/release/mo \
             --mo-fe target/release/mo-fe \
-            --mo-rt target/release/mo-rt \
-            --skip-build --require-lean --lean-only --generated-count 1000
+            --skip-build --require-lean --lean-only \
+            --generated-count 1000 --seed-start "$MO_CORE_DIFF_SEED"
 
       - name: Keep programs that differ
         if: failure() && matrix.lean

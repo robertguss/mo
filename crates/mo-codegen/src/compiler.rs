@@ -492,6 +492,8 @@ pub struct Compiler<'a> {
     pub declaration: Option<Span>,
     pub error: Option<(ErrorCode, &'static str)>,
     pub bigint_work: usize,
+    #[cfg(test)]
+    pub ownership_slot_limit: u64,
 }
 
 impl<'a> Compiler<'a> {
@@ -539,6 +541,8 @@ impl<'a> Compiler<'a> {
             declaration: None,
             error: None,
             bigint_work: 0,
+            #[cfg(test)]
+            ownership_slot_limit: mo_def::limits::MO_LIMIT_CODEGEN_OWNERSHIP_SLOTS,
         }
     }
 
@@ -705,6 +709,9 @@ impl<'a> Compiler<'a> {
         if ty == NO_INDEX {
             return None;
         }
+        #[cfg(test)]
+        let limit = self.ownership_slot_limit;
+        #[cfg(not(test))]
         let limit = mo_def::limits::MO_LIMIT_CODEGEN_OWNERSHIP_SLOTS;
         if (self.bodies[func_idx].regs.len() as u64) >= limit
             || (self.ownership.len() as u64) >= limit

@@ -2,6 +2,7 @@
 //! (`src/host/credentials.c` parity).
 
 use mo_def::limits::MO_LIMIT_MCP_TOKEN_BYTES;
+use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
 /// Secret bearer token stored in zeroizing memory (`struct mo_bearer`).
@@ -51,13 +52,13 @@ impl Bearer {
     /// Constant-time comparison against candidate `bytes` (`mo_bearer_check`).
     #[must_use]
     pub fn check(&self, candidate: &[u8]) -> bool {
-        let mut diff = self.bytes.len() ^ candidate.len();
+        let mut eq = (self.bytes.len() as u64).ct_eq(&(candidate.len() as u64));
         let n = self.bytes.len().max(candidate.len());
         for i in 0..n {
             let a = self.bytes.get(i).copied().unwrap_or(0);
             let b = candidate.get(i).copied().unwrap_or(0);
-            diff |= usize::from(a ^ b);
+            eq &= a.ct_eq(&b);
         }
-        diff == 0
+        bool::from(eq)
     }
 }

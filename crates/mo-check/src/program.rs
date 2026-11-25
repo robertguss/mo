@@ -210,7 +210,11 @@ pub(crate) fn spec_wording(tree: &SyntaxTree, text_node: NodeId) -> Vec<u8> {
     out
 }
 
-fn check_imports(modules: &ModuleSet, signatures: &mut Signatures, diags: &mut DiagBag) -> bool {
+pub(crate) fn check_imports(
+    modules: &ModuleSet,
+    signatures: &mut Signatures,
+    diags: &mut DiagBag,
+) -> bool {
     let mut valid = true;
     for i in 0..signatures.imports.len() {
         let (used, parent, origin, origin_span, module) = {

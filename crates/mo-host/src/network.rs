@@ -437,12 +437,65 @@ fn load_pem_certs_from_file(path: &Path, store: &mut RootCertStore) -> Result<us
     Ok(loaded)
 }
 
-fn load_root_store() -> Result<RootCertStore, NetErr> {
-    let mut store = RootCertStore::empty();
+#[derive(PartialEq, Eq)]
+struct EnvRootStoreKey {
+    cert_file: Option<std::ffi::OsString>,
+    cert_dir: Option<std::ffi::OsString>,
+    file_stamp: Option<(u64, Option<std::time::SystemTime>)>,
+    dir_stamp: Option<Option<std::time::SystemTime>>,
+}
+
+struct EnvRootStoreCache {
+    key: EnvRootStoreKey,
+    store: Arc<RootCertStore>,
+}
+
+static ENV_ROOT_STORE_CACHE: std::sync::LazyLock<std::sync::Mutex<Option<EnvRootStoreCache>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+
+static DEFAULT_ROOT_STORE: std::sync::LazyLock<Result<Arc<RootCertStore>, String>> =
+    std::sync::LazyLock::new(|| {
+        let mut store = RootCertStore::empty();
+        let native = rustls_native_certs::load_native_certs();
+        let (added, _) = store.add_parsable_certificates(native.certs);
+        if added == 0 {
+            store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        }
+        if store.is_empty() {
+            return Err("could not load root certificates".to_string());
+        }
+        Ok(Arc::new(store))
+    });
+
+fn load_root_store() -> Result<Arc<RootCertStore>, NetErr> {
     let cert_file = std::env::var_os("SSL_CERT_FILE").filter(|v| !v.is_empty());
     let cert_dir = std::env::var_os("SSL_CERT_DIR").filter(|v| !v.is_empty());
 
     if cert_file.is_some() || cert_dir.is_some() {
+        let file_stamp = cert_file
+            .as_ref()
+            .and_then(|f| std::fs::metadata(Path::new(f)).ok())
+            .map(|m| (m.len(), m.modified().ok()));
+        let dir_stamp = cert_dir
+            .as_ref()
+            .and_then(|d| std::fs::metadata(Path::new(d)).ok())
+            .map(|m| m.modified().ok());
+        let key = EnvRootStoreKey {
+            cert_file: cert_file.clone(),
+            cert_dir: cert_dir.clone(),
+            file_stamp,
+            dir_stamp,
+        };
+        if let Some(cached) = ENV_ROOT_STORE_CACHE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            && cached.key == key
+        {
+            return Ok(Arc::clone(&cached.store));
+        }
+
+        let mut store = RootCertStore::empty();
         let mut loaded = 0usize;
         if let Some(ref f) = cert_file {
             match load_pem_certs_from_file(Path::new(f), &mut store) {
@@ -472,20 +525,20 @@ fn load_root_store() -> Result<RootCertStore, NetErr> {
                 "could not load root certificates".to_string(),
             ));
         }
-        return Ok(store);
+        let arc = Arc::new(store);
+        *ENV_ROOT_STORE_CACHE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(EnvRootStoreCache {
+            key,
+            store: Arc::clone(&arc),
+        });
+        return Ok(arc);
     }
 
-    let native = rustls_native_certs::load_native_certs();
-    let (added, _) = store.add_parsable_certificates(native.certs);
-    if added == 0 {
-        store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    match &*DEFAULT_ROOT_STORE {
+        Ok(store) => Ok(Arc::clone(store)),
+        Err(msg) => Err(NetErr::Certificate(msg.clone())),
     }
-    if store.is_empty() {
-        return Err(NetErr::Certificate(
-            "could not load root certificates".to_string(),
-        ));
-    }
-    Ok(store)
 }
 
 fn map_rustls_error(err: rustls::Error) -> NetErr {
@@ -571,7 +624,7 @@ fn tls_handshake_with_store(
     stream: TcpStream,
     host: &str,
     deadline: Instant,
-    root_store: RootCertStore,
+    root_store: Arc<RootCertStore>,
 ) -> Result<RealTls, NetErr> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let config = ClientConfig::builder_with_provider(provider)
@@ -1326,8 +1379,9 @@ mod tests {
         // 1. Trusted CA + matching IP SAN succeeds and echoes data + clean close_notify EOF.
         let mut trusted_store = RootCertStore::empty();
         trusted_store.add(ca_der.clone()).unwrap();
+        let trusted_store = Arc::new(trusted_store);
         let tcp = open_tcp_socket(&[addr], deadline).unwrap();
-        let tls = tls_handshake_with_store(tcp, "127.0.0.1", deadline, trusted_store.clone())
+        let tls = tls_handshake_with_store(tcp, "127.0.0.1", deadline, Arc::clone(&trusted_store))
             .expect("trusted IP SAN handshake");
         let open_conns = Rc::new(Cell::new(1));
         let mut rconn = RealConnection {
@@ -1346,7 +1400,7 @@ mod tests {
 
         // 2. Trusted CA + matching DNS SAN + SNI ("localhost") succeeds.
         let tcp = open_tcp_socket(&[addr], deadline).unwrap();
-        let tls = tls_handshake_with_store(tcp, "localhost", deadline, trusted_store.clone())
+        let tls = tls_handshake_with_store(tcp, "localhost", deadline, Arc::clone(&trusted_store))
             .expect("trusted DNS SAN handshake");
         let mut rconn = RealConnection {
             transport: RealTransport::Tls(Box::new(tls)),
@@ -1363,16 +1417,17 @@ mod tests {
         let mut wrong_store = RootCertStore::empty();
         wrong_store.add(other_ca).unwrap();
         let tcp = open_tcp_socket(&[addr], deadline).unwrap();
-        let err = tls_handshake_with_store(tcp, "127.0.0.1", deadline, wrong_store)
+        let err = tls_handshake_with_store(tcp, "127.0.0.1", deadline, Arc::new(wrong_store))
             .err()
             .expect("untrusted cert must fail");
         assert!(matches!(err, NetErr::Certificate(_)), "got {err:?}");
 
         // 4. Trusted CA + wrong hostname -> Certificate error.
         let tcp = open_tcp_socket(&[addr], deadline).unwrap();
-        let err = tls_handshake_with_store(tcp, "wrong.example", deadline, trusted_store.clone())
-            .err()
-            .expect("wrong hostname must fail");
+        let err =
+            tls_handshake_with_store(tcp, "wrong.example", deadline, Arc::clone(&trusted_store))
+                .err()
+                .expect("wrong hostname must fail");
         assert!(matches!(err, NetErr::Certificate(_)), "got {err:?}");
 
         handle.join().unwrap();
@@ -1388,7 +1443,7 @@ mod tests {
             drop(s2);
         });
         let tcp = open_tcp_socket(&[plain_addr], deadline).unwrap();
-        let err = tls_handshake_with_store(tcp, "127.0.0.1", deadline, trusted_store.clone())
+        let err = tls_handshake_with_store(tcp, "127.0.0.1", deadline, Arc::clone(&trusted_store))
             .err()
             .expect("plain HTTP must fail TLS");
         assert!(matches!(err, NetErr::Broken(_)), "got {err:?}");
@@ -1399,5 +1454,10 @@ mod tests {
             .expect("raw close must fail TLS");
         assert!(matches!(err, NetErr::Closed), "got {err:?}");
         plain_thread.join().unwrap();
+
+        // 6. Default root store caches cleanly across calls (returns the same Arc pointer).
+        let s1 = load_root_store().expect("default root store");
+        let s2 = load_root_store().expect("cached default root store");
+        assert!(Arc::ptr_eq(&s1, &s2));
     }
 }

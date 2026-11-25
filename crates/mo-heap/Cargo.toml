@@ -5,8 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-mo-def = { path = "../mo-def" }
-mo-bytecode = { path = "../mo-bytecode" }
+mo-bytecode.workspace = true
+mo-def.workspace = true
 
 [lints]
 workspace = true

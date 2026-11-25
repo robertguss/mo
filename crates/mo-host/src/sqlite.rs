@@ -12,10 +12,12 @@ use mo_bytecode::{Capability, TypeKind};
 use mo_def::HostOpId;
 use mo_def::limits::{
     MO_LIMIT_HOST_PATH_SIZE, MO_LIMIT_OPEN_DATABASES, MO_LIMIT_OPEN_FOLDERS, MO_LIMIT_SQL_BYTES,
-    MO_LIMIT_SQL_PARAMETERS,
+    MO_LIMIT_SQL_PARAMETERS, MO_LIMIT_VALUE_BYTES,
 };
 use mo_heap::{Heap, Value};
+use rusqlite::config::DbConfig;
 use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+use rusqlite::limits::Limit;
 use rusqlite::types::{Value as SqlParam, ValueRef};
 use rusqlite::{Connection, ErrorCode, OpenFlags};
 #[cfg(unix)]
@@ -256,6 +258,24 @@ fn sqlite_err_message(err: &rusqlite::Error) -> String {
 // ---------------------------------------------------------------------------
 
 fn configure_connection(conn: &Connection) -> Result<(), rusqlite::Error> {
+    // Defense-in-depth SQLite connection limits (`src/host/sqlite.c`).
+    // Bundled rusqlite compiles without the `load_extension` feature (SQLITE_OMIT_LOAD_EXTENSION)
+    // and `eval_authorizer` also explicitly denies `load_extension(...)` and user `ATTACH`.
+    let _ = conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true);
+    let _ = conn.set_limit(
+        Limit::SQLITE_LIMIT_SQL_LENGTH,
+        i32::try_from(MO_LIMIT_SQL_BYTES).unwrap_or(i32::MAX),
+    );
+    let _ = conn.set_limit(
+        Limit::SQLITE_LIMIT_VARIABLE_NUMBER,
+        i32::try_from(MO_LIMIT_SQL_PARAMETERS).unwrap_or(i32::MAX),
+    );
+    let _ = conn.set_limit(
+        Limit::SQLITE_LIMIT_LENGTH,
+        i32::try_from(MO_LIMIT_VALUE_BYTES).unwrap_or(i32::MAX),
+    );
+    // Allow 1 internal attach slot for `VACUUM` while `eval_authorizer` blocks all user `ATTACH`.
+    let _ = conn.set_limit(Limit::SQLITE_LIMIT_ATTACHED, 1);
     conn.execute_batch("PRAGMA temp_store = MEMORY; PRAGMA foreign_keys = ON;")
 }
 
@@ -502,17 +522,56 @@ fn has_trailing_tokens_after_first_stmt(sql: &str) -> bool {
 
 fn contains_trigger_keyword(prefix: &[u8]) -> bool {
     let mut i = 0usize;
-    while i < prefix.len() {
-        if is_ident_start(prefix[i]) {
-            let start = i;
-            while i < prefix.len() && is_ident_cont(prefix[i]) {
+    let len = prefix.len();
+    while i < len {
+        match prefix[i] {
+            b'-' if i + 1 < len && prefix[i + 1] == b'-' => {
+                i += 2;
+                while i < len && prefix[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if i + 1 < len && prefix[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < len && !(prefix[i] == b'*' && prefix[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = if i + 1 < len { i + 2 } else { len };
+            }
+            b'\'' | b'"' | b'`' => {
+                let quote = prefix[i];
                 i += 1;
+                while i < len {
+                    if prefix[i] == quote {
+                        i += 1;
+                        if i < len && prefix[i] == quote {
+                            i += 1;
+                            continue;
+                        }
+                        break;
+                    }
+                    i += 1;
+                }
             }
-            if prefix[start..i].eq_ignore_ascii_case(b"TRIGGER") {
-                return true;
+            b'[' => {
+                i += 1;
+                while i < len && prefix[i] != b']' {
+                    i += 1;
+                }
+                if i < len {
+                    i += 1;
+                }
             }
-        } else {
-            i += 1;
+            b if is_ident_start(b) => {
+                let start = i;
+                while i < len && is_ident_cont(prefix[i]) {
+                    i += 1;
+                }
+                if prefix[start..i].eq_ignore_ascii_case(b"TRIGGER") {
+                    return true;
+                }
+            }
+            _ => i += 1,
         }
     }
     false
@@ -1370,5 +1429,40 @@ pub(crate) fn call_sqlite(
         HostOpId::SqliteExecuteRaw => exec_sql(heap, types, SqlExecMode::Raw, result_ty, args),
         HostOpId::SqliteQuery => exec_sql(heap, types, SqlExecMode::Query, result_ty, args),
         _ => unreachable!("non-sqlite hostop routed to sqlite module"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trigger_keyword_scanner_ignores_strings_and_comments_and_limits_apply() {
+        assert!(has_trailing_tokens_after_first_stmt("SELECT 'TRIGGER';;"));
+        assert!(has_trailing_tokens_after_first_stmt(
+            "SELECT \"TRIGGER\"; SELECT 2"
+        ));
+        assert!(has_trailing_tokens_after_first_stmt(
+            "SELECT /* TRIGGER */ 1;;"
+        ));
+        assert!(has_trailing_tokens_after_first_stmt(
+            "-- TRIGGER\nSELECT 1; SELECT 2"
+        ));
+        assert!(!has_trailing_tokens_after_first_stmt(
+            "CREATE TRIGGER t AFTER INSERT ON a BEGIN INSERT INTO b VALUES(1); END;"
+        ));
+
+        let conn = Connection::open_in_memory().expect("in-memory sqlite");
+        configure_connection(&conn).expect("configure_connection");
+        assert_eq!(
+            conn.limit(Limit::SQLITE_LIMIT_SQL_LENGTH),
+            Ok(i32::try_from(MO_LIMIT_SQL_BYTES).unwrap_or(i32::MAX))
+        );
+        assert_eq!(
+            conn.limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER),
+            Ok(i32::try_from(MO_LIMIT_SQL_PARAMETERS).unwrap_or(i32::MAX))
+        );
+        assert!(conn.limit(Limit::SQLITE_LIMIT_LENGTH).is_ok_and(|n| n > 0));
+        assert_eq!(conn.limit(Limit::SQLITE_LIMIT_ATTACHED), Ok(1));
     }
 }

@@ -132,7 +132,7 @@ Mo draws a hard security line between **runtime self-healing** and **code change
 
 Mo's capability security is only as strong as the runtime underneath it:
 
-- **100% pure safe Rust.** All 18 crates in the workspace enforce `#![forbid(unsafe_code)]`, strict Clippy lints (`unwrap_used = "deny"`, `todo = "deny"`, warnings as errors), **zero OpenSSL**, and **zero system `libsqlite3`** dynamic linkage (using `rustls`, RustCrypto crates, and bundled SQLite).
+- **100% pure safe Rust.** All 17 crates in the workspace enforce `#![forbid(unsafe_code)]`, strict Clippy lints (`unwrap_used = "deny"`, `todo = "deny"`, warnings as errors), **zero OpenSSL**, and **zero system `libsqlite3`** dynamic linkage (using `rustls`, RustCrypto crates, and bundled SQLite).
 - **Verified bytecode (`MOBC` v0.3).** The VM never sees source code or ASTs. Every loaded `.bc` image passes structural validation, static type checking, Perceus ownership/leak verification, and spec-code isolation checks before a single instruction runs (`docs/design/sandbox-properties.md`).
 - **Single-binary portability.** The standard library (`lib/`), embedded runtime (`runtime/`), Language Reference, and guide are compiled into `mo`. `mo emit` produces portable verified `.bc` files that `mo run` executes directly, and `mo install` packages any Mo CLI tool onto `$PATH`.
 - **Formal foundation.** Mo Core is defined and proven type-safe in Lean 4 (`formal/`), with differential tests checking the pure-Rust compiler and VM against the Lean evaluator, plus TLA+ models (`models/`) verifying export, failure-capture, and live-swap protocols.

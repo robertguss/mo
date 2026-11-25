@@ -162,6 +162,7 @@ pub struct Image {
 impl Image {
     pub fn init(file: BytecodeFile, limits: Limits) -> Result<Self, Box<(BytecodeFile, Defect)>> {
         Self::init_with_budget(file, limits, None, None)
+            .map_err(|boxed| Box::new((boxed.0, boxed.2)))
     }
 
     /// Initializes the image while capping total init instructions to `max_steps`.
@@ -170,6 +171,18 @@ impl Image {
         limits: Limits,
         max_steps: u64,
     ) -> Result<Self, Box<(BytecodeFile, Defect)>> {
+        Self::init_with_budget(file, limits, Some(max_steps), None)
+            .map_err(|boxed| Box::new((boxed.0, boxed.2)))
+    }
+
+    /// Initializes the image while capping total init instructions to `max_steps`,
+    /// preserving whether an initialization error was `Outcome::Failed` (`true`) or
+    /// `Outcome::Stopped` (`false`).
+    pub fn init_bounded_detailed(
+        file: BytecodeFile,
+        limits: Limits,
+        max_steps: u64,
+    ) -> Result<Self, Box<(BytecodeFile, bool, Defect)>> {
         Self::init_with_budget(file, limits, Some(max_steps), None)
     }
 
@@ -181,6 +194,7 @@ impl Image {
         trace: VmTrace,
     ) -> Result<Self, Box<(BytecodeFile, Defect)>> {
         Self::init_with_budget(file, limits, None, Some(trace))
+            .map_err(|boxed| Box::new((boxed.0, boxed.2)))
     }
 
     /// Configures the attached image trace before running a gated check.
@@ -212,7 +226,7 @@ impl Image {
         limits: Limits,
         mut budget: Option<u64>,
         trace: Option<VmTrace>,
-    ) -> Result<Self, Box<(BytecodeFile, Defect)>> {
+    ) -> Result<Self, Box<(BytecodeFile, bool, Defect)>> {
         let image_heap = Heap::new(limits.heap_size);
 
         // Pre-allocate immortal captureless closures for every 0-capture closure layout.
@@ -222,7 +236,9 @@ impl Image {
                 let closure =
                     match image_heap.alloc_closure(idx as u32, layout.function, Vec::new()) {
                         Ok(c) => c,
-                        Err(_) => return Err(Box::new((file, oom_defect(limits.heap_size)))),
+                        Err(_) => {
+                            return Err(Box::new((file, false, oom_defect(limits.heap_size))));
+                        }
                     };
                 image_heap.make_immortal(&closure);
                 captureless_closures.insert(layout.function, closure);
@@ -257,17 +273,21 @@ impl Image {
                 ConstantValue::Text(str_idx) => {
                     match image_heap.alloc_text(file.string(*str_idx).to_string()) {
                         Ok(v) => v,
-                        Err(_) => return Err(Box::new((file, oom_defect(limits.heap_size)))),
+                        Err(_) => {
+                            return Err(Box::new((file, false, oom_defect(limits.heap_size))));
+                        }
                     }
                 }
                 ConstantValue::Bytes(raw) => match image_heap.alloc_bytes(raw.clone()) {
                     Ok(v) => v,
-                    Err(_) => return Err(Box::new((file, oom_defect(limits.heap_size)))),
+                    Err(_) => return Err(Box::new((file, false, oom_defect(limits.heap_size)))),
                 },
                 ConstantValue::BigInt { sign, magnitude } => {
                     match image_heap.alloc_bigint(*sign, magnitude.clone()) {
                         Ok(v) => v,
-                        Err(_) => return Err(Box::new((file, oom_defect(limits.heap_size)))),
+                        Err(_) => {
+                            return Err(Box::new((file, false, oom_defect(limits.heap_size))));
+                        }
                     }
                 }
                 ConstantValue::Closure(fn_idx) => match captureless_closures.get(fn_idx) {
@@ -283,7 +303,9 @@ impl Image {
                             .expect("closure constant layout");
                         match image_heap.alloc_closure(layout_idx, *fn_idx, Vec::new()) {
                             Ok(v) => v,
-                            Err(_) => return Err(Box::new((file, oom_defect(limits.heap_size)))),
+                            Err(_) => {
+                                return Err(Box::new((file, false, oom_defect(limits.heap_size))));
+                            }
                         }
                     }
                 },
@@ -308,7 +330,8 @@ impl Image {
             let outcome = run_init_function(&mut image, limits, fn_idx, &mut budget);
             match outcome {
                 Outcome::Returned(_) => {}
-                Outcome::Failed(d) | Outcome::Stopped(d) => return Err(Box::new((image.file, d))),
+                Outcome::Failed(d) => return Err(Box::new((image.file, true, d))),
+                Outcome::Stopped(d) => return Err(Box::new((image.file, false, d))),
             }
         }
 

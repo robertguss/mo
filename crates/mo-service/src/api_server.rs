@@ -1238,7 +1238,12 @@ fn dispatch_vm_request(
         }
     }
 
-    let (outcome, _) = proc.call_with_budget(generation.wire_fn, args, MO_LIMIT_API_REQUEST_WORK);
+    let (outcome, _) = crate::call_with_budget_isolated(
+        &mut proc,
+        generation.wire_fn,
+        args,
+        MO_LIMIT_API_REQUEST_WORK,
+    );
     let result = match outcome {
         Outcome::Returned(v) => v,
         Outcome::Failed(d) | Outcome::Stopped(d) => {
@@ -1478,9 +1483,13 @@ fn job_worker_main(pool: Arc<WorkerPool>) {
                             }
                         }
                         if ok {
-                            match proc
-                                .call_with_budget(generation.job_fn, args, MO_LIMIT_API_JOB_WORK)
-                                .0
+                            match crate::call_with_budget_isolated(
+                                &mut proc,
+                                generation.job_fn,
+                                args,
+                                MO_LIMIT_API_JOB_WORK,
+                            )
+                            .0
                             {
                                 Outcome::Returned(v) => {
                                     if v.as_tag() == 0 {

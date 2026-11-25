@@ -57,9 +57,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     code.push_str("];\n");
 
+    let version_path = repo_root.join("crates/mo-def/defs/version.def");
+    println!("cargo:rerun-if-changed={}", version_path.display());
+    let version_src = fs::read_to_string(&version_path)?;
+    let mo_version = version_src
+        .lines()
+        .find_map(|line| {
+            let trimmed = line.trim();
+            let rest = trimmed.strip_prefix("#define MO_VERSION")?.trim();
+            rest.strip_prefix('"')?.strip_suffix('"')
+        })
+        .ok_or("crates/mo-def/defs/version.def missing #define MO_VERSION \"...\"")?;
+
     let target = env::var("TARGET").unwrap_or_else(|_| "unknown".to_string());
     let profile = env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
-    let label = format!("mo 0.3.0; rust {target} {profile}");
+    let label = format!("mo {mo_version}; rust {target} {profile}");
     code.push_str(&format!(
         "/// Build label embedded in `MOCS\\x01` compile metadata (<= 256 bytes).\npub const MO_BUILD_LABEL: &str = {label:?};\n"
     ));

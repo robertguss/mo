@@ -153,7 +153,7 @@ end
 | **Built-in abilities & exact math** | Compiler-derived `Equal`, `Order`, `Hash`, `Text`, and `Json` (lenient external `Json.decode[T]`, strict `api` input validation); 128-bit `Decimal`, checked 64-bit `Int`, `BigInt`, and `Date`. | Removes JSON/serialization boilerplate and prevents silent floating-point currency or integer-overflow bugs. |
 | **Web APIs, Actors & Arvo** | Multi-worker `api ... end` servers with automatic OpenAPI 3.1 + `/docs`, type-driven `auth`, exhaustive `status`, static mounts, background `job`s, composable `actor`s, and the pure-Mo **[Arvo](docs/arvo.md)** web framework (Inertia v2, sessions, CSRF, migrations, jobs). | One standalone binary replaces an HTTP server, OpenAPI generator, job runner, and in-memory state store—zero Node or Redis in production. |
 | **Durable services & live ops** | `service ... end` over MCP/HTTP with SQLite snapshot/log persistence, Unix-socket `--admin-socket` operator views, immutable `mo fetch`, offline `mo replay` & `mo query`, and typed live upgrades (`mo push`, `mo rehearse`). | Separates runtime self-healing from code deployment—agents diagnose failures offline and humans review diffs before live upgrades. |
-| **Pure safe Rust & verified bytecode** | 18-crate `#![forbid(unsafe_code)]` Cargo workspace, zero OpenSSL, zero system `libsqlite3`, verified `MOBC` v0.3 bytecode, embedded `lib/` and docs, `mo emit` and `mo install`. | Memory-safe runtime by construction, portable standalone binaries, and bytecode verified before execution. |
+| **Pure safe Rust & verified bytecode** | 17-crate `#![forbid(unsafe_code)]` Cargo workspace, zero OpenSSL, zero system `libsqlite3`, verified `MOBC` v0.3 bytecode, embedded `lib/` and docs, `mo emit` and `mo install`. | Memory-safe runtime by construction, portable standalone binaries, and bytecode verified before execution. |
 
 ---
 
@@ -220,7 +220,7 @@ Set up syntax highlighting and format-on-save for **Zed** or **Cursor / VS Code*
 
 ## What's in this repository
 
-- **[`crates/`](Cargo.toml)** — 18 pure safe Rust crates (`mo-def`, `mo-base`, `mo-syntax`, `mo-check`, `mo-lower`, `mo-core`, `mo-codegen`, `mo-bytecode`, `mo-heap`, `mo-prim`, `mo-host`, `mo-vm`, `mo-test`, `mo-service`, `mo-upgrade`, `mo-cli`, `mo-fe`, `mo-rt`).
+- **[`crates/`](Cargo.toml)** — 17 pure safe Rust crates (`mo-def`, `mo-base`, `mo-syntax`, `mo-check`, `mo-lower`, `mo-core`, `mo-codegen`, `mo-bytecode`, `mo-heap`, `mo-prim`, `mo-host`, `mo-vm`, `mo-test`, `mo-service`, `mo-upgrade`, `mo-cli`, `mo-fe`).
 - **[`lib/`](docs/design/library.md)** — Standard library written in Mo (embedded in the `mo` binary), including `Http`, `Json`, `Sqlite`, `Command`, `Crypto`, `Date`, `Unicode16`, `Api`, and the 12-module **[Arvo](docs/arvo.md)** web framework (`lib/arvo/`).
 - **[`examples/`](examples/README.md)** — Twelve core sample programs plus the full-stack **[Arvo + Inertia v2 starter](examples/arvo-starter/README.md)**.
 - **[`tools/`](tools/README.md)** — Ten real CLI programs written in Mo, including `mox` (HTTP client), `moloc` (polyglot line counter), `moq` (JSON/CSV/SQLite slicer), `gh-sync`, `dev-pulse`, `work-etl`, `mo-harness` (confined coding-agent harness), `linkcheck`, `notioncopy`, and `tally`.
@@ -241,7 +241,7 @@ Set up syntax highlighting and format-on-save for **Zed** or **Cursor / VS Code*
 | **[Mo Language Reference](docs/reference/README.md)** | Humans & agents | Complete, self-contained specification of Mo syntax, types, capabilities, specs, and core library (`mo guide --reference`). |
 | **[Agent & Build Guide](docs/agent-guide.md)** | Agents & CLI users | Practical workflow for writing, testing, serving, diffing, replaying, and upgrading Mo programs (`mo guide`). |
 | **[Arvo Web Framework](docs/arvo.md)** | Web developers | Building full-stack single-binary web apps with Mo, `api`, SQLite, and Inertia v2. |
-| **[Architecture](docs/design/architecture.md)** | Contributors & systems readers | Compiler pipeline, 18-crate boundaries, Perceus memory model, VM, and test strategy. |
+| **[Architecture](docs/design/architecture.md)** | Contributors & systems readers | Compiler pipeline, 17-crate boundaries, Perceus memory model, VM, and test strategy. |
 | **[Sandbox Properties](docs/design/sandbox-properties.md)** | Security readers | Threat model, numbered guarantees (P1–P11), enforcement points, verification evidence, and gaps. |
 | **[Bytecode Specification](docs/design/bytecode.md)** | VM readers | `MOBC` v0.3 binary format, instruction set, ownership verifier, and text format. |
 | **[Library Map](docs/design/library.md)** | Systems readers | Exact mapping of every core function and operator across instructions, primitives, host ops, lowering, and `lib/*.mo`. |

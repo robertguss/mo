@@ -30,6 +30,17 @@ use crate::binary::{
 };
 use crate::store::programs::StoredProgram;
 
+/// Result of validating an upgrade's base and candidate digests against the active program.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BaseCheck {
+    /// Base matches active and candidate differs; the upload may proceed.
+    Proceed,
+    /// Candidate is already the active program; the report was marked `already_active`.
+    AlreadyActive,
+    /// Base does not match active; the report was refused with `E1416` (`UpgradeStaleBase`).
+    StaleBase,
+}
+
 /// Confinement mode for upgrade compile children (`enum mo_upgrade_children`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpgradeChildren {
@@ -173,6 +184,31 @@ impl UpgradeReport {
             return false;
         }
         true
+    }
+
+    /// Outcome of validating an upgrade's base and candidate digests against the active program.
+    pub fn check_base(
+        &mut self,
+        active: &[u8; 32],
+        base: &[u8; 32],
+        candidate: &[u8; 32],
+    ) -> BaseCheck {
+        if active == candidate {
+            self.already_active = true;
+            self.activated = true;
+            self.class = "compatible".to_string();
+            self.message = "candidate source is already active".to_string();
+            return BaseCheck::AlreadyActive;
+        }
+        if active != base {
+            self.refuse(
+                ErrorCode::UpgradeStaleBase as u16,
+                "stale_base",
+                format!("base is not the active program {}", hex_encode(active)),
+            );
+            return BaseCheck::StaleBase;
+        }
+        BaseCheck::Proceed
     }
 
     /// Serializes this report to exact `mo_upgrade_report_json` format.

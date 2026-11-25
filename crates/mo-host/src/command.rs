@@ -15,12 +15,12 @@ use mo_bytecode::types::TypeTable;
 use mo_def::HostOpId;
 use mo_def::limits::{
     MO_LIMIT_COMMAND_ARG_BYTES, MO_LIMIT_COMMAND_ARGS, MO_LIMIT_COMMAND_DURATION_US,
-    MO_LIMIT_COMMAND_OUTPUT_BYTES, MO_LIMIT_HOST_PATH_SIZE, MO_LIMIT_OPEN_FOLDERS,
-    MO_LIMIT_VALUE_BYTES,
+    MO_LIMIT_COMMAND_MEMORY, MO_LIMIT_COMMAND_OUTPUT_BYTES, MO_LIMIT_HOST_PATH_SIZE,
+    MO_LIMIT_OPEN_FOLDERS, MO_LIMIT_VALUE_BYTES,
 };
 use mo_heap::{Heap, ScratchGuard, Value};
 #[cfg(unix)]
-use rustix::fs::{Access, AtFlags, CWD, FileType, OFlags, access, fcntl_setfl, statat};
+use rustix::fs::{Access, AtFlags, CWD, FileType, OFlags, access, fcntl_setfl, fstat, statat};
 #[cfg(unix)]
 use rustix::io::fcntl_dupfd_cloexec;
 
@@ -268,7 +268,9 @@ fn make_temp_dir() -> Option<TempDirGuard> {
     };
     let mut rng = [0u8; 8];
     for _ in 0..32 {
-        let _ = getrandom::fill(&mut rng);
+        if getrandom::fill(&mut rng).is_err() {
+            return None;
+        }
         let suffix = u64::from_le_bytes(rng);
         let candidate = Path::new(&base).join(format!("mo-cmd-{suffix:016x}"));
         if candidate.to_string_lossy().len() >= MO_LIMIT_HOST_PATH_SIZE as usize {
@@ -721,15 +723,59 @@ fn command_run_real(
         );
     };
 
+    let Ok(workdir_stat) = fstat(workdir_fd) else {
+        return command_error_tag(
+            heap,
+            types,
+            result_ty,
+            "spawn_failed:could not resolve working folder",
+            "",
+        );
+    };
+
     let path_env = match valid_local_bin_dir() {
         Some(local_bin) => format!("{local_bin}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"),
         None => "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin".to_string(),
     };
 
     let deadline = Instant::now() + Duration::from_micros(timeout_us as u64);
+    let cpu_seconds = ((timeout_us as u64).saturating_add(999_999) / 1_000_000).saturating_add(1);
+    let can_confine = crate::confine::can_confine();
 
-    let mut child = match Command::new(&exe_path)
-        .args(&arg_strs)
+    let mut cmd = if let Some(trampoline) = crate::confine::trampoline_exe() {
+        let mut c = Command::new(trampoline);
+        c.arg(crate::confine::INTERNAL_COMMAND_TRAMPOLINE_ARG)
+            .arg("--dev")
+            .arg(workdir_stat.st_dev.to_string())
+            .arg("--ino")
+            .arg(workdir_stat.st_ino.to_string())
+            .arg("--workdir")
+            .arg(&workdir_path)
+            .arg("--tmpdir")
+            .arg(&tmp_guard.0)
+            .arg("--cpu")
+            .arg(cpu_seconds.to_string())
+            .arg("--mem")
+            .arg(MO_LIMIT_COMMAND_MEMORY.to_string())
+            .arg("--ppid")
+            .arg(std::process::id().to_string())
+            .arg(if can_confine {
+                "--confine"
+            } else {
+                "--no-confine"
+            })
+            .arg("--exe")
+            .arg(&exe_path)
+            .arg("--")
+            .args(&arg_strs);
+        c
+    } else {
+        let mut c = Command::new(&exe_path);
+        c.args(&arg_strs);
+        c
+    };
+
+    let mut child = match cmd
         .current_dir(&workdir_path)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -747,6 +793,7 @@ fn command_run_real(
             return command_error_tag(heap, types, result_ty, "spawn_failed:fork failed", "");
         }
     };
+    crate::confine::set_child_process_group(child.id());
 
     let mut out_pipe = child.stdout.take();
     let mut err_pipe = child.stderr.take();
@@ -892,6 +939,7 @@ fn command_run_real(
     }
 
     if exit_status.is_none() {
+        crate::confine::kill_child_tree(child.id());
         let _ = child.kill();
         exit_status = child.wait().ok();
     }
@@ -916,6 +964,16 @@ fn command_run_real(
     if timed_out || st.signal() == Some(24) {
         drop(io_scratch);
         return command_error_tag(heap, types, result_ty, "timed_out", "");
+    }
+    if st.code() == Some(125) {
+        drop(io_scratch);
+        return command_error_tag(
+            heap,
+            types,
+            result_ty,
+            "spawn_failed:could not confine command child",
+            "",
+        );
     }
 
     let exit_code = match st.code() {

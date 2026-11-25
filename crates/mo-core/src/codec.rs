@@ -10,7 +10,9 @@ use mo_def::core_ops::{
     CoreFloatOp, CoreIntOp, CoreIoNullaryOp, CoreListNullaryOp, CoreMapNullaryOp, CoreRangeOp,
     CoreSetOp, CoreTextOp, CoreTimeOp, CoreUnicodeOp,
 };
-use mo_def::limits::{MO_LIMIT_CORE_DEPTH, MO_LIMIT_CORE_NODES, MO_LIMIT_CORE_TEXT_SIZE};
+use mo_def::limits::{
+    MO_LIMIT_CORE_DEPTH, MO_LIMIT_CORE_NODES, MO_LIMIT_CORE_SCRATCH_SIZE, MO_LIMIT_CORE_TEXT_SIZE,
+};
 use thiserror::Error;
 
 use crate::ir::{
@@ -4238,9 +4240,21 @@ fn record_error(diags: &mut DiagBag, err: ParseErr) {
 
 /// Parses a `.core` document of explicit category `kind`, recording at most one
 /// diagnostic into `diags` on failure (exact `src/core/text.c:mo_core_text_parse` parity).
+/// Parses any of the 16 Core document kinds from UTF-8 bytes, recording at most one
+/// diagnostic into `diags` on failure (exact `src/core/text.c:mo_core_text_parse` parity).
 pub fn parse_document(
     kind: CoreTextKind,
     bytes: &[u8],
+    diags: &mut DiagBag,
+) -> Option<ParsedCore<CoreDocument>> {
+    parse_document_with_scratch_limit(kind, bytes, MO_LIMIT_CORE_SCRATCH_SIZE, diags)
+}
+
+/// Parses a Core document while enforcing an explicit scratch byte ceiling (`E1017`).
+pub fn parse_document_with_scratch_limit(
+    kind: CoreTextKind,
+    bytes: &[u8],
+    scratch_limit: u64,
     diags: &mut DiagBag,
 ) -> Option<ParsedCore<CoreDocument>> {
     if (bytes.len() as u64) > MO_LIMIT_CORE_TEXT_SIZE {
@@ -4280,6 +4294,22 @@ pub fn parse_document(
         }
     };
 
+    let lex_scratch = (pool.nodes.len() as u64)
+        .saturating_mul(std::mem::size_of::<Sexp>() as u64)
+        .saturating_add(input.len() as u64);
+    if lex_scratch > scratch_limit {
+        record_error(
+            diags,
+            err_at(
+                ErrorCode::CoreNoMemory,
+                0,
+                0,
+                "Core parser exceeded its scratch memory limit",
+            ),
+        );
+        return None;
+    }
+
     let root_children = match &pool.get(root_id).kind {
         SexpKind::Node(cs) if cs.len() == 3 && pool.atom_is(cs[0], "core") => cs,
         _ => {
@@ -4316,6 +4346,24 @@ pub fn parse_document(
             return None;
         }
     };
+
+    let arena_scratch = (decoder.arena.expr_count() as u64)
+        .saturating_mul(std::mem::size_of::<Expr>() as u64)
+        .saturating_add(
+            (decoder.arena.ty_count() as u64).saturating_mul(std::mem::size_of::<Ty>() as u64),
+        );
+    if lex_scratch.saturating_add(arena_scratch) > scratch_limit {
+        record_error(
+            diags,
+            err_at(
+                ErrorCode::CoreNoMemory,
+                0,
+                0,
+                "Core parser exceeded its scratch memory limit",
+            ),
+        );
+        return None;
+    }
 
     let meta_ok = match &doc {
         CoreDocument::Program(p) => metadata_valid(&decoder.arena, p),

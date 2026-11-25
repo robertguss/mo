@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Generated Core programs (ci/gen_core.py) must give the same outcome on the C VM and in Lean.
+"""Generated Core programs (ci/gen_core.py) must give the same outcome on the Rust VM and in Lean.
 
-    check_core_differential.py TEST_VM_DRIVER...
+    check_core_differential.py DRIVER...
 
-Each driver is a built tests/test_vm.test. Every program is compiled, loaded and run by the driver
-and evaluated by Lean's `mocore`; the two reports must be equal, stop messages included. Only
-programs inside lowering's representation contract are generated (gen_core `lowerable`), because
-codegen refuses the rest by design. A program either engine cuts off at its budget (the VM's
-instruction limit, Lean's fuel) is counted, not compared; one engine alone doing so is capped at 2%.
+Each driver is a built `mo-fe` executable supporting `--core FILE.core` (for example
+`target/release/mo-fe`). Every program is compiled, loaded and run by the driver and evaluated by
+Lean's `mocore`; the two reports must be equal, stop messages included. Only programs inside
+lowering's representation contract are generated (gen_core `lowerable`), because codegen refuses the
+rest by design. A program either engine cuts off at its budget (the VM's instruction limit, Lean's
+fuel) is counted, not compared; one engine alone doing so is capped at 2%.
 
     MO_CORE_DIFF            program count (default 1000)
     MO_CORE_DIFF_SEED       first seed (default 0); give each run by hand its own range
@@ -94,14 +95,14 @@ def main():
     started = time.monotonic()
     drivers = sys.argv[1:]
     if not drivers:
-        raise AssertionError("at least one built test_vm driver is required")
+        raise AssertionError("at least one built Core VM driver (e.g. target/release/mo-fe) is required")
     count = int(os.environ.get("MO_CORE_DIFF", "1000"))
     first = int(os.environ.get("MO_CORE_DIFF_SEED", "0"))
     limit = int(os.environ.get("MO_CORE_DIFF_MISMATCHES", "5"))
     keep = os.environ.get("MO_CORE_DIFF_OUT")
     oracle = str(pathlib.Path(os.environ.get("MO_MOCORE", "formal/.lake/build/bin/mocore")).resolve())
     if not pathlib.Path(oracle).exists():
-        raise AssertionError(f"{oracle} is not built; run `make formal` first")
+        raise AssertionError(f"{oracle} is not built; run `(cd formal && lake build mocore)` first")
     if count < 1:
         raise AssertionError("MO_CORE_DIFF must be at least 1")
     with tempfile.TemporaryDirectory(prefix="mo-core-diff-") as tmp:

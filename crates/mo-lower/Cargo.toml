@@ -5,11 +5,11 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-mo-def = { path = "../mo-def" }
-mo-base = { path = "../mo-base" }
-mo-syntax = { path = "../mo-syntax" }
-mo-check = { path = "../mo-check" }
-mo-core = { path = "../mo-core" }
+mo-base.workspace = true
+mo-check.workspace = true
+mo-core.workspace = true
+mo-def.workspace = true
+mo-syntax.workspace = true
 
 [lints]
 workspace = true

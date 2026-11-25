@@ -193,7 +193,7 @@ class RustGroup(unittest.TestCase):
                     "cargo test --workspace --all-targets",
                     "cargo test --workspace --doc",
                     "cargo doc --workspace --no-deps",
-                    "cargo build --release --bin mo --bin mo-fe --bin mo-rt --bin mo-test-cli --bin mo-test-deadline",
+                    "cargo build --release --bin mo --bin mo-fe --bin mo-test-cli --bin mo-test-deadline",
                     "python3 ci/check_rust_frontend.py --audit-only --mo target/release/mo",
                 ],
             )

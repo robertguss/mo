@@ -14,8 +14,8 @@ use mo_codegen::compile_services;
 use mo_core::{check_program_services, print_program};
 use mo_def::ErrorCode;
 use mo_def::limits::{
-    MO_CLI_CHECK_SIZE, MO_LIMIT_BYTECODE_TEXT_SIZE, MO_LIMIT_CORE_TEXT_SIZE, MO_LIMIT_FIX_ROUNDS,
-    MO_SOURCE_STACK_SIZE,
+    MO_CLI_CHECK_SIZE, MO_LIMIT_BYTECODE_TEXT_SIZE, MO_LIMIT_CHECK_CPU_SECONDS,
+    MO_LIMIT_CHECK_MEMORY, MO_LIMIT_CORE_TEXT_SIZE, MO_LIMIT_FIX_ROUNDS, MO_SOURCE_STACK_SIZE,
 };
 use mo_lower::{lower_services, lower_test_services};
 
@@ -495,6 +495,7 @@ fn fix_files(cli: &Cli, output: &mut (dyn Write + Send), errors: &mut (dyn Write
     status
 }
 
+#[cfg(not(unix))]
 fn deferred_command_error(errors: &mut dyn Write, label: &str, slice: &str) -> i32 {
     let _ = writeln!(
         errors,
@@ -514,9 +515,53 @@ pub fn execute_cli(
 ) -> i32 {
     if cli.source_bundle {
         if cli.command == Command::Test {
+            if cli.rlimit_child || cli.confine_child {
+                mo_host::confine::enter_own_process_group();
+            }
+            if cli.rlimit_child
+                && let Err(step) = mo_host::confine::apply_child_rlimits(
+                    MO_LIMIT_CHECK_MEMORY,
+                    MO_LIMIT_CHECK_CPU_SECONDS,
+                )
+            {
+                let _ = writeln!(errors, "mo: cannot confine the child: {step}");
+                let _ = errors.flush();
+                return 125;
+            }
+            let load_opts = load_options_for(cli);
+            if cli.confine_child {
+                let exe = std::env::current_exe()
+                    .ok()
+                    .map(|p| std::fs::canonicalize(&p).unwrap_or(p))
+                    .unwrap_or_else(|| PathBuf::from("/proc/self/exe"));
+                let bundle_path = bytes_to_path(cli.file(0));
+                let work_dir = bundle_path
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or_else(|| std::path::Path::new("."));
+                let old_bundle = cli.old_bundle.as_deref().map(bytes_to_path);
+                let ctx_in = cli.compile_context.as_deref().map(bytes_to_path);
+                let lib_dir = cli.library.as_deref().map(bytes_to_path);
+                let mut read_files: Vec<&std::path::Path> = vec![bundle_path.as_ref()];
+                if let Some(ref p) = old_bundle {
+                    read_files.push(p.as_ref());
+                }
+                if let Some(ref p) = ctx_in {
+                    read_files.push(p.as_ref());
+                }
+                if let Err(step) = mo_host::confine::confine_compile_child(
+                    &exe,
+                    work_dir,
+                    lib_dir.as_deref(),
+                    &read_files,
+                ) {
+                    let _ = writeln!(errors, "mo: cannot confine the child: {step}");
+                    let _ = errors.flush();
+                    return 125;
+                }
+            }
             let mut sources = SourceMap::new();
             let mut diags = DiagBag::new();
-            let load_opts = load_options_for(cli);
             let run_res = run_on_source_stack(|| {
                 run_bundle_test(cli, &load_opts.library, &mut sources, &mut diags);
             });
@@ -567,10 +612,14 @@ pub fn execute_cli(
                 Some(ctx_out_buf.as_path()),
                 lib_dir.as_deref(),
                 build_digest,
+                cli.rlimit_child,
+                cli.confine_child,
                 errors,
             );
         }
-        return deferred_command_error(errors, "--bundle", "Slice 3E (crates/mo-upgrade)");
+        let _ = writeln!(errors, "mo: --bundle is only supported on emit and test");
+        let _ = errors.flush();
+        return 2;
     }
     if let Some(old_raw) = cli.upgrade_from.as_deref() {
         let old_path = bytes_to_path(old_raw);

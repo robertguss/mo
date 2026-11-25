@@ -8,7 +8,7 @@ Guidance for coding agents (Claude Code, Codex, Cursor and others) working in th
 Mo is a pre-release language and runtime for "living software", designed for agents first. The
 toolchain is one pure-Rust program, `mo` (`check`, `run`, `test`, `format`, `fix`, `emit`,
 `serve`, `fetch`, `push`, `replay`, `query`, `rehearse`, `history`, `diff`, `install`, `guide`),
-built from an 18-crate Cargo workspace (`#![forbid(unsafe_code)]`, zero OpenSSL, zero system
+built from a 17-crate Cargo workspace (`#![forbid(unsafe_code)]`, zero OpenSSL, zero system
 `libsqlite3`) that compiles a whole program from source to bytecode and runs it on its own VM.
 Commit and PR titles say what the change does. Older commits and documents cite decisions as `D2xx`
 and tasks as `MO-NN`; neither numbering continues, and a decision is written as the rule itself in
@@ -68,8 +68,9 @@ queue the program is `services/task-queue/queue-tests.mo`.
 
 The `nightly` GitHub Actions workflow checks `main` daily at 07:17 UTC and on manual dispatch,
 never on pull requests or pushes. It runs `rust`, `static`, `drivers`, `bench`, and `lean` with
-`CI=1` in parallel jobs, plus a 1,000-program Rust-vs-Lean Core differential check. A red nightly
-is the next PR, before any feature.
+`CI=1` in parallel jobs, plus a rotating 1,000-seed Rust-VM-vs-Lean Core execution differential
+check (`ci/check_core_differential.py target/release/mo-fe`) and Core typechecker/printer check.
+A red nightly is the next PR, before any feature.
 
 `main` requires no status check (only force-pushes are blocked). A PR gets one review and merges
 when Robert says so; he lets agents merge docs-only PRs (Markdown only, other than the three
@@ -120,7 +121,7 @@ trees or Core.
 
 The workspace crates live under `crates/` (`mo-def`, `mo-base`, `mo-core`, `mo-syntax`, `mo-check`,
 `mo-lower`, `mo-codegen`, `mo-fe`, `mo-bytecode`, `mo-heap`, `mo-prim`, `mo-host`, `mo-vm`,
-`mo-rt`, `mo-test`, `mo-service`, `mo-upgrade`, `mo-cli`).
+`mo-test`, `mo-service`, `mo-upgrade`, `mo-cli`).
 
 Four shared contracts live in `crates/mo-def/defs/` (and are parsed at build time by `crates/mo-def/build.rs`); changing one means changing every side that reads it:
 
@@ -144,7 +145,10 @@ Four shared contracts live in `crates/mo-def/defs/` (and are parsed at build tim
 
 ## Tests
 
-- Unit and integration tests live in `crates/*/src/*test*.rs` and `crates/*/tests/*.rs`.
+- Unit and integration tests live in `crates/*/src/*test*.rs` and `crates/*/tests/*.rs`, including
+  `crates/mo-cli/tests/corpus_replay.rs` (replaying all 48 `fuzz/corpus/` seed directories) and
+  `crates/mo-cli/tests/confinement_tests.rs` (verifying Linux Landlock/Seccomp/rlimit/process-group
+  confinement for `Command` and upgrade compile children).
 - Checker diagnostics are pinned by `tests/check/diagnostics/eNNNN` inputs with adjacent `.diag`
   expectations (format in that folder's `README.md`). Nothing regenerates them; edit by hand.
 - Every code in `crates/mo-def/defs/codes.h` needs a case in `tests/errors/` (exact `mo check`

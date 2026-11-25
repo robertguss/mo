@@ -19,7 +19,7 @@ include!(concat!(env!("OUT_DIR"), "/embedded_docs.rs"));
 pub const MO_VERSION: &str = mo_def::MO_VERSION;
 
 /// Formatted `--version` output line without trailing newline.
-pub const MO_VERSION_LINE: &str = "mo 0.3.0";
+pub const MO_VERSION_LINE: &str = mo_def::MO_VERSION_BANNER;
 
 /// Returns the version string (`"0.3.0"`).
 #[must_use]

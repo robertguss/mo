@@ -10,7 +10,7 @@ use mo_def::core_ops::{
     CoreIntOp, CoreIoNullaryOp, CoreListNullaryOp, CoreMapNullaryOp, CoreRangeOp, CoreSetOp,
     CoreTextOp, CoreTimeOp, CoreUnicodeOp,
 };
-use mo_def::limits::{MO_LIMIT_CORE_DEPTH, MO_LIMIT_CORE_NODES};
+use mo_def::limits::{MO_LIMIT_CORE_CHECK_SCRATCH_SIZE, MO_LIMIT_CORE_DEPTH, MO_LIMIT_CORE_NODES};
 
 use crate::ir::{
     Cap, CoreArena, Expr, ExprId, FnKind, IoOp, ListOp, Lit, MapOp, Metadata, Param, Prim, Program,
@@ -239,6 +239,8 @@ struct Checker<'a> {
     consts_map: BTreeMap<&'a str, ConstInfo>,
 
     nodes: usize,
+    scratch_used: u64,
+    scratch_limit: u64,
     scope: usize,
     spec: bool,
     fatal: Option<ErrorCode>,
@@ -247,7 +249,14 @@ struct Checker<'a> {
 }
 
 impl<'a> Checker<'a> {
-    fn new(arena: &'a CoreArena, program: &'a Program, services: Option<&'a Services>) -> Self {
+    fn new(
+        arena: &'a CoreArena,
+        program: &'a Program,
+        services: Option<&'a Services>,
+        scratch_limit: u64,
+    ) -> Self {
+        let init_bytes = (arena.ty_count() as u64)
+            .saturating_mul(std::mem::size_of::<Option<InternTyId>>() as u64);
         Self {
             arena,
             program,
@@ -261,12 +270,25 @@ impl<'a> Checker<'a> {
             funs_map: BTreeMap::new(),
             consts_map: BTreeMap::new(),
             nodes: 0,
+            scratch_used: init_bytes,
+            scratch_limit,
             scope: 0,
             spec: false,
-            fatal: None,
+            fatal: (init_bytes > scratch_limit).then_some(ErrorCode::CoreCheckMemory),
             declaration: &program.entry,
             declaration_span: None,
         }
+    }
+
+    fn charge_scratch(&mut self, bytes: u64) -> bool {
+        self.scratch_used = self.scratch_used.saturating_add(bytes);
+        if self.scratch_used > self.scratch_limit {
+            if self.fatal.is_none() {
+                self.fatal = Some(ErrorCode::CoreCheckMemory);
+            }
+            return false;
+        }
+        true
     }
 
     fn ty_info(&self, id: InternTyId) -> &InternType<'a> {
@@ -285,6 +307,7 @@ impl<'a> Checker<'a> {
                 return id;
             }
             let id = InternTyId((self.intern_types.len() + 1) as u32);
+            self.charge_scratch(std::mem::size_of::<InternType<'a>>() as u64);
             self.intern_types.push(InternType {
                 tag,
                 parts: Vec::new(),
@@ -300,6 +323,10 @@ impl<'a> Checker<'a> {
             return id;
         }
         let id = InternTyId((self.intern_types.len() + 1) as u32);
+        self.charge_scratch(
+            (std::mem::size_of::<InternType<'a>>() as u64)
+                .saturating_add((parts.len() as u64).saturating_mul(4)),
+        );
         self.intern_types.push(InternType {
             tag,
             parts,
@@ -3372,7 +3399,27 @@ pub fn check_program_services(
     services: Option<&Services>,
     diags: &mut DiagBag,
 ) -> bool {
-    let mut c = Checker::new(arena, program, services);
+    check_program_with_scratch_limit(
+        arena,
+        program,
+        services,
+        MO_LIMIT_CORE_CHECK_SCRATCH_SIZE,
+        diags,
+    )
+}
+
+/// Typechecks a Core program while enforcing an explicit scratch byte ceiling (`E1053`).
+pub fn check_program_with_scratch_limit(
+    arena: &CoreArena,
+    program: &Program,
+    services: Option<&Services>,
+    scratch_limit: u64,
+    diags: &mut DiagBag,
+) -> bool {
+    let mut c = Checker::new(arena, program, services, scratch_limit);
+    if let Some(code) = c.fatal {
+        return report(&c, &[], diags, code, None, Answer::bad(None, code));
+    }
     if !metadata_valid(arena, program) {
         return report(
             &c,
@@ -3388,6 +3435,9 @@ pub fn check_program_services(
         let code = c.fatal.unwrap_or(ErrorCode::CoreCheckLimit);
         return report(&c, &[], diags, code, None, Answer::bad(None, code));
     };
+    if let Some(code) = c.fatal {
+        return report(&c, &[], diags, code, None, Answer::bad(None, code));
+    }
 
     let entry_idx = c.funs_map.get(program.entry.as_str()).copied();
     c.declaration = &program.entry;

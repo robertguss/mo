@@ -15,7 +15,7 @@ use mo_base::{
     Span, TerminalEncoding, render_diagnostic_default, render_totals_json, render_version_json,
 };
 use mo_bytecode::{
-    AnchorExpectation, BigIntSign, BytecodeFile, ConstantValue, FunctionKind, NO_INDEX,
+    AnchorExpectation, BigIntSign, BytecodeFile, ConstantValue, FunctionKind, NO_INDEX, TypeKind,
     disassemble as disassemble_bytecode, load as load_bytecode, write as write_bytecode,
 };
 use mo_check::{
@@ -32,6 +32,7 @@ use mo_def::limits::{
     MO_LIMIT_PATH_SIZE,
 };
 use mo_def::{ErrorCode, MO_VERSION};
+use mo_heap::print::value_print;
 use mo_host::HostContext;
 use mo_lower::{lower_services, lower_test_services};
 use mo_prim::unicode16::{display_width_bytes, next_grapheme_bytes};
@@ -130,7 +131,9 @@ fn print_usage(mut w: impl Write) -> io::Result<()> {
     writeln!(
         w,
         "  mo-fe emit [--tests] [--library DIR|--lib DIR|--no-library] [--json] FILE.mo -o OUT.bc"
-    )
+    )?;
+    writeln!(w, "  mo-fe --core FILE.core")?;
+    writeln!(w, "  mo-fe --core-test FILE.core TEST")
 }
 
 fn parse_check_kind(raw: &str) -> Result<CheckKind, String> {
@@ -2423,6 +2426,149 @@ fn run_roundtrip_bc(args: &[String], mut out: impl Write, mut err: impl Write) -
     0
 }
 
+fn run_core_exec(
+    args: &[String],
+    with_test_name: bool,
+    mut out: impl Write,
+    mut err: impl Write,
+) -> u8 {
+    let expected = if with_test_name { 2 } else { 1 };
+    if args.len() != expected {
+        let _ = writeln!(
+            err,
+            "error: expected {} argument(s)",
+            if with_test_name {
+                "FILE.core TEST"
+            } else {
+                "FILE.core"
+            }
+        );
+        return 2;
+    }
+    let path = args[0].as_str();
+    let test_name = if with_test_name {
+        Some(args[1].as_str())
+    } else {
+        None
+    };
+
+    let (label, bytes) = match read_core_input(Some(path)) {
+        Ok(res) => res,
+        Err(e) => {
+            let _ = writeln!(err, "error: cannot read {path}: {e}");
+            return 2;
+        }
+    };
+    let target_kind = resolve_check_kind(CheckKind::Auto, &bytes);
+    let mut diags = DiagBag::new();
+    let parsed = match target_kind {
+        CoreTextKind::Run => parse_run(&bytes, &mut diags).map(|r| (r.arena, r.value.program)),
+        _ => parse_program(&bytes, &mut diags).map(|p| (p.arena, p.value)),
+    };
+    let Some((arena, program)) = parsed else {
+        let mut sources = SourceMap::new();
+        let patch = sources
+            .add_bytes(label.into_bytes(), bytes.clone())
+            .ok()
+            .map(|id| (id, bytes.len()));
+        let _ = render_diags(&diags, &sources, patch, RenderFormat::Text, &mut err);
+        return 1;
+    };
+    let mut chk_diags = DiagBag::new();
+    if !check_program(&arena, &program, &mut chk_diags) {
+        let empty = SourceMap::new();
+        let _ = render_diags(&chk_diags, &empty, None, RenderFormat::Text, &mut err);
+        return 1;
+    }
+    let mut cdiags = DiagBag::new();
+    let Some(wire) = compile_core(&arena, &program, &mut cdiags) else {
+        if cdiags
+            .items()
+            .iter()
+            .any(|d| d.code == ErrorCode::CodegenUnsupported)
+        {
+            if writeln!(out, "unsupported").is_err() || out.flush().is_err() {
+                return 2;
+            }
+            return 77;
+        }
+        let empty = SourceMap::new();
+        let _ = render_diags(&cdiags, &empty, None, RenderFormat::Text, &mut err);
+        return 1;
+    };
+    let file = match load_bytecode(&wire) {
+        Ok(f) => f,
+        Err(e) => {
+            let _ = writeln!(err, "error: bytecode load failed: {e}");
+            return 1;
+        }
+    };
+    let target_name = test_name.unwrap_or(program.entry.as_str());
+    let Some(fn_idx) = program.funs.iter().position(|f| f.name == target_name) else {
+        let _ = writeln!(err, "error: entry function {target_name:?} not found");
+        return 1;
+    };
+    if fn_idx >= file.functions.len() {
+        let _ = writeln!(
+            err,
+            "error: entry function index {fn_idx} out of range ({})",
+            file.functions.len()
+        );
+        return 1;
+    }
+    if !file.functions[fn_idx].parameters.is_empty() {
+        let _ = writeln!(
+            err,
+            "error: entry function {target_name:?} expects {} parameters",
+            file.functions[fn_idx].parameters.len()
+        );
+        return 1;
+    }
+
+    const CORE_EXEC_BUDGET: u64 = 250_000;
+    let limits = Limits::default();
+    let image = match Image::init_bounded_detailed(file, limits, CORE_EXEC_BUDGET) {
+        Ok(img) => img,
+        Err(boxed) => {
+            let (_, is_failed, defect) = *boxed;
+            let kind = if is_failed { "failed" } else { "stopped" };
+            let detail = defect.detail.as_deref().unwrap_or(&defect.reason);
+            if writeln!(out, "{kind}").is_err()
+                || writeln!(out, "{detail}").is_err()
+                || out.flush().is_err()
+            {
+                return 2;
+            }
+            return 0;
+        }
+    };
+    let mut proc = Process::new(&image, limits, HostContext::stdio(Vec::new(), Vec::new()));
+    let (outcome, _) = proc.call_with_budget(fn_idx as u32, Vec::new(), CORE_EXEC_BUDGET);
+    let write_res = match outcome {
+        Outcome::Returned(val) => {
+            let res_ty = image.file().functions[fn_idx].result_type;
+            let text = if image.file().types.get(res_ty).kind == TypeKind::Float {
+                format!("0x{:016x}", val.as_float().to_bits())
+            } else {
+                value_print(&image.file().types, res_ty, &val)
+            };
+            writeln!(out, "returned").and_then(|()| writeln!(out, "{text}"))
+        }
+        Outcome::Failed(defect) => {
+            let detail = defect.detail.as_deref().unwrap_or(&defect.reason);
+            writeln!(out, "failed").and_then(|()| writeln!(out, "{detail}"))
+        }
+        Outcome::Stopped(defect) => {
+            let detail = defect.detail.as_deref().unwrap_or(&defect.reason);
+            writeln!(out, "stopped").and_then(|()| writeln!(out, "{detail}"))
+        }
+    };
+    if write_res.is_err() || out.flush().is_err() {
+        return 2;
+    }
+    0
+}
+
 fn dispatch(args: &[String], out: impl Write, mut err: impl Write) -> u8 {
     let Some(cmd) = args.first().map(String::as_str) else {
         let _ = print_usage(&mut err);
@@ -2430,6 +2576,8 @@ fn dispatch(args: &[String], out: impl Write, mut err: impl Write) -> u8 {
     };
     let rest = &args[1..];
     match cmd {
+        "--core" => run_core_exec(rest, false, out, err),
+        "--core-test" => run_core_exec(rest, true, out, err),
         "core-check" => run_core_check(rest, err),
         "core-print" => run_core_print(rest, out, err),
         "core-check-batch" => run_core_check_batch(rest, out, err),
@@ -2459,6 +2607,7 @@ fn dispatch(args: &[String], out: impl Write, mut err: impl Write) -> u8 {
 }
 
 fn main() -> ExitCode {
+    mo_host::confine::register_self_as_trampoline();
     let args: Vec<String> = env::args().skip(1).collect();
     let run = move || -> u8 {
         let stdout = io::stdout();
@@ -2831,5 +2980,37 @@ mod tests {
                 .replace(&root_prefix, "");
             assert_eq!(normalized, expected, "case {case} mismatch");
         }
+    }
+
+    #[test]
+    fn cli_core_exec_differential_protocol() {
+        let core_path = repo_root().join("tests/differential/entry-returns-one.core");
+        let core_str = core_path.to_str().unwrap().to_string();
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = dispatch(&["--core".to_string(), core_str], &mut out, &mut err);
+        assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&err));
+        assert_eq!(String::from_utf8(out).unwrap(), "returned\n1\n");
+
+        // Verify IEEE 754 negative-zero hex bit printing and fail/stop outcomes.
+        let tmp = std::env::temp_dir().join(format!("mo-fe-core-exec-{}.core", std::process::id()));
+        std::fs::write(
+            &tmp,
+            "(core 0.11 (Program () ((FunDecl \"entry\" () (float) (lit (float 0x8000000000000000)) \"Generated\" (function) 0)) () \"entry\" (noSource)))\n",
+        )
+        .unwrap();
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = dispatch(
+            &["--core".to_string(), tmp.to_str().unwrap().to_string()],
+            &mut out,
+            &mut err,
+        );
+        let _ = std::fs::remove_file(&tmp);
+        assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&err));
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "returned\n0x8000000000000000\n"
+        );
     }
 }

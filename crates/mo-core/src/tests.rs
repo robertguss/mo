@@ -2119,9 +2119,41 @@ fn test_deterministic_fuzz_smoke_codec_and_checker() {
 }
 
 #[test]
-fn test_core_memory_error_codes_pinned() {
-    assert_eq!(ErrorCode::CoreNoMemory.number(), 1017);
-    assert_eq!(ErrorCode::CoreNoMemory.section(), None);
-    assert_eq!(ErrorCode::CoreCheckMemory.number(), 1053);
-    assert_eq!(ErrorCode::CoreCheckMemory.section(), None);
+fn test_core_memory_error_codes_exercised() {
+    let bytes = std::fs::read(repo_root().join("tests/core/Greet.core")).unwrap();
+
+    // 1. E1017 (CoreNoMemory): real parser refuses when scratch budget is exhausted.
+    let mut parse_diags = DiagBag::new();
+    assert!(
+        crate::parse_document_with_scratch_limit(CoreTextKind::Run, &bytes, 64, &mut parse_diags)
+            .is_none()
+    );
+    assert!(
+        parse_diags
+            .items()
+            .iter()
+            .any(|d| d.code == ErrorCode::CoreNoMemory),
+        "expected E1017 CoreNoMemory, got {:?}",
+        parse_diags.items()
+    );
+
+    // 2. E1053 (CoreCheckMemory): real Core typechecker refuses when scratch budget is exhausted.
+    let mut ok_diags = DiagBag::new();
+    let parsed = parse_run(&bytes, &mut ok_diags).expect("Greet.core parses");
+    let mut chk_diags = DiagBag::new();
+    assert!(!crate::check_program_with_scratch_limit(
+        &parsed.arena,
+        &parsed.value.program,
+        None,
+        64,
+        &mut chk_diags
+    ));
+    assert!(
+        chk_diags
+            .items()
+            .iter()
+            .any(|d| d.code == ErrorCode::CoreCheckMemory),
+        "expected E1053 CoreCheckMemory, got {:?}",
+        chk_diags.items()
+    );
 }

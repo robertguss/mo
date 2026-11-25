@@ -397,13 +397,29 @@ impl ProtocolServer {
 
         for (i, &ev) in p_ready.events.iter().enumerate() {
             if ev != 0 {
-                self.drive_connection(primary_indices[i], ev);
+                let conn_idx = primary_indices[i];
+                if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.drive_connection(conn_idx, ev);
+                })) {
+                    let msg = crate::panic_payload_message(payload);
+                    eprintln!("mo serve: isolated panic on connection {conn_idx}: {msg}");
+                    self.close_conn(conn_idx);
+                }
             }
         }
         if let Some(ar) = a_ready {
             for (i, &ev) in ar.events.iter().enumerate() {
                 if ev != 0 {
-                    self.drive_connection(admin_indices[i], ev);
+                    let conn_idx = admin_indices[i];
+                    if let Err(payload) =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            self.drive_connection(conn_idx, ev);
+                        }))
+                    {
+                        let msg = crate::panic_payload_message(payload);
+                        eprintln!("mo serve: isolated panic on admin connection {conn_idx}: {msg}");
+                        self.close_conn(conn_idx);
+                    }
                 }
             }
         }
@@ -2044,25 +2060,16 @@ impl ProtocolServer {
                 };
                 // Check `already_active` BEFORE stale-base so retrying an already-landed push
                 // with its original `--base` returns `already_active` (`check_upgrade_live.py:456`).
-                if active.source == cand {
-                    report.already_active = true;
-                    report.activated = true;
-                    report.class = "compatible".to_string();
-                    report.message = "candidate source is already active".to_string();
-                    self.send_upgrade_report(idx, proc, id_val, &report, None, false);
-                    return;
-                }
-                if active.source != base {
-                    report.refuse(
-                        ErrorCode::UpgradeStaleBase as u16,
-                        "stale_base",
-                        format!(
-                            "base is not the active program {}",
-                            hex_encode(&active.source)
-                        ),
-                    );
-                    self.send_upgrade_report(idx, proc, id_val, &report, None, true);
-                    return;
+                match report.check_base(&active.source, &base, &cand) {
+                    crate::upgrade::BaseCheck::AlreadyActive => {
+                        self.send_upgrade_report(idx, proc, id_val, &report, None, false);
+                        return;
+                    }
+                    crate::upgrade::BaseCheck::Proceed => {}
+                    crate::upgrade::BaseCheck::StaleBase => {
+                        self.send_upgrade_report(idx, proc, id_val, &report, None, true);
+                        return;
+                    }
                 }
                 let Some(stage) = UploadStage::open(total) else {
                     report.refuse(
@@ -2137,6 +2144,7 @@ impl ProtocolServer {
                             {
                                 let old_bundle =
                                     up.migration.as_ref().map(|_| active.bundle.as_slice());
+                                let confine = up.children == UpgradeChildren::Confined;
                                 if let Ok(job) = CompileJob::start(
                                     &up.executable,
                                     up.library.as_deref(),
@@ -2145,6 +2153,7 @@ impl ProtocolServer {
                                     up.migration.as_deref(),
                                     Some(active.context.as_slice()),
                                     true,
+                                    confine,
                                     self.service.build_digest(),
                                     active.ordinal + 1,
                                 ) {
@@ -2245,14 +2254,7 @@ impl ProtocolServer {
                     up.stage = None;
                     up.migration = None;
                     up.compiled_result = None;
-                    report.refuse(
-                        ErrorCode::UpgradeStaleBase as u16,
-                        "stale_base",
-                        format!(
-                            "base is not the active program {}",
-                            hex_encode(&active.source)
-                        ),
-                    );
+                    let _ = report.check_base(&active.source, &up.base, &up.candidate);
                     self.send_upgrade_report(idx, proc, id_val, &report, mig_copy.as_deref(), true);
                     return;
                 }
@@ -2260,6 +2262,7 @@ impl ProtocolServer {
                 // Start compile job if not already started on last page (or consume ready result).
                 if up.job.is_none() && up.compiled_result.is_none() {
                     let old_bundle = up.migration.as_ref().map(|_| active.bundle.as_slice());
+                    let confine = up.children == UpgradeChildren::Confined;
                     let job = match CompileJob::start(
                         &up.executable,
                         up.library.as_deref(),
@@ -2268,6 +2271,7 @@ impl ProtocolServer {
                         up.migration.as_deref(),
                         Some(active.context.as_slice()),
                         true,
+                        confine,
                         self.service.build_digest(),
                         active.ordinal + 1,
                     ) {

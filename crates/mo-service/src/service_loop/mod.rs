@@ -739,7 +739,8 @@ impl ServiceLoop {
             }
         }
 
-        let (outcome, work) = proc.call_with_budget(tool_fn, call_args, MO_LIMIT_SERVICE_WORK);
+        let (outcome, work) =
+            crate::call_with_budget_isolated(&mut proc, tool_fn, call_args, MO_LIMIT_SERVICE_WORK);
         self.metrics.handler_work = self.metrics.handler_work.saturating_add(work);
         let peak = proc.memory_peak();
         if peak > self.metrics.handler_heap_peak {
@@ -1072,7 +1073,8 @@ impl ServiceLoop {
             )
             .map_err(|_| ServiceStatus::Memory)?;
 
-            let (outcome, work) = proc.call_with_budget(
+            let (outcome, work) = crate::call_with_budget_isolated(
+                &mut proc,
                 timer_fn,
                 vec![state_in, Value::Time(wall_us)],
                 MO_LIMIT_SERVICE_WORK,

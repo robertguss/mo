@@ -5,15 +5,15 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-mo-def = { path = "../mo-def" }
-mo-bytecode = { path = "../mo-bytecode" }
-mo-heap = { path = "../mo-heap" }
-aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc", "zeroize"] }
-hmac = { version = "0.13", features = ["zeroize"] }
-scrypt = { version = "0.12", default-features = false }
-sha2 = { version = "0.11", features = ["zeroize"] }
-subtle = "2.6"
-zeroize = "1.9"
+aes-gcm.workspace = true
+hmac.workspace = true
+mo-bytecode.workspace = true
+mo-def.workspace = true
+mo-heap.workspace = true
+scrypt.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true
