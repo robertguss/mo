@@ -640,13 +640,16 @@ results in `lib/command.mo`.
 
 ## Json
 
-`Json` is a module of the library, written in Mo (D232). The VM needs nothing
-new for it: it parses and prints with text and list primitives.
+`Json` (`use Json`) pairs two pure-Rust RFC 8259 codec primitives in
+`crates/mo-prim/src/json.rs` (`Json.quote_raw` and `Json.parse_raw`) with the
+typed `Json`, `JsonNumber`, `JsonError` and `JsonProblem` wrappers in `lib/json.mo`.
 
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
-| `Json.parse(text)` | Mo | `lib/json.mo` | a parser over `text.chars`, with the nesting limit of reference 14; a string with no escape and no control character is read whole, from `text.split` at the quotes |
-| `json.to_text`, `json.pretty` | Mo | `lib/json.mo` | |
+| `Json.quote_raw(text)` | primitive | `JSON_QUOTE_RAW` | single-pass RFC 8259 string quoting and escaping without per-character Mo bytecode |
+| `Json.parse_raw(text)` | primitive | `JSON_PARSE_RAW` | iterative pure-Rust RFC 8259 parser returning flat pre-order `(tags, texts)` tokens or 1-based `(line, col, kind, detail)` syntax errors |
+| `Json.parse(text)` | Mo | `lib/json.mo` | wraps `Json.parse_raw`, materializing `Json` values and typed `JsonError` / `JsonProblem` results |
+| `json.to_text`, `json.pretty` | Mo | `lib/json.mo` | single-accumulator formatting backed by `Json.quote_raw` and one `List.join` |
 | `json.get(key)`, `json.at(index)`, `json.path(steps)` | Mo | `lib/json.mo` | a path's steps are `steps.split(".")`, each a key in an object and an index in an array; the empty path is the value itself |
 | `text_at`, `int_at`, `bool_at` and `list_at` on a `Json` | Mo | `lib/json.mo` | `path`, then the one kind of value each gives |
 | `Json.int(n)`, `Json.decimal(d)`, `Json.float(f)` | Mo | `lib/json.mo` | |

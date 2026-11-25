@@ -320,6 +320,11 @@ inductive CryptoOp where
   | sha256 | hmacSha256 | constantTimeEq | sealRaw | openRaw | hashPasswordRaw | verifyPassword
   deriving DecidableEq, Repr, Inhabited
 
+/-- Native RFC 8259 JSON primitives; Core specifies their interface, not the runtime codec. -/
+inductive JsonOp where
+  | quoteRaw | parseRaw
+  deriving DecidableEq, Repr, Inhabited
+
 /-- Operations on `Range`. `make a b` is `a..b`, the whole numbers from `a` up
 to, not including, `b` (reference 7.5); `start` and `end` read its ends, which
 is how a `for` loop takes a range apart, as `uncons` takes a list apart. -/
@@ -410,6 +415,7 @@ inductive Prim where
   | bytes (op : BytesOp)
   | unicode16 (op : UnicodeOp)
   | crypto (op : CryptoOp)
+  | json (op : JsonOp)
   | sim (op : SimOp)
   | range (op : RangeOp)
   | time (op : TimeOp)
@@ -594,6 +600,11 @@ def CryptoOp.sig : CryptoOp → List Ty × Ty
   | .hashPasswordRaw => ([.text, .bytes], .result .text .text)
   | .verifyPassword => ([.text, .text], .bool)
 
+def JsonOp.sig : JsonOp → List Ty × Ty
+  | .quoteRaw => ([.text], .text)
+  | .parseRaw =>
+    ([.text], .result (.tuple [.list .int, .list .text]) (.tuple [.int, .int, .int, .text]))
+
 def IoOp.sig : IoOp → List Ty × Ty
   | .argsList => ([.cap .args], .list .text)
   | .envGet => ([.cap .env, .text], .option .text)
@@ -671,6 +682,7 @@ def Prim.sig : Prim → List Ty × Ty
   | .bytes op => op.sig
   | .unicode16 op => op.sig
   | .crypto op => op.sig
+  | .json op => op.sig
   | .sim op => op.sig
   | .range op => op.sig
   | .time op => op.sig

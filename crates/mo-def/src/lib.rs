@@ -160,24 +160,26 @@ mod tests {
 
     #[test]
     fn pin_prim_counts_and_boundaries() {
-        assert_eq!(PRIM_COUNT, 187);
+        assert_eq!(PRIM_COUNT, 189);
         assert_eq!(PrimId::IntAbs as u32, 0);
         assert_eq!(PrimId::FloatToText as u32, 61);
         assert_eq!(PrimId::BytesDecodeUtf8 as u32, 103);
         assert_eq!(PrimId::RangeContains as u32, 148);
         assert_eq!(PrimId::Unicode16Uppercase as u32, 159);
         assert_eq!(PrimId::BytesCompareSliceAt as u32, 186);
-        assert_eq!(PrimId::from_u32(187), None);
+        assert_eq!(PrimId::JsonQuoteRaw as u32, 187);
+        assert_eq!(PrimId::JsonParseRaw as u32, 188);
+        assert_eq!(PrimId::from_u32(189), None);
 
         let first = PrimId::IntAbs.info();
         assert_eq!(first.module, "Int");
         assert_eq!(first.name, "abs");
         assert_eq!(first.params, "b");
 
-        let last = PrimId::BytesCompareSliceAt.info();
-        assert_eq!(last.module, "Bytes");
-        assert_eq!(last.name, "compare_slice_at");
-        assert_eq!(last.params, "bbbb");
+        let last = PrimId::JsonParseRaw.info();
+        assert_eq!(last.module, "Json");
+        assert_eq!(last.name, "parse_raw");
+        assert_eq!(last.params, "b");
     }
 
     #[test]
@@ -327,6 +329,7 @@ mod tests {
         assert_eq!(CoreBytesOp::ALL.len(), 21);
         assert_eq!(CoreUnicodeOp::ALL.len(), 7);
         assert_eq!(CoreCryptoOp::ALL.len(), 7);
+        assert_eq!(CoreJsonOp::ALL.len(), 2);
         assert_eq!(CoreRangeOp::ALL.len(), 6);
         assert_eq!(CoreTimeOp::ALL.len(), 13);
         assert_eq!(CoreListNullaryOp::ALL.len(), 17);
@@ -373,6 +376,9 @@ mod tests {
         }
         for &op in CoreCryptoOp::ALL {
             assert_eq!(CoreCryptoOp::from_wire_name(op.wire_name()), Some(op));
+        }
+        for &op in CoreJsonOp::ALL {
+            assert_eq!(CoreJsonOp::from_wire_name(op.wire_name()), Some(op));
         }
         for &op in CoreRangeOp::ALL {
             assert_eq!(CoreRangeOp::from_wire_name(op.wire_name()), Some(op));

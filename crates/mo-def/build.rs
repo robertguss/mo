@@ -852,7 +852,7 @@ fn parse_core_ops(src: &str) -> BuildResult<(Vec<CoreOpEntry>, Vec<CoreOpFamily>
         });
     }
 
-    let family_specs: [(&str, &'static str); 18] = [
+    let family_specs: [(&str, &'static str); 19] = [
         ("#define MO_CORE_INT_OPS(X)", "CoreIntOp"),
         ("#define MO_CORE_BIG_OPS(X)", "CoreBigOp"),
         ("#define MO_CORE_BYTE_OPS(X)", "CoreByteOp"),
@@ -865,6 +865,7 @@ fn parse_core_ops(src: &str) -> BuildResult<(Vec<CoreOpEntry>, Vec<CoreOpFamily>
         ("#define MO_CORE_BYTES_OPS(X)", "CoreBytesOp"),
         ("#define MO_CORE_UNICODE_OPS(X)", "CoreUnicodeOp"),
         ("#define MO_CORE_CRYPTO_OPS(X)", "CoreCryptoOp"),
+        ("#define MO_CORE_JSON_OPS(X)", "CoreJsonOp"),
         ("#define MO_CORE_RANGE_OPS(X)", "CoreRangeOp"),
         ("#define MO_CORE_TIME_OPS(X)", "CoreTimeOp"),
         ("#define MO_CORE_LIST_OPS(X)", "CoreListNullaryOp"),

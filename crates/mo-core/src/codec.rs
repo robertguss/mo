@@ -7,8 +7,8 @@ use mo_base::{DiagBag, Diagnostic, ErrorCode, Span};
 use mo_def::MO_CORE_TEXT_VERSION;
 use mo_def::core_ops::{
     CoreBase, CoreBigOp, CoreByteOp, CoreBytesOp, CoreCharOp, CoreCmpOp, CoreCryptoOp, CoreDecOp,
-    CoreFloatOp, CoreIntOp, CoreIoNullaryOp, CoreListNullaryOp, CoreMapNullaryOp, CoreRangeOp,
-    CoreSetOp, CoreTextOp, CoreTimeOp, CoreUnicodeOp,
+    CoreFloatOp, CoreIntOp, CoreIoNullaryOp, CoreJsonOp, CoreListNullaryOp, CoreMapNullaryOp,
+    CoreRangeOp, CoreSetOp, CoreTextOp, CoreTimeOp, CoreUnicodeOp,
 };
 use mo_def::limits::{
     MO_LIMIT_CORE_DEPTH, MO_LIMIT_CORE_NODES, MO_LIMIT_CORE_SCRATCH_SIZE, MO_LIMIT_CORE_TEXT_SIZE,
@@ -1056,6 +1056,14 @@ impl<'a> Decoder<'a> {
                     args[0],
                     child_depth,
                     CoreCryptoOp::from_wire_name,
+                )?))
+            }
+            "json" => {
+                self.expect_arity(id, args, 1)?;
+                Ok(Prim::Json(self.decode_nullary_op(
+                    args[0],
+                    child_depth,
+                    CoreJsonOp::from_wire_name,
                 )?))
             }
             "sim" => {
@@ -3025,6 +3033,11 @@ impl<'a> Printer<'a> {
             }
             Prim::Crypto(op) => {
                 self.begin_tagged("crypto", depth)?;
+                self.push_byte(b' ')?;
+                self.write_nullary(op.wire_name(), cd)?;
+            }
+            Prim::Json(op) => {
+                self.begin_tagged("json", depth)?;
                 self.push_byte(b' ')?;
                 self.write_nullary(op.wire_name(), cd)?;
             }

@@ -5,6 +5,7 @@
 mod bigint;
 mod collections;
 mod crypto;
+mod json;
 mod number;
 mod text;
 mod unicode;
@@ -253,6 +254,11 @@ pub fn call(
         | PrimId::CryptoOpenRaw
         | PrimId::CryptoHashPasswordRaw
         | PrimId::CryptoVerifyPassword => crypto::call(heap, types, prim, result_ty, args),
+
+        // Json (2 primitives)
+        PrimId::JsonQuoteRaw | PrimId::JsonParseRaw => {
+            json::call(heap, types, prim, result_ty, args)
+        }
     }
 }
 
