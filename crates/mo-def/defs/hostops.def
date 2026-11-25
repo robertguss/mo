@@ -118,6 +118,8 @@ HOSTOP(FILES_UNLOCK,           "Files",     "unlock",         "fn(Files.File) : 
 HOSTOP(READFILES_OPEN,         "ReadFiles", "open",           "fn(ReadFiles, Text) : Result(Files.File, FileError)",     "bb",  "too many files open at once",        false)
 HOSTOP(NETWORK_FAKE_SCRIPTED,  "Network",   "fake_scripted_raw",  "fn(List((Text, Text, List((Int, Int, Bytes, NetworkError))))) : Network", "o", "",                 true)
 HOSTOP(NETWORK_RECORDED_CALLS, "Network",   "recorded_calls_raw", "fn(Network) : List((Text, Text, List((Text, Text)), Bytes))",             "b", "network observation needs a fake", true)
+HOSTOP(SQLITE_STATS_RAW,       "Sqlite",    "stats_raw",          "fn(Sqlite.Database) : (Int, Int, List(Text))",                            "b", "Sqlite.Database.stats is only available on fake or in-memory test databases", false)
+HOSTOP(SQLITE_RESET_STATS_RAW, "Sqlite",    "reset_stats_raw",    "fn(Sqlite.Database)",                                                     "b", "Sqlite.Database.reset_stats is only available on fake or in-memory test databases", false)
 
 #undef HOSTOP
 

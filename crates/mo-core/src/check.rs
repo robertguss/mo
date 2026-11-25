@@ -1494,6 +1494,16 @@ impl<'a> Checker<'a> {
                     let res = self.binary(TyTag::Result, tup, s_serr);
                     self.sig3(res, db, s_text, lv)
                 }
+                CoreIoNullaryOp::SqliteStatsRaw => {
+                    let db = self.cap_ty(Cap::Database);
+                    let lt = self.unary(TyTag::List, s_text);
+                    let tup = self.intern(TyTag::Tuple, vec![s_int, s_int, lt], "", Cap::Console);
+                    self.sig1(tup, db)
+                }
+                CoreIoNullaryOp::SqliteResetStatsRaw => {
+                    let db = self.cap_ty(Cap::Database);
+                    self.sig1(s_unit, db)
+                }
                 CoreIoNullaryOp::CommandRunRaw => {
                     let cmd = self.cap_ty(Cap::Command);
                     let lt = self.unary(TyTag::List, s_text);

@@ -2319,6 +2319,7 @@ fn syntax_mentions_sqlite(tree: &SyntaxTree) -> bool {
             && matches!(
                 text,
                 b"Sqlite"
+                    | b"QueryStats"
                     | b"SqliteDecodeError"
                     | b"MissingColumn"
                     | b"TypeMismatch"

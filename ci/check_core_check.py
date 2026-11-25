@@ -319,6 +319,8 @@ def signatures():
         sqlite_err("(sqliteRows)"))
     add("io", "sqliteExecuteRaw", C("database") + "|" + T + "|" + L("(sqliteValue)"),
         sqlite_err(f"(tuple ({I} {I}))"))
+    add("io", "sqliteStatsRaw", C("database"), f"(tuple ({I} {I} " + L(T) + "))")
+    add("io", "sqliteResetStatsRaw", C("database"), U)
     add("io", "commandRunRaw", C("command") + "|" + T + "|" + L(T) + "|(duration)",
         f"(result (tuple ({I} (bytes) (bytes))) {T})")
     add("io", "commandWithin", C("command") + "|" + T, C("command"))

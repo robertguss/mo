@@ -51,10 +51,18 @@ impl Drop for RealSqliteRoot {
     }
 }
 
+#[derive(Default)]
+struct FakeQueryStats {
+    query_count: i64,
+    exec_count: i64,
+    statements: Vec<String>,
+}
+
 struct FakeSqliteEntry {
     path: String,
     conn: Option<Rc<RefCell<Connection>>>,
     raw: Option<Vec<u8>>,
+    stats: Rc<RefCell<FakeQueryStats>>,
 }
 
 struct FakeSqliteHub {
@@ -72,7 +80,10 @@ enum DbHandle {
         conn: Option<Box<RefCell<Connection>>>,
         serialize_close: bool,
     },
-    Shared(Rc<RefCell<Connection>>),
+    Shared {
+        conn: Rc<RefCell<Connection>>,
+        stats: Rc<RefCell<FakeQueryStats>>,
+    },
 }
 
 pub(crate) struct DatabaseCap {
@@ -112,8 +123,8 @@ impl DatabaseCap {
                     .borrow_mut();
                 f(&mut borrow)
             }
-            DbHandle::Shared(rc) => {
-                let mut borrow = rc.borrow_mut();
+            DbHandle::Shared { conn, .. } => {
+                let mut borrow = conn.borrow_mut();
                 f(&mut borrow)
             }
         }
@@ -725,6 +736,7 @@ pub(crate) fn sqlite_fake(
                 path: norm,
                 conn: None,
                 raw: None,
+                stats: Rc::new(RefCell::new(FakeQueryStats::default())),
             };
             if !raw_bytes.is_empty() {
                 let valid_magic =
@@ -788,6 +800,7 @@ fn open_ephemeral(
     types: &TypeTable,
     open_databases: &Rc<Cell<u32>>,
     result_ty: u32,
+    is_fake: bool,
 ) -> Result<Value, HostError> {
     if u64::from(open_databases.get()) >= MO_LIMIT_OPEN_DATABASES {
         return Err(HostError::Bug {
@@ -807,16 +820,18 @@ fn open_ephemeral(
     if let Err(e) = configure_connection(&conn) {
         return error_failed(heap, types, result_ty, &sqlite_err_message(&e));
     }
-    wrap_database(
-        heap,
-        types,
-        open_databases,
-        result_ty,
+    let handle = if is_fake {
+        DbHandle::Shared {
+            conn: Rc::new(RefCell::new(conn)),
+            stats: Rc::new(RefCell::new(FakeQueryStats::default())),
+        }
+    } else {
         DbHandle::Owned {
             conn: Some(Box::new(RefCell::new(conn))),
             serialize_close: false,
-        },
-    )
+        }
+    };
+    wrap_database(heap, types, open_databases, result_ty, handle)
 }
 
 fn open_fake(
@@ -853,12 +868,12 @@ fn open_fake(
         });
     }
 
-    let shared_conn = if let Some(idx) = found_idx {
+    let (shared_conn, shared_stats) = if let Some(idx) = found_idx {
         let entry = &mut hub_mut.entries[idx];
         if entry.conn.is_none() && entry.raw.is_some() {
             return error_failed(heap, types, result_ty, "file is not a database");
         }
-        if let Some(ref existing) = entry.conn {
+        let rc = if let Some(ref existing) = entry.conn {
             Rc::clone(existing)
         } else {
             let conn = Connection::open_in_memory().map_err(|_| HostError::OutOfMemory {
@@ -870,7 +885,8 @@ fn open_fake(
             let rc = Rc::new(RefCell::new(conn));
             entry.conn = Some(Rc::clone(&rc));
             rc
-        }
+        };
+        (rc, Rc::clone(&entry.stats))
     } else {
         let conn = Connection::open_in_memory().map_err(|_| HostError::OutOfMemory {
             value_bytes_limit: false,
@@ -879,12 +895,14 @@ fn open_fake(
             value_bytes_limit: false,
         })?;
         let rc = Rc::new(RefCell::new(conn));
+        let stats = Rc::new(RefCell::new(FakeQueryStats::default()));
         hub_mut.entries.push(FakeSqliteEntry {
             path: norm.to_string(),
             conn: Some(Rc::clone(&rc)),
             raw: None,
+            stats: Rc::clone(&stats),
         });
-        rc
+        (rc, stats)
     };
     drop(hub_mut);
 
@@ -893,7 +911,10 @@ fn open_fake(
         types,
         open_databases,
         result_ty,
-        DbHandle::Shared(shared_conn),
+        DbHandle::Shared {
+            conn: shared_conn,
+            stats: shared_stats,
+        },
     )
 }
 
@@ -1214,6 +1235,16 @@ fn exec_sql(
             }
         }
 
+        if let DbHandle::Shared { stats, .. } = &db_cap.handle {
+            let mut st = stats.borrow_mut();
+            if mode == SqlExecMode::Query {
+                st.query_count = st.query_count.saturating_add(1);
+            } else {
+                st.exec_count = st.exec_count.saturating_add(1);
+            }
+            st.statements.push(sql.to_string());
+        }
+
         auth.in_step.store(true, Ordering::Relaxed);
 
         if mode != SqlExecMode::Query {
@@ -1399,7 +1430,8 @@ pub(crate) fn call_sqlite(
             let cap = crate::downcast_cap::<SqliteCap>(&args[0], "Sqlite capability");
             let raw = args[1].as_text();
             if raw == ":memory:" {
-                return open_ephemeral(heap, types, open_databases, result_ty);
+                let is_fake = matches!(cap, SqliteCap::Fake(_));
+                return open_ephemeral(heap, types, open_databases, result_ty, is_fake);
             }
             let norm = match prepare_real_path(raw.as_bytes()) {
                 Ok(n) => n,
@@ -1428,6 +1460,48 @@ pub(crate) fn call_sqlite(
         HostOpId::SqliteRun => exec_sql(heap, types, SqlExecMode::Run, result_ty, args),
         HostOpId::SqliteExecuteRaw => exec_sql(heap, types, SqlExecMode::Raw, result_ty, args),
         HostOpId::SqliteQuery => exec_sql(heap, types, SqlExecMode::Query, result_ty, args),
+        HostOpId::SqliteStatsRaw => {
+            let db_cap = crate::downcast_cap::<DatabaseCap>(&args[0], "Sqlite.Database capability");
+            let DbHandle::Shared { stats, .. } = &db_cap.handle else {
+                return Err(HostError::Bug {
+                    reason: "Sqlite.Database.stats is only available on fake or in-memory test databases",
+                    detail: None,
+                });
+            };
+            let st = stats.borrow();
+            let mut stmts = VecDeque::with_capacity(st.statements.len());
+            for s in &st.statements {
+                stmts.push_back(heap.alloc_text(s.clone())?);
+            }
+            let stmts_val = heap.alloc_list(stmts)?;
+            #[expect(
+                clippy::expect_used,
+                reason = "verified bytecode guarantees tuple layout for Sqlite.stats_raw"
+            )]
+            let layout = types
+                .find_tuple_layout(result_ty)
+                .expect("tuple layout for Sqlite.stats_raw");
+            Ok(heap.construct(
+                types,
+                layout,
+                vec![
+                    Value::Int(st.query_count),
+                    Value::Int(st.exec_count),
+                    stmts_val,
+                ],
+            )?)
+        }
+        HostOpId::SqliteResetStatsRaw => {
+            let db_cap = crate::downcast_cap::<DatabaseCap>(&args[0], "Sqlite.Database capability");
+            let DbHandle::Shared { stats, .. } = &db_cap.handle else {
+                return Err(HostError::Bug {
+                    reason: "Sqlite.Database.reset_stats is only available on fake or in-memory test databases",
+                    detail: None,
+                });
+            };
+            *stats.borrow_mut() = FakeQueryStats::default();
+            Ok(Value::Unit)
+        }
         _ => unreachable!("non-sqlite hostop routed to sqlite module"),
     }
 }

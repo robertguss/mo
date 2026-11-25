@@ -601,6 +601,8 @@ pub fn resolve_operation(prim: &Prim) -> Option<Operation> {
                     CoreIoNullaryOp::ReadFileOpen => HostOpId::ReadfilesOpen,
                     CoreIoNullaryOp::NetworkFakeScripted => HostOpId::NetworkFakeScripted,
                     CoreIoNullaryOp::NetworkRecordedCalls => HostOpId::NetworkRecordedCalls,
+                    CoreIoNullaryOp::SqliteStatsRaw => HostOpId::SqliteStatsRaw,
+                    CoreIoNullaryOp::SqliteResetStatsRaw => HostOpId::SqliteResetStatsRaw,
                 },
                 IoOp::ReadText { ro: false } => HostOpId::FilesReadText,
                 IoOp::ReadText { ro: true } => HostOpId::ReadfilesReadText,

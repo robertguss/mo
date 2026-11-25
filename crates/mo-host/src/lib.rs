@@ -647,12 +647,14 @@ impl HostContext {
                 network::call_network(heap, types, &self.open_connections, op, result_ty, args)
             }
 
-            // Sqlite & Sqlite.Database (5 ops)
+            // Sqlite & Sqlite.Database (7 ops)
             HostOpId::SqliteFake => sqlite::sqlite_fake(heap, result_ty, args.first()),
             HostOpId::SqliteOpen
             | HostOpId::SqliteRun
             | HostOpId::SqliteQuery
-            | HostOpId::SqliteExecuteRaw => sqlite::call_sqlite(
+            | HostOpId::SqliteExecuteRaw
+            | HostOpId::SqliteStatsRaw
+            | HostOpId::SqliteResetStatsRaw => sqlite::call_sqlite(
                 heap,
                 types,
                 #[cfg(unix)]

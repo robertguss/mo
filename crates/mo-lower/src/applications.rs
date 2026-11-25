@@ -1138,6 +1138,10 @@ fn match_static_prim(native: &str) -> Option<Prim> {
         "Sqlite.run" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::SqliteRun))),
         "Sqlite.query" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::SqliteQuery))),
         "Sqlite.execute_raw" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::SqliteExecuteRaw))),
+        "Sqlite.stats_raw" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::SqliteStatsRaw))),
+        "Sqlite.reset_stats_raw" => Some(Prim::Io(IoOp::Nullary(
+            CoreIoNullaryOp::SqliteResetStatsRaw,
+        ))),
         "Command.run_raw" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::CommandRunRaw))),
         "Command.within" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::CommandWithin))),
         "Command.allow_programs" => Some(Prim::Io(IoOp::Nullary(

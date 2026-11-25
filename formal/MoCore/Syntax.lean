@@ -379,7 +379,7 @@ inductive IoOp where
   | list (ro : Bool) | entries (ro : Bool) | «exists» (ro : Bool) | within (ro : Bool) | readOnly
   | now | sleep | randomInt
   | connect | connectSecure | allowHosts | send | receive
-  | sqliteOpen | sqliteRun | sqliteQuery | sqliteExecuteRaw
+  | sqliteOpen | sqliteRun | sqliteQuery | sqliteExecuteRaw | sqliteStatsRaw | sqliteResetStatsRaw
   | commandRunRaw | commandWithin | commandAllowPrograms
   | secureRandomBytes
   | writeBytes | rename | fileOpen | fileReadAt | fileWriteAt | fileSize | fileTruncate | fileSync
@@ -637,6 +637,8 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .sqliteQuery => ([.cap .database, .text, .list .sqliteValue], .result .sqliteRows .sqliteError)
   | .sqliteExecuteRaw =>
     ([.cap .database, .text, .list .sqliteValue], .result (.tuple [.int, .int]) .sqliteError)
+  | .sqliteStatsRaw => ([.cap .database], .tuple [.int, .int, .list .text])
+  | .sqliteResetStatsRaw => ([.cap .database], .unit)
   | .commandRunRaw =>
     ([.cap .command, .text, .list .text, .duration], .result (.tuple [.int, .bytes, .bytes]) .text)
   | .commandWithin => ([.cap .command, .text], .cap .command)

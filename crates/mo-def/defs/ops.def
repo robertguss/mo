@@ -102,5 +102,6 @@
     X(FILE_TRUNCATE, "fileTruncate") X(FILE_SYNC, "fileSync") \
     X(FILE_LOCK_SHARED, "fileLockShared") X(FILE_LOCK_EXCLUSIVE, "fileLockExclusive") \
     X(FILE_UNLOCK, "fileUnlock") X(READ_FILE_OPEN, "readFileOpen") \
-    X(NETWORK_FAKE_SCRIPTED, "networkFakeScripted") X(NETWORK_RECORDED_CALLS, "networkRecordedCalls")
+    X(NETWORK_FAKE_SCRIPTED, "networkFakeScripted") X(NETWORK_RECORDED_CALLS, "networkRecordedCalls") \
+    X(SQLITE_STATS_RAW, "sqliteStatsRaw") X(SQLITE_RESET_STATS_RAW, "sqliteResetStatsRaw")
 // clang-format on

@@ -616,6 +616,10 @@ starting folder; the fake keeps each database as serialized bytes in memory.
 | `query(statement, values)` | host | `SQLITE_QUERY` | |
 | `execute_raw(statement, values)` | host | `SQLITE_EXECUTE_RAW` | returns `(changes, last_insert_rowid)` from `sqlite3_total_changes64` delta and `sqlite3_last_insert_rowid` |
 | `execute(statement, values)` | Mo | `lib/sqlite.mo` | wraps `SQLITE_EXECUTE_RAW` in `Sqlite.ExecResult` |
+| `stats_raw` | host | `SQLITE_STATS_RAW` | returns `(query_count, exec_count, statements)` recorded on a fake or in-memory test database |
+| `reset_stats_raw` | host | `SQLITE_RESET_STATS_RAW` | clears the statement counts and templates recorded on a fake or in-memory test database |
+| `stats()` | Mo | `lib/sqlite.mo` | wraps `SQLITE_STATS_RAW` into `Sqlite.QueryStats` for N+1 query budget assertions |
+| `reset_stats()` | Mo | `lib/sqlite.mo` | clears fake `Sqlite.QueryStats` counters and statements |
 | `Sqlite.transaction(db, ctx, work, on_sql)` | Mo | `lib/sqlite.mo` | runs `BEGIN IMMEDIATE`, commits on `Ok`, rolls back on `Error` |
 | `Sqlite.decode(rows)` | lowering | `crates/mo-lower/src/abilities.rs`, `lib/sqlite.mo` | compiler-derived struct row decoder with column-name matching and cell validation |
 | `Sqlite.decode_one(rows)` | lowering | `crates/mo-lower/src/abilities.rs`, `lib/sqlite.mo` | single-row variant returning `ExpectedOneRow` when `rows.rows.size != 1` |

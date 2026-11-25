@@ -743,6 +743,22 @@ impl<'a> InferState<'a> {
             }
             return InferValue::none();
         }
+        if !self.spec
+            && (qualified == "Sqlite.stats_raw" || qualified == "Sqlite.reset_stats_raw")
+            && self.forbids_sqlite_test_stats()
+        {
+            let _ = self.problem(
+                ErrorCode::FakeOutsideSpec,
+                self.span,
+                "Sqlite.stats and Sqlite.reset_stats are used only in a test, example, promise or test helper",
+                Some(
+                    "Query instrumentation belongs to fake or in-memory test databases, never main, \
+                     services, actors or route handlers (reference 12.4).",
+                ),
+                None,
+            );
+            return InferValue::none();
+        }
         let out = self.function_value(ty_id, requirements);
         if let Some(gid) = out.graph {
             self.emitted[gid.index()].native = Some(qualified);
@@ -813,6 +829,24 @@ impl<'a> InferState<'a> {
             }
             return InferValue::none();
         }
+        if !self.spec
+            && fn_scope.library
+            && fn_scope.name.as_deref() == Some("Sqlite")
+            && (sym.name == "stats" || sym.name == "reset_stats")
+            && self.forbids_sqlite_test_stats()
+        {
+            let _ = self.problem(
+                ErrorCode::FakeOutsideSpec,
+                self.span,
+                "Sqlite.stats and Sqlite.reset_stats are used only in a test, example, promise or test helper",
+                Some(
+                    "Query instrumentation belongs to fake or in-memory test databases, never main, \
+                     services, actors or route handlers (reference 12.4).",
+                ),
+                None,
+            );
+            return InferValue::none();
+        }
         if let Some(out_ty) = out.ty
             && fn_scope.library
             && fn_scope.name.as_deref() == Some("Json")
@@ -830,6 +864,26 @@ impl<'a> InferState<'a> {
             }
         }
         out
+    }
+
+    fn forbids_sqlite_test_stats(&self) -> bool {
+        let own_scope = self.interfaces.scope(self.enclosing.module);
+        if own_scope.library && own_scope.name.as_deref() == Some("Sqlite") {
+            return false;
+        }
+        if self.enclosing.owner_kind != SyntaxKind::Fn {
+            return true;
+        }
+        if !own_scope.library
+            && self.enclosing.module == ModuleId(0)
+            && self
+                .enclosing
+                .owner_symbol
+                .is_some_and(|s| self.interfaces.symbol(s).name == "main")
+        {
+            return true;
+        }
+        false
     }
 
     pub(crate) fn select_overload(

@@ -1,8 +1,11 @@
 ## Typed row decoding, write metadata and transaction helpers for Sqlite.
 module Sqlite
 expose ExecResult(..),
+QueryStats(..),
 SqliteDecodeError(..),
 execute,
+stats,
+reset_stats,
 transaction,
 decode,
 decode_one,
@@ -15,6 +18,13 @@ use Json
 struct ExecResult
   changes: Int
   last_insert_rowid: Int
+end
+
+## SQL statement counts and parameterized SQL templates recorded on a fake test database.
+struct QueryStats
+  query_count: Int
+  exec_count: Int
+  statements: List(Text)
 end
 
 ## Why decoding `Sqlite.Rows` into a typed struct failed.
@@ -49,6 +59,17 @@ fn execute(db: Sqlite.Database, statement: Text, values: List(Sqlite.Value)) : R
     Ok((changes, last_id)): Ok(ExecResult(changes: changes, last_insert_rowid: last_id))
     Error(err): Error(err)
   end
+end
+
+## Returns parameterized SQL counts and templates recorded on a fake or in-memory test database.
+fn stats(db: Sqlite.Database) : QueryStats
+  (query_count, exec_count, statements) = db.stats_raw
+  QueryStats(query_count: query_count, exec_count: exec_count, statements: statements)
+end
+
+## Clears the SQL counts and statement log recorded on a fake or in-memory test database.
+fn reset_stats(db: Sqlite.Database) : Unit
+  db.reset_stats_raw
 end
 
 ## Runs `work` inside a `BEGIN IMMEDIATE` transaction, committing on `Ok` and rolling back on `Error`.
@@ -597,4 +618,54 @@ test "db.execute, foreign keys, typed row decoding, and transactions"
   assert rolled_back == Error(InsufficientFunds)
   ledger_rows = must_ok(db.query("SELECT amount FROM ledger", []))
   assert ledger_rows.rows == [[Sqlite.Integer(50)]]
+end
+
+fn assert_query_budget(db: Sqlite.Database, max_queries: Int) : Unit
+  assert db.stats().query_count <= max_queries
+end
+
+test "Sqlite.stats and reset_stats track parameterized templates without bound values"
+  sql = Sqlite.in_memory()
+  db = must_ok(sql.open("stats.db"))
+  assert db.stats() == QueryStats(query_count: 0, exec_count: 0, statements: [])
+
+  _c = must_ok(
+    db.run(
+      "CREATE TABLE secrets(id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL, token TEXT NOT NULL)",
+      []
+    )
+  )
+  _ins = must_ok(
+    db.execute(
+      "INSERT INTO secrets(email, token) VALUES (?, ?)",
+      [Sqlite.String("alice@example.com"), Sqlite.String("super-secret-bearer-token-999")]
+    )
+  )
+  _rows = must_ok(
+    db.query(
+      "SELECT id, email FROM secrets WHERE token = ?",
+      [Sqlite.String("super-secret-bearer-token-999")]
+    )
+  )
+
+  st = db.stats()
+  assert st.exec_count == 2
+  assert st.query_count == 1
+  assert st.statements == [
+    "CREATE TABLE secrets(id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL, token TEXT NOT NULL)",
+    "INSERT INTO secrets(email, token) VALUES (?, ?)",
+    "SELECT id, email FROM secrets WHERE token = ?"
+  ]
+  for s in st.statements
+    assert not s.contains?("super-secret-bearer-token-999")
+    assert not s.contains?("alice@example.com")
+  end
+  assert_query_budget(db, 1)
+
+  db.reset_stats()
+  assert db.stats() == QueryStats(query_count: 0, exec_count: 0, statements: [])
+
+  _rows2 = must_ok(db.query("SELECT COUNT(*) FROM secrets", []))
+  assert db.stats ==
+    QueryStats(query_count: 1, exec_count: 0, statements: ["SELECT COUNT(*) FROM secrets"])
 end
