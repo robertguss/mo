@@ -953,7 +953,7 @@ impl<'a> Checker<'a> {
                     self.sig1(s_bool, s_char)
                 }
                 CoreCharOp::Lower | CoreCharOp::Upper => self.sig1(s_char, s_char),
-                CoreCharOp::ToText => self.sig1(s_text, s_char),
+                CoreCharOp::ToText | CoreCharOp::Quoted => self.sig1(s_text, s_char),
             },
             Prim::Text(op) => match op {
                 CoreTextOp::Concat => self.sig2(s_text, s_text, s_text),
@@ -1008,6 +1008,7 @@ impl<'a> Checker<'a> {
                     self.sig2(s_text, lt, s_text)
                 }
                 CoreTextOp::Bytes => self.sig1(s_bytes, s_text),
+                CoreTextOp::Quoted => self.sig1(s_text, s_text),
             },
             Prim::Bytes(op) => match op {
                 CoreBytesOp::Size => self.sig1(s_int, s_bytes),

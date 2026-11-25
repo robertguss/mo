@@ -708,13 +708,14 @@ fn content(headers: List((Text, Text)), rest: Bytes, finished: Bool, limits: Lim
   Ok(rest)
 end
 
-## The single Content-Length value agreed on by all `Content-Length` headers, or an error when
-## any header is not a non-negative integer or two headers disagree (RFC 9112 section 6.3).
+## The non-negative Content-Length agreed on by all values, whether on separate lines or
+## comma-separated (RFC 9112 section 6.3). Empty list members do not supply a length.
 fn content_length(headers: List((Text, Text))) : Result(Option(Int), HttpError)
   examples
     content_length([]) == Ok(None)
     content_length([("Content-Length", "5")]) == Ok(Some(5))
     content_length([("Content-Length", "5"), ("content-length", "5")]) == Ok(Some(5))
+    content_length([("Content-Length", ", 005,\t5,")]) == Ok(Some(5))
     content_length([("Content-Length", "2"), ("Content-Length", "5")]) ==
       Error(BadResponse(reason: "conflicting Content-Length headers"))
     content_length([("Content-Length", "2"), ("Content-Length", "bad")]) ==
@@ -725,12 +726,18 @@ fn content_length(headers: List((Text, Text))) : Result(Option(Int), HttpError)
   return Ok(None) if lengths.empty?
   var agreed = -1
   for h in lengths
-    n = try number(h.1).or_fail(BadResponse(reason: "the Content-Length is not a number"))
-    if agreed >= 0 and n != agreed
-      return Error(BadResponse(reason: "conflicting Content-Length headers"))
+    for member in h.1.split(",")
+      digits = member.trim
+      if digits != ""
+        n = try number(digits).or_fail(BadResponse(reason: "the Content-Length is not a number"))
+        if agreed >= 0 and n != agreed
+          return Error(BadResponse(reason: "conflicting Content-Length headers"))
+        end
+        agreed = n
+      end
     end
-    agreed = n
   end
+  return Error(BadResponse(reason: "the Content-Length is not a number")) if agreed < 0
   Ok(Some(agreed))
 end
 
@@ -1277,4 +1284,25 @@ test "conflicting Content-Length headers are rejected while identical ones agree
   )
   assert asked.send(Network.fake(replies([(asked, same)]))) == Ok(same)
   assert read("GET", answered(same), true, limits(), start()) == Ok(same)
+end
+
+test "coalesced Content-Length values use the same framing rules in both readers"
+  asked = get("http://example.org/")
+  for value in ["5, 5", "005,\t5", ",5,,5,"]
+    response = Response(status: 200, headers: [("Content-Length", value)], body: "hello".bytes)
+    assert asked.send(Network.fake(replies([(asked, response)]))) == Ok(response)
+    assert read("GET", answered(response), true, limits(), start()) == Ok(response)
+  end
+  for value in ["5, 2", "5, +5", "5, -5", "9223372036854775808", ", ,", "5 5"]
+    response = Response(status: 200, headers: [("Content-Length", value)], body: "hello".bytes)
+    reason = if value == "5, 2": "conflicting Content-Length headers" else: "the Content-Length is not a number"
+    error = BadResponse(reason: reason)
+    assert asked.send(Network.fake(replies([(asked, response)]))) == Error(error)
+    assert read("GET", answered(response), true, limits(), start()) == Error(Bad(error))
+  end
+  headers = [("Transfer-Encoding", "chunked"), ("Content-Length", "5, 2")]
+  chunked = Response(status: 200, headers: headers, body: "2\r\nhi\r\n0\r\n\r\n".bytes)
+  decoded = Response(status: 200, headers: headers, body: "hi".bytes)
+  assert asked.send(Network.fake(replies([(asked, chunked)]))) == Ok(decoded)
+  assert read("GET", answered(chunked), true, limits(), start()) == Ok(decoded)
 end

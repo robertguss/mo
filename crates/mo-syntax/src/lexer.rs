@@ -91,10 +91,6 @@ pub(crate) fn decode_utf8(bytes: &[u8]) -> Option<(u32, u32)> {
     ch.map(|c| (c as u32, width as u32))
 }
 
-const fn is_invisible(c: u32) -> bool {
-    mo_def::is_invisible_scalar(c)
-}
-
 const fn is_lower(c: u8) -> bool {
     c.is_ascii_lowercase()
 }
@@ -400,7 +396,7 @@ impl<'a> Lexer<'a> {
             self.pos += 1;
             return false;
         };
-        if is_invisible(c) || (c == 13 && self.peek(1) != Some(10)) {
+        if mo_def::is_invisible_scalar(c) || (c == 13 && self.peek(1) != Some(10)) {
             self.lex_error(
                 diags,
                 ErrorCode::SourceInvisible,

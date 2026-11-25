@@ -737,7 +737,9 @@ pub(crate) fn attach_trivia(
     // Attach in source order: an own-line comment attaches to the immediately following AST node
     // inside `enclosing`, rather than skipping ahead to an indentation-matched descendant or
     // falling to `enclosing.ending`. Only at a branch boundary (`Else`/`IfPart`/`Arm` starting at
-    // `end`) does deeper indentation keep the comment inside the closing branch's `ending`.
+    // `end`) does deeper indentation keep the comment inside the closing branch's `ending`,
+    // until a leading comment starts the next branch's group.
+    let mut leading_branch = None;
     for raw in raw_comments {
         let anchor = raw.comment.anchor;
         let span = raw.comment.span;
@@ -759,11 +761,16 @@ pub(crate) fn attach_trivia(
                 && matches!(
                     next.kind,
                     SyntaxKind::Else | SyntaxKind::IfPart | SyntaxKind::Arm
-                )
-                && indentation > next.indentation;
-            if at_branch_boundary {
+                );
+            if at_branch_boundary
+                && leading_branch != Some(next.node)
+                && indentation > next.indentation
+            {
                 tree.node_mut(enclosing).ending.push(cid);
             } else {
+                if at_branch_boundary {
+                    leading_branch = Some(next.node);
+                }
                 tree.node_mut(next.node).leading.push(cid);
             }
         } else {

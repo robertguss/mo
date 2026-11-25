@@ -1909,48 +1909,31 @@ pub fn render_defect(file: &BytecodeFile, defect: &Defect) -> String {
 const DEFECT_VAR_BUDGET: usize = 4096;
 const DEFECT_TRUNCATED_MARKER: &str = "… <truncated>";
 
-fn escape_quoted_scalar(bytes: &[u8], delimiter: u8) -> (usize, String) {
-    let c = bytes[0];
-    let count = if c < 0x80 {
-        1
-    } else if c < 0xe0 {
-        2
-    } else if c < 0xf0 {
-        3
-    } else {
-        4
-    };
-    let is_interp = c == b'#' && bytes.len() > 1 && bytes[1] == b'{';
-    let is_c1 = c == 0xc2 && count == 2 && (0x80..=0x9f).contains(&bytes[1]);
-    let part = match c {
-        b'\n' => "\\n".to_string(),
-        b'\r' => "\\r".to_string(),
-        b'\t' => "\\t".to_string(),
-        b'\\' => "\\\\".to_string(),
-        b if b == delimiter || is_interp => format!("\\{}", b as char),
-        b if b < 32 || b == 127 => format!("\\u{{{b:x}}}"),
-        _ if is_c1 => format!("\\u{{{:x}}}", bytes[1]),
-        _ => std::str::from_utf8(&bytes[..count])
-            .unwrap_or("")
-            .to_string(),
-    };
-    (count, part)
+fn escape_quoted_scalar(c: char, delimiter: char, starts_interpolation: bool) -> String {
+    match c {
+        '\n' => "\\n".to_string(),
+        '\r' => "\\r".to_string(),
+        '\t' => "\\t".to_string(),
+        '\\' => "\\\\".to_string(),
+        c if c == delimiter || starts_interpolation => format!("\\{c}"),
+        c if mo_def::is_invisible_scalar(c as u32) => format!("\\u{{{:x}}}", c as u32),
+        c => c.to_string(),
+    }
 }
 
 fn format_defect_quoted(s: &str, delimiter: char, budget: usize) -> (String, bool) {
-    let delim_byte = delimiter as u8;
-    let bytes = s.as_bytes();
+    let parts = || {
+        s.char_indices()
+            .map(|(i, c)| escape_quoted_scalar(c, delimiter, s[i..].starts_with("#{")))
+    };
     let mut total = 2usize;
     let mut clipped = false;
-    let mut at = 0usize;
-    while at < bytes.len() {
-        let (count, part) = escape_quoted_scalar(&bytes[at..], delim_byte);
+    for part in parts() {
         if part.len() > budget.saturating_sub(total) {
             clipped = true;
             break;
         }
         total += part.len();
-        at += count;
     }
     let reserve = 2 + if clipped {
         DEFECT_TRUNCATED_MARKER.len()
@@ -1964,17 +1947,14 @@ fn format_defect_quoted(s: &str, delimiter: char, budget: usize) -> (String, boo
     let mut out = String::new();
     out.push(delimiter);
     let mut written = 0usize;
-    let mut i = 0usize;
-    while i < bytes.len() {
-        let (count, part) = escape_quoted_scalar(&bytes[i..], delim_byte);
+    for part in parts() {
         if written + part.len() > max_body {
             break;
         }
         out.push_str(&part);
         written += part.len();
-        i += count;
     }
-    if i != bytes.len() {
+    if clipped {
         out.push_str(DEFECT_TRUNCATED_MARKER);
     }
     out.push(delimiter);
@@ -2022,10 +2002,7 @@ fn escape_defect_text(out: &mut String, s: &str) {
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
             '\\' => out.push_str("\\\\"),
-            c if (c as u32) < 32
-                || (c as u32) == 127
-                || ((c as u32) >= 0x80 && (c as u32) <= 0x9f) =>
-            {
+            c if mo_def::is_invisible_scalar(c as u32) => {
                 out.push_str(&format!("\\u{{{:x}}}", c as u32));
             }
             c => out.push(c),
@@ -2065,6 +2042,23 @@ mod tests {
         AnchorExpectation, BYTECODE_FLAGS_NONE, BYTECODE_MAGIC, BYTECODE_MAJOR, BYTECODE_MINOR,
         ConstantDef, DebugEntry, FunctionDef, Header, ModuleDef, NO_INDEX, ParameterDef, TypeDef,
     };
+
+    #[test]
+    fn defect_text_and_quoted_variables_escape_invisible_scalars() {
+        let input = "é\u{80}\u{202e}\u{e0001}";
+        let escaped = r"é\u{80}\u{202e}\u{e0001}";
+        let mut text = String::new();
+        escape_defect_text(&mut text, input);
+        assert_eq!(text, escaped);
+        assert_eq!(
+            format_defect_quoted(input, '"', 32),
+            (format!("\"{escaped}\""), false)
+        );
+        assert_eq!(
+            format_defect_quoted(input, '"', 20),
+            (format!("\"é{DEFECT_TRUNCATED_MARKER}\""), true)
+        );
+    }
 
     fn insn(op: Opcode, var_count: u32, operands: &[u32]) -> Vec<u32> {
         let mut words = Vec::with_capacity(1 + operands.len());

@@ -115,14 +115,6 @@ pub(crate) fn normalize_path(bytes: &[u8]) -> Result<String, FileProblem> {
     Ok(String::from_utf8(out).expect("normalized slice of valid UTF-8 is valid UTF-8"))
 }
 
-/// Exact port of `src/host/real-files.c:prepare_real_path`.
-pub(crate) fn prepare_real_path(bytes: &[u8]) -> Result<String, FileProblem> {
-    if bytes.contains(&0) {
-        return Err(FileProblem::not_allowed(true));
-    }
-    normalize_path(bytes)
-}
-
 /// Returns whether `bytes` is a plain relative path (no NUL bytes, empty/`.`/`..` segments).
 pub(crate) fn plain_relative(bytes: &[u8]) -> bool {
     if bytes.contains(&0) {

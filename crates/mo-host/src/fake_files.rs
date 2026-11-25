@@ -195,6 +195,17 @@ pub(crate) fn files_in_memory_with_folders(
     files: &[(String, Vec<u8>)],
     folders: &[String],
 ) -> Result<Value, HostError> {
+    if let Some(path) = files
+        .iter()
+        .map(|(path, _)| path)
+        .chain(folders)
+        .find(|path| path.as_bytes().contains(&0))
+    {
+        return Err(HostError::Bug {
+            reason: "fake has a path that contains NUL",
+            detail: Some(path.clone()),
+        });
+    }
     let mut state = FakeFsState::new(heap.budget().clone());
     for folder in folders {
         let mut prefixes = Vec::new();
@@ -620,6 +631,14 @@ fn fake_rename(
     result_ty: u32,
     args: &[Value],
 ) -> Result<Value, HostError> {
+    let from_norm = match normalize_path(args[1].as_text().as_bytes()) {
+        Ok(p) => p,
+        Err(problem) => return make_file_error(heap, types, result_ty, &args[1], problem),
+    };
+    let to_norm = match normalize_path(args[2].as_text().as_bytes()) {
+        Ok(p) => p,
+        Err(problem) => return make_file_error(heap, types, result_ty, &args[2], problem),
+    };
     let Some(root_prefix) = folder.prefix.as_deref() else {
         return make_file_error(
             heap,
@@ -628,14 +647,6 @@ fn fake_rename(
             &args[1],
             FileProblem::not_allowed(false),
         );
-    };
-    let from_norm = match normalize_path(args[1].as_text().as_bytes()) {
-        Ok(p) => p,
-        Err(problem) => return make_file_error(heap, types, result_ty, &args[1], problem),
-    };
-    let to_norm = match normalize_path(args[2].as_text().as_bytes()) {
-        Ok(p) => p,
-        Err(problem) => return make_file_error(heap, types, result_ty, &args[2], problem),
     };
     let from_path = join_path(root_prefix, &from_norm);
     let to_path = join_path(root_prefix, &to_norm);

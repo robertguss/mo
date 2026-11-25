@@ -1239,3 +1239,10 @@ fn misaligned_own_line_comments_preserve_position_and_equivalence() {
     let single_stmt_arm = "module Main\n\nfn f(x: Int) : Int\n  case x\n    1: a = 1\n      # end of arm 1\n    # before arm 2\n    _: 2\n  end\nend\n";
     check_format_source(single_stmt_arm, Some(single_stmt_arm));
 }
+
+#[test]
+fn alternating_branch_comment_indentation_does_not_reorder_comments() {
+    let source = "module Main\n\nfn f(flag: Bool) : Int\n  if flag\n    1\n    # first\n  # second\n    # third\n  else\n    2\n  end\nend\n";
+    let expected = "module Main\n\nfn f(flag: Bool) : Int\n  if flag\n    1\n    # first\n  # second\n  # third\n  else\n    2\n  end\nend\n";
+    check_format_source(source, Some(expected));
+}

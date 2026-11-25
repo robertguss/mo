@@ -221,21 +221,7 @@ type BoundedWriter = RenderWriter;
 
 /// Reference 2.1 refused characters plus line/terminal controls (`src/tools/render.c:escaped`).
 const fn is_escaped_cp(c: u32) -> bool {
-    c < 32
-        || c == 127
-        || (c >= 128 && c <= 159)
-        || c == u32::MAX
-        || c == 0xAD
-        || c == 0x61C
-        || c == 0x180E
-        || (c >= 0x200B && c <= 0x200F)
-        || (c >= 0x2028 && c <= 0x202E)
-        || (c >= 0x2060 && c <= 0x2064)
-        || (c >= 0x2066 && c <= 0x206F)
-        || c == 0xFEFF
-        || (c >= 0xFFF9 && c <= 0xFFFB)
-        || c == 0xE_0001
-        || (c >= 0xE_0020 && c <= 0xE_007F)
+    c < 32 || c == u32::MAX || mo_def::is_invisible_scalar(c)
 }
 
 fn scalar_u32(bytes: &[u8]) -> (u32, usize) {

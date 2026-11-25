@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::VecDeque;
+use std::fmt::Write as _;
 
 use mo_bytecode::types::TypeTable;
 use mo_def::PrimId;
@@ -64,7 +65,6 @@ fn quote_prim(s: &str, delimiter: u8) -> Result<String, PrimError> {
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
             c if mo_def::is_invisible_scalar(c as u32) => {
-                use std::fmt::Write as _;
                 let _ = write!(out, "\\u{{{:x}}}", c as u32);
             }
             c => {

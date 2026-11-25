@@ -33,7 +33,7 @@ def bases : List (String × Base) :=
 def cmpOps : List (String × CmpOp) := [("lt", .lt), ("le", .le), ("gt", .gt), ("ge", .ge)]
 def charOps : List (String × CharOp) :=
   [("code", .code), ("isDigit", .isDigit), ("isLetter", .isLetter), ("isWhiteSpace", .isWhiteSpace),
-   ("lower", .lower), ("upper", .upper), ("toText", .toText)]
+   ("lower", .lower), ("upper", .upper), ("toText", .toText), ("quoted", .quoted)]
 def textOps : List (String × TextOp) :=
   [("concat", .concat), ("byteCount", .byteCount), ("charCount", .charCount), ("isEmpty", .isEmpty),
    ("chars", .chars), ("fromChars", .fromChars), ("lines", .lines), ("words", .words),
@@ -42,7 +42,7 @@ def textOps : List (String × TextOp) :=
    ("dropPrefix", .dropPrefix), ("dropSuffix", .dropSuffix), ("replace", .replace),
    ("repeat", .«repeat»), ("padLeft", .padLeft), ("padRight", .padRight), ("lower", .lower),
    ("upper", .upper), ("toInt", .toInt), ("toDecimal", .toDecimal), ("toFloat", .toFloat),
-   ("join", .join), ("bytes", .bytes)]
+   ("join", .join), ("bytes", .bytes), ("quoted", .quoted)]
 def bytesOps : List (String × BytesOp) :=
   [("size", .size), ("get", .get), ("decodeUtf8", .decodeUtf8), ("slice", .slice), ("join", .join),
    ("toHex", .toHex), ("fromHex", .fromHex), ("toBase64url", .toBase64url),

@@ -343,8 +343,8 @@ mod tests {
         assert_eq!(CoreFloatOp::ALL.len(), 15);
         assert_eq!(CoreBase::ALL.len(), 11);
         assert_eq!(CoreCmpOp::ALL.len(), 4);
-        assert_eq!(CoreCharOp::ALL.len(), 7);
-        assert_eq!(CoreTextOp::ALL.len(), 28);
+        assert_eq!(CoreCharOp::ALL.len(), 8);
+        assert_eq!(CoreTextOp::ALL.len(), 29);
         assert_eq!(CoreBytesOp::ALL.len(), 21);
         assert_eq!(CoreUnicodeOp::ALL.len(), 7);
         assert_eq!(CoreCryptoOp::ALL.len(), 7);

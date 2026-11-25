@@ -8,7 +8,7 @@ use mo_check::{
 use mo_core::{Arm, CtorDecl, Expr, ExprId, FnKind, ListOp, MapOp, Prim, Ty, TyId};
 use mo_def::ErrorCode;
 use mo_def::core_ops::{
-    CoreFloatOp, CoreIntOp, CoreListNullaryOp, CoreMapNullaryOp, CoreSetOp, CoreTextOp,
+    CoreCharOp, CoreFloatOp, CoreIntOp, CoreListNullaryOp, CoreMapNullaryOp, CoreSetOp, CoreTextOp,
 };
 use mo_def::limits::MO_LIMIT_CORE_NODES;
 use mo_syntax::{SyntaxKind, TokenKind};
@@ -24,36 +24,6 @@ fn concat(p: &mut Lowering<'_>, left: ExprId, right: ExprId) -> LowerResult<Expr
     p.expr_prim(Prim::Text(CoreTextOp::Concat), vec![left, right])
 }
 
-fn replace_text(p: &mut Lowering<'_>, value: ExprId, from: &str, to: &str) -> LowerResult<ExprId> {
-    let f = p.expr_text(from)?;
-    let t = p.expr_text(to)?;
-    p.expr_prim(Prim::Text(CoreTextOp::Replace), vec![value, f, t])
-}
-
-fn quote_text(p: &mut Lowering<'_>, mut value: ExprId, character: bool) -> LowerResult<ExprId> {
-    value = replace_text(p, value, "\\", "\\\\")?;
-    let delim = if character { "'" } else { "\"" };
-    value = replace_text(p, value, delim, if character { "\\'" } else { "\\\"" })?;
-    if !character {
-        value = replace_text(p, value, "#{", "\\#{")?;
-    }
-    for i in 0u8..=32u8 {
-        let control = if i == 32 { 127u8 } else { i };
-        let from_str = String::from(char::from(control));
-        let spelling = match control {
-            b'\n' => "\\n".to_string(),
-            b'\r' => "\\r".to_string(),
-            b'\t' => "\\t".to_string(),
-            other => format!("\\u{{{other:x}}}"),
-        };
-        value = replace_text(p, value, &from_str, &spelling)?;
-    }
-    let open = p.expr_text(delim)?;
-    let close = p.expr_text(delim)?;
-    let tail = concat(p, value, close)?;
-    concat(p, open, tail)
-}
-
 fn part_text(
     p: &mut Lowering<'_>,
     derived_idx: usize,
@@ -66,20 +36,19 @@ fn part_text(
         (pr, d.subst, d.owner, d.depth)
     };
     lower_proof(p, &mut proof, &mut subst)?;
-    let converted = lower_to_text(p, proof, subst, owner, depth, value)?;
     let (kind, proof_ty) = {
         let imp = p.proof(proof);
         (imp.kind, imp.ty)
     };
-    let core_ty = lower_type(p, proof_ty, subst)?;
-    if kind == AbilityImplementationKind::Native
-        && matches!(p.core_ty(core_ty), Ty::Text | Ty::Char)
-    {
-        let is_char = matches!(p.core_ty(core_ty), Ty::Char);
-        quote_text(p, converted, is_char)
-    } else {
-        Ok(converted)
+    if kind == AbilityImplementationKind::Native {
+        let core_ty = lower_type(p, proof_ty, subst)?;
+        match p.core_ty(core_ty) {
+            Ty::Text => return p.expr_prim(Prim::Text(CoreTextOp::Quoted), vec![value]),
+            Ty::Char => return p.expr_prim(Prim::Char(CoreCharOp::Quoted), vec![value]),
+            _ => {}
+        }
     }
+    lower_to_text(p, proof, subst, owner, depth, value)
 }
 
 fn find_library_module(

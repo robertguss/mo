@@ -2721,6 +2721,74 @@ mod tests {
         );
         assert!(matches!(init_res, Err(HostError::Bug { .. })));
 
+        for (ctx, cap) in [(&mut fake_ctx, &fake_files), (&mut real_ctx, &real_files)] {
+            let folder = |path: &str| heap.alloc_text(path.into()).unwrap();
+            let invalid = folder("dest\0ination");
+            let narrowed = ctx
+                .call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesWithin,
+                    fx.files_cap,
+                    &[cap.clone(), folder("invalid\0root")],
+                )
+                .unwrap();
+            let file = folder("file");
+            let wrote = ctx
+                .call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesWriteText,
+                    fx.res_unit,
+                    &[cap.clone(), file.clone(), folder("data")],
+                )
+                .unwrap();
+            assert_eq!(
+                mo_heap::print::value_print(&fx.types, fx.res_unit, &wrote),
+                "Ok(Unit)"
+            );
+            for (cap, from, to, expected) in [
+                (
+                    cap,
+                    folder("missing"),
+                    invalid.clone(),
+                    "Error(NotAllowed(path: \"dest\\u{0}ination\"))",
+                ),
+                (
+                    &narrowed,
+                    file.clone(),
+                    invalid,
+                    "Error(NotAllowed(path: \"dest\\u{0}ination\"))",
+                ),
+                (
+                    cap,
+                    file,
+                    folder("."),
+                    "Error(Failed(path: \".\", reason: \"is a folder\"))",
+                ),
+                (
+                    cap,
+                    folder("file/child"),
+                    folder("."),
+                    "Error(Failed(path: \"file/child\", reason: \"not a folder\"))",
+                ),
+            ] {
+                let result = ctx
+                    .call(
+                        &heap,
+                        &fx.types,
+                        HostOpId::FilesRename,
+                        fx.res_unit,
+                        &[cap.clone(), from, to],
+                    )
+                    .unwrap();
+                assert_eq!(
+                    mo_heap::print::value_print(&fx.types, fx.res_unit, &result),
+                    expected
+                );
+            }
+        }
+
         // 2. rename("missing", ".") must return Error(NotFound(path: "missing")) on both backends.
         let missing = heap.alloc_text("missing".into()).unwrap();
         let dot = heap.alloc_text(".".into()).unwrap();
@@ -2752,5 +2820,36 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn restored_fake_files_reject_nul_in_files_and_folders() {
+        let fx = HostFixture::new();
+        let heap = Heap::new(8 * 1024 * 1024);
+        let mut ctx = HostContext::stdio(Vec::new(), Vec::new());
+        let path = "a\0b";
+        for (files, folders) in [
+            (vec![(path.into(), vec![])], vec![]),
+            (vec![], vec![path.into()]),
+        ] {
+            for (ty, init) in [
+                (
+                    fx.files_cap,
+                    FakeCapInit::Files {
+                        files: files.clone(),
+                        folders: folders.clone(),
+                    },
+                ),
+                (fx.readfiles_cap, FakeCapInit::ReadFiles { files, folders }),
+            ] {
+                assert!(matches!(
+                    ctx.restore_fake_capability(&heap, ty, init),
+                    Err(HostError::Bug {
+                        detail: Some(detail),
+                        ..
+                    }) if detail == path
+                ));
+            }
+        }
     }
 }
