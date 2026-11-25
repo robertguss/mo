@@ -1064,6 +1064,10 @@ fn match_static_prim(native: &str) -> Option<Prim> {
         "Files.size" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::FileSize))),
         "Files.truncate" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::FileTruncate))),
         "Files.sync" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::FileSync))),
+        "Files.lock_shared" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::FileLockShared))),
+        "Files.lock_exclusive" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::FileLockExclusive))),
+        "Files.unlock" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::FileUnlock))),
+        "ReadFiles.open" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::ReadFileOpen))),
         _ => None,
     }
 }

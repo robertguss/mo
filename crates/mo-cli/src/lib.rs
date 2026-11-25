@@ -23,7 +23,9 @@ pub mod test_cmd;
 #[cfg(test)]
 mod tests;
 
-pub use cli::{Cli, CliParseError, Command, EmitKind, parse_cli, parse_cli_os, valid_install_name};
+pub use cli::{
+    Cli, CliParseError, Command, EmitKind, format_help, parse_cli, parse_cli_os, valid_install_name,
+};
 pub use execute::{execute_cli, resolve_library_dir};
 pub use identity::{
     DEFAULT_BUILD_LIBRARY_ROOT, IdentityError, MO_EMBEDDED_GUIDE, MO_EMBEDDED_REFERENCE,

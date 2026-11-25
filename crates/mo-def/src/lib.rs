@@ -182,11 +182,15 @@ mod tests {
 
     #[test]
     fn pin_hostop_and_simop_counts_and_boundaries() {
-        assert_eq!(HOSTOP_COUNT, 59);
+        assert_eq!(HOSTOP_COUNT, 63);
         assert_eq!(HostOpId::ArgsList as u32, 0);
         assert_eq!(HostOpId::ConsoleFakeInput as u32, 10);
         assert_eq!(HostOpId::FilesSync as u32, 58);
-        assert_eq!(HostOpId::from_u32(59), None);
+        assert_eq!(HostOpId::FilesLockShared as u32, 59);
+        assert_eq!(HostOpId::FilesLockExclusive as u32, 60);
+        assert_eq!(HostOpId::FilesUnlock as u32, 61);
+        assert_eq!(HostOpId::ReadfilesOpen as u32, 62);
+        assert_eq!(HostOpId::from_u32(63), None);
 
         let args_list = HostOpId::ArgsList.info();
         assert_eq!(args_list.module, "Args");
@@ -203,6 +207,16 @@ mod tests {
         assert_eq!(sync.module, "Files");
         assert_eq!(sync.name, "sync");
         assert!(!sync.spec_only);
+
+        let lock_shared = HostOpId::FilesLockShared.info();
+        assert_eq!(lock_shared.module, "Files");
+        assert_eq!(lock_shared.name, "lock_shared");
+        assert!(!lock_shared.spec_only);
+
+        let read_open = HostOpId::ReadfilesOpen.info();
+        assert_eq!(read_open.module, "ReadFiles");
+        assert_eq!(read_open.name, "open");
+        assert!(!read_open.spec_only);
 
         assert_eq!(SIMOP_COUNT, 5);
         assert_eq!(SimOpId::Start as u32, 0);
@@ -318,7 +332,7 @@ mod tests {
         assert_eq!(CoreListNullaryOp::ALL.len(), 17);
         assert_eq!(CoreMapNullaryOp::ALL.len(), 11);
         assert_eq!(CoreSetOp::ALL.len(), 11);
-        assert_eq!(CoreIoNullaryOp::ALL.len(), 47);
+        assert_eq!(CoreIoNullaryOp::ALL.len(), 51);
 
         // Verify round-trip wire_name <-> from_wire_name on every family.
         for &op in CoreTypedOp::ALL {

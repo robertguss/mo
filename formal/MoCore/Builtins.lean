@@ -1229,8 +1229,19 @@ def sqliteTy (ok : Ty) : Ty := .result ok .sqliteError
   typedAs? program [("h", tCap .file)] (io .fileSize [v "h"]) (tRes tInt tFileError) &&
   typedAs? program [("h", tCap .file)] (io .fileTruncate [v "h", int 0]) (tRes tUnit tFileError) &&
   typedAs? program [("h", tCap .file)] (io .fileSync [v "h"]) (tRes tUnit tFileError) &&
+  typedAs? program [("h", tCap .file)] (io .fileLockShared [v "h"]) (tRes tUnit tFileError) &&
+  typedAs? program [("h", tCap .file)] (io .fileLockExclusive [v "h"]) (tRes tUnit tFileError) &&
+  typedAs? program [("h", tCap .file)] (io .fileUnlock [v "h"]) (tRes tUnit tFileError) &&
+  typedAs? program [("r", tCap .readFiles)] (io .readFileOpen [v "r", str "a.bin"])
+    (tRes (tCap .file) tFileError) &&
+  Text.exprRoundTrip (io .fileLockShared [v "h"]) &&
+  Text.exprRoundTrip (io .fileLockExclusive [v "h"]) &&
+  Text.exprRoundTrip (io .fileUnlock [v "h"]) &&
+  Text.exprRoundTrip (io .readFileOpen [v "r", str "a.bin"]) &&
   stops program (io .fileOpen [v "f", str "a.bin"]) (tRes (tCap .file) tFileError)
-    (.outside "Files binary handles are not modeled by mocore") {} [("f", .files)]
+    (.outside "Files binary handles are not modeled by mocore") {} [("f", .files)] &&
+  stops program (io .readFileOpen [v "r", str "a.bin"]) (tRes (tCap .file) tFileError)
+    (.outside "Files binary handles are not modeled by mocore") {} [("r", .readFiles)]
 
 -- Real-state dispatch, empty root, inaccessible/narrowed roots and persistent folders.
 #guard passes program

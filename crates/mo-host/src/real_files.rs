@@ -13,8 +13,8 @@ use mo_def::limits::{
 };
 use mo_heap::{Heap, ScratchGuard, Value};
 use rustix::fs::{
-    AtFlags, CWD, FileType, Mode, OFlags, RawDir, Stat, fstat, ftruncate, mkdirat, openat,
-    readlinkat, renameat, statat, unlinkat,
+    AtFlags, CWD, FileType, FlockOperation, Mode, OFlags, RawDir, Stat, flock, fstat, ftruncate,
+    mkdirat, openat, readlinkat, renameat, statat, unlinkat,
 };
 use rustix::io::{Errno, fcntl_dupfd_cloexec, pread, pwrite, read, write};
 
@@ -66,6 +66,7 @@ impl Drop for RealFolder {
 pub(crate) struct RealOpenFile {
     fd: OwnedFd,
     path: Value,
+    read_only: bool,
     open_files: Rc<Cell<u32>>,
 }
 
@@ -684,6 +685,16 @@ fn resolve_folder_root(
     Ok(fd)
 }
 
+fn flock_fd(fd: BorrowedFd<'_>, op: FlockOperation) -> Result<(), FileProblem> {
+    loop {
+        match flock(fd, op) {
+            Ok(()) => return Ok(()),
+            Err(Errno::INTR) => continue,
+            Err(e) => return Err(errno_to_problem(e)),
+        }
+    }
+}
+
 fn sync_fd(fd: BorrowedFd<'_>) -> Result<(), FileProblem> {
     #[cfg(target_os = "macos")]
     {
@@ -1160,6 +1171,7 @@ fn real_write_bytes_or_open(
     let handle = crate::OpenFileCap::Real(RealOpenFile {
         fd: file_fd,
         path: args[1].clone(),
+        read_only: false,
         open_files: Rc::clone(open_files),
     });
     open_files.set(open_files.get() + 1);
@@ -1373,7 +1385,8 @@ pub(crate) fn call_real_folder(
         HostOpId::FilesReadText
         | HostOpId::ReadfilesReadText
         | HostOpId::FilesReadBytes
-        | HostOpId::ReadfilesReadBytes => PathMode::Read,
+        | HostOpId::ReadfilesReadBytes
+        | HostOpId::ReadfilesOpen => PathMode::Read,
         _ => unreachable!("unexpected real folder op {op:?}"),
     };
 
@@ -1392,15 +1405,35 @@ pub(crate) fn call_real_folder(
 
     match mode {
         PathMode::Read => {
-            let as_text = matches!(op, HostOpId::FilesReadText | HostOpId::ReadfilesReadText);
-            read_all_fd(
-                heap,
-                types,
-                resolved.fd.as_fd(),
-                as_text,
-                result_ty,
-                &args[1],
-            )
+            if op == HostOpId::ReadfilesOpen {
+                if u64::from(open_files.get()) >= MO_LIMIT_OPEN_FILES {
+                    return Err(HostError::Bug {
+                        reason: "too many files open at once",
+                        detail: None,
+                    });
+                }
+                let ok_tag = find_case_tag(types, result_ty, "Ok");
+                let file_ty = types.get(result_ty).cases[ok_tag as usize].fields[0].ty;
+                let handle = crate::OpenFileCap::Real(RealOpenFile {
+                    fd: resolved.fd,
+                    path: args[1].clone(),
+                    read_only: true,
+                    open_files: Rc::clone(open_files),
+                });
+                open_files.set(open_files.get() + 1);
+                let cap_val = heap.alloc_capability(Capability::File, file_ty, Rc::new(handle))?;
+                make_file_ok(heap, types, result_ty, cap_val)
+            } else {
+                let as_text = matches!(op, HostOpId::FilesReadText | HostOpId::ReadfilesReadText);
+                read_all_fd(
+                    heap,
+                    types,
+                    resolved.fd.as_fd(),
+                    as_text,
+                    result_ty,
+                    &args[1],
+                )
+            }
         }
         PathMode::Folder => real_listing(heap, types, resolved.fd.as_fd(), result_ty, &args[1]),
         PathMode::Write | PathMode::Append => {
@@ -1443,10 +1476,44 @@ pub(crate) fn call_real_file(
     args: &[Value],
 ) -> Result<Value, HostError> {
     match op {
-        HostOpId::FilesSync => match sync_fd(file.fd.as_fd()) {
+        HostOpId::FilesLockShared => match flock_fd(file.fd.as_fd(), FlockOperation::LockShared) {
             Ok(()) => make_file_ok(heap, types, result_ty, Value::Unit),
             Err(p) => make_file_error(heap, types, result_ty, &file.path, p),
         },
+        HostOpId::FilesLockExclusive => {
+            if file.read_only {
+                return make_file_error(
+                    heap,
+                    types,
+                    result_ty,
+                    &file.path,
+                    FileProblem::not_allowed(false),
+                );
+            }
+            match flock_fd(file.fd.as_fd(), FlockOperation::LockExclusive) {
+                Ok(()) => make_file_ok(heap, types, result_ty, Value::Unit),
+                Err(p) => make_file_error(heap, types, result_ty, &file.path, p),
+            }
+        }
+        HostOpId::FilesUnlock => match flock_fd(file.fd.as_fd(), FlockOperation::Unlock) {
+            Ok(()) => make_file_ok(heap, types, result_ty, Value::Unit),
+            Err(p) => make_file_error(heap, types, result_ty, &file.path, p),
+        },
+        HostOpId::FilesSync => {
+            if file.read_only {
+                return make_file_error(
+                    heap,
+                    types,
+                    result_ty,
+                    &file.path,
+                    FileProblem::not_allowed(false),
+                );
+            }
+            match sync_fd(file.fd.as_fd()) {
+                Ok(()) => make_file_ok(heap, types, result_ty, Value::Unit),
+                Err(p) => make_file_error(heap, types, result_ty, &file.path, p),
+            }
+        }
         HostOpId::FilesSize => {
             let st = match fstat(&file.fd) {
                 Ok(s) => s,
@@ -1472,6 +1539,15 @@ pub(crate) fn call_real_file(
             make_file_ok(heap, types, result_ty, Value::Int(st.st_size))
         }
         HostOpId::FilesTruncate => {
+            if file.read_only {
+                return make_file_error(
+                    heap,
+                    types,
+                    result_ty,
+                    &file.path,
+                    FileProblem::not_allowed(false),
+                );
+            }
             let size = args[1].as_int();
             if size < 0 {
                 return Err(HostError::Bug {
@@ -1496,6 +1572,15 @@ pub(crate) fn call_real_file(
             }
         }
         HostOpId::FilesWriteAt => {
+            if file.read_only {
+                return make_file_error(
+                    heap,
+                    types,
+                    result_ty,
+                    &file.path,
+                    FileProblem::not_allowed(false),
+                );
+            }
             let offset = args[1].as_int();
             if offset < 0 {
                 return Err(HostError::Bug {

@@ -637,6 +637,7 @@ def guide_claims(binary):
          "`files.write_bytes(path, data)`",
          "`files.rename(from, to)`",
          "`files.open(path)` returns `Result(Files.File, FileError)`",
+         "`ReadFiles` also provides `read_files.open(path)` returning a read-only `Files.File`",
          "`Files.in_memory` stores raw bytes so `write_bytes`, `rename`, `open` and every "
          "`Files.File` operation work identically in `mo test`",
          "`Bytes` also provides `Bytes.empty`, `Bytes.zeroed(count)`, `Bytes.from_list(bytes)`, "
@@ -679,6 +680,14 @@ def guide_claims(binary):
             "  assert fh.read_at(4, 14) == Ok(hdr)\n"
             "  assert fh.truncate(4) == Ok(Unit)\n"
             "  assert fh.sync == Ok(Unit)\n"
+            "  assert fh.lock_exclusive == Ok(Unit)\n"
+            "  assert fh.lock_shared == Ok(Unit)\n"
+            "  assert fh.unlock == Ok(Unit)\n"
+            "  assert files.read_only.open(\"data.bin\") is Ok(ro)\n"
+            "  assert ro.lock_shared == Ok(Unit)\n"
+            "  assert ro.lock_exclusive == Error(NotAllowed(path: \"data.bin\"))\n"
+            "  assert ro.write_at(0, Bytes.empty) == Error(NotAllowed(path: \"data.bin\"))\n"
+            "  assert ro.unlock == Ok(Unit)\n"
             "  assert files.read_bytes(\"data.bin\") == Ok(Bytes.from_list([0, 255, 0, 0]))\n"
             "end\n")
         result = run(binary, ["test", str(source)], 0)

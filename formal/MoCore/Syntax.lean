@@ -383,6 +383,7 @@ inductive IoOp where
   | commandRunRaw | commandWithin | commandAllowPrograms
   | secureRandomBytes
   | writeBytes | rename | fileOpen | fileReadAt | fileWriteAt | fileSize | fileTruncate | fileSync
+  | fileLockShared | fileLockExclusive | fileUnlock | readFileOpen
   /-- Fake constructors: only spec code may allocate these handles. -/
   | consoleFake | consoleFakeInput | filesInMemory | clockFixed | randomSeeded | argsOf | envOf
   | networkFake | sqliteFake | commandFake | secureRandomSeeded
@@ -645,6 +646,10 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .fileSize => ([.cap .file], .result .int .fileError)
   | .fileTruncate => ([.cap .file, .int], .result .unit .fileError)
   | .fileSync => ([.cap .file], .result .unit .fileError)
+  | .fileLockShared => ([.cap .file], .result .unit .fileError)
+  | .fileLockExclusive => ([.cap .file], .result .unit .fileError)
+  | .fileUnlock => ([.cap .file], .result .unit .fileError)
+  | .readFileOpen => ([.cap .readFiles, .text], .result (.cap .file) .fileError)
 
 def SimOp.sig : SimOp → List Ty × Ty
   | .start _ => ([.time], .simulation)

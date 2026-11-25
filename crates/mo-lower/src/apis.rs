@@ -1837,6 +1837,18 @@ pub(crate) fn lower_apitest_send(
                 break;
             }
         }
+        if chosen.is_none() && wanted == "ReadFiles" {
+            for i in 0..supplied {
+                let st = p.source_type(arg_types[1 + i]);
+                if st.owner == TypeOwner::None && st.name == "Files" {
+                    let fv = p.expr_var(sup_vars[i].clone())?;
+                    chosen = Some(
+                        p.expr_prim(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::ReadOnly)), vec![fv])?,
+                    );
+                    break;
+                }
+            }
+        }
         let e = match chosen {
             Some(e) => e,
             None => default_fake_cap(p, wanted)?,
@@ -1897,6 +1909,18 @@ pub(crate) fn lower_apitest_run_job(
             if st.owner == TypeOwner::None && st.name == *wanted {
                 chosen = Some(p.expr_var(sup_vars[i].clone())?);
                 break;
+            }
+        }
+        if chosen.is_none() && wanted == "ReadFiles" {
+            for i in 0..supplied {
+                let st = p.source_type(arg_types[2 + i]);
+                if st.owner == TypeOwner::None && st.name == "Files" {
+                    let fv = p.expr_var(sup_vars[i].clone())?;
+                    chosen = Some(
+                        p.expr_prim(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::ReadOnly)), vec![fv])?,
+                    );
+                    break;
+                }
             }
         }
         let e = match chosen {

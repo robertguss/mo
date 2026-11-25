@@ -1,5 +1,5 @@
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 use mo_bytecode::Capability;
@@ -16,9 +16,17 @@ use crate::files_common::{
 
 const META_ENTRY_OVERHEAD: usize = 48;
 
+#[derive(Default)]
+struct FakeFileLock {
+    shared_holders: BTreeSet<u64>,
+    exclusive_holder: Option<u64>,
+}
+
 pub(crate) struct FakeFsState {
     files: HashMap<String, Value>,
     folders: HashSet<String>,
+    locks: HashMap<String, FakeFileLock>,
+    next_handle_id: u64,
     budget: HeapBudget,
     charged_meta: usize,
 }
@@ -28,8 +36,73 @@ impl FakeFsState {
         Self {
             files: HashMap::new(),
             folders: HashSet::new(),
+            locks: HashMap::new(),
+            next_handle_id: 1,
             budget,
             charged_meta: 0,
+        }
+    }
+
+    fn alloc_handle_id(&mut self) -> u64 {
+        let id = self.next_handle_id;
+        self.next_handle_id = self.next_handle_id.wrapping_add(1);
+        id
+    }
+
+    fn lock_shared(&mut self, key: &str, handle_id: u64) -> Result<(), FileProblem> {
+        if let Some(lock) = self.locks.get_mut(key) {
+            match lock.exclusive_holder {
+                Some(holder) if holder != handle_id => {
+                    return Err(FileProblem::failed("file is locked exclusively"));
+                }
+                Some(_) => {
+                    lock.exclusive_holder = None;
+                    lock.shared_holders.insert(handle_id);
+                    return Ok(());
+                }
+                None => {
+                    lock.shared_holders.insert(handle_id);
+                    return Ok(());
+                }
+            }
+        }
+        let mut lock = FakeFileLock::default();
+        lock.shared_holders.insert(handle_id);
+        self.locks.insert(key.to_string(), lock);
+        Ok(())
+    }
+
+    fn lock_exclusive(&mut self, key: &str, handle_id: u64) -> Result<(), FileProblem> {
+        if let Some(lock) = self.locks.get_mut(key) {
+            if lock.exclusive_holder == Some(handle_id) {
+                return Ok(());
+            }
+            if lock.exclusive_holder.is_some()
+                || lock.shared_holders.iter().any(|&h| h != handle_id)
+            {
+                return Err(FileProblem::failed("file is locked"));
+            }
+            lock.shared_holders.remove(&handle_id);
+            lock.exclusive_holder = Some(handle_id);
+            return Ok(());
+        }
+        let lock = FakeFileLock {
+            shared_holders: BTreeSet::new(),
+            exclusive_holder: Some(handle_id),
+        };
+        self.locks.insert(key.to_string(), lock);
+        Ok(())
+    }
+
+    fn release_lock(&mut self, key: &str, handle_id: u64) {
+        if let Some(lock) = self.locks.get_mut(key) {
+            lock.shared_holders.remove(&handle_id);
+            if lock.exclusive_holder == Some(handle_id) {
+                lock.exclusive_holder = None;
+            }
+            if lock.shared_holders.is_empty() && lock.exclusive_holder.is_none() {
+                self.locks.remove(key);
+            }
         }
     }
 
@@ -88,6 +161,9 @@ pub(crate) struct FakeFolderCap {
 pub(crate) struct FakeOpenFileCap {
     pub(crate) fs: Rc<RefCell<FakeFsState>>,
     pub(crate) key: String,
+    pub(crate) path: Value,
+    pub(crate) handle_id: u64,
+    pub(crate) read_only: bool,
     pub(crate) open_files: Rc<Cell<u32>>,
 }
 
@@ -96,6 +172,9 @@ impl Drop for FakeOpenFileCap {
         let cur = self.open_files.get();
         debug_assert!(cur != 0);
         self.open_files.set(cur.saturating_sub(1));
+        if let Ok(mut fs) = self.fs.try_borrow_mut() {
+            fs.release_lock(&self.key, self.handle_id);
+        }
     }
 }
 
@@ -364,9 +443,13 @@ pub(crate) fn call_fake_folder(
             };
             let ok_tag = find_case_tag(types, result_ty, "Ok");
             let file_ty = types.get(result_ty).cases[ok_tag as usize].fields[0].ty;
+            let handle_id = folder.fs.borrow_mut().alloc_handle_id();
             let handle = crate::OpenFileCap::Fake(FakeOpenFileCap {
                 fs: Rc::clone(&folder.fs),
                 key: full_path.clone(),
+                path: args[1].clone(),
+                handle_id,
+                read_only: false,
                 open_files: Rc::clone(open_files),
             });
             // Increment open_files before constructing capability so its Drop always balances it.
@@ -381,6 +464,32 @@ pub(crate) fn call_fake_folder(
                 }
             }
             Ok(result)
+        }
+        HostOpId::ReadfilesOpen => {
+            if !is_file {
+                return make_file_error(heap, types, result_ty, &args[1], FileProblem::not_found());
+            }
+            if u64::from(open_files.get()) >= MO_LIMIT_OPEN_FILES {
+                return Err(HostError::Bug {
+                    reason: "too many files open at once",
+                    detail: None,
+                });
+            }
+            let ok_tag = find_case_tag(types, result_ty, "Ok");
+            let file_ty = types.get(result_ty).cases[ok_tag as usize].fields[0].ty;
+            let handle_id = folder.fs.borrow_mut().alloc_handle_id();
+            let handle = crate::OpenFileCap::Fake(FakeOpenFileCap {
+                fs: Rc::clone(&folder.fs),
+                key: full_path,
+                path: args[1].clone(),
+                handle_id,
+                read_only: true,
+                open_files: Rc::clone(open_files),
+            });
+            // Increment open_files before constructing capability so its Drop always balances it.
+            open_files.set(open_files.get() + 1);
+            let cap_val = heap.alloc_capability(Capability::File, file_ty, Rc::new(handle))?;
+            make_file_ok(heap, types, result_ty, cap_val)
         }
         HostOpId::FilesWriteText | HostOpId::FilesAppendText | HostOpId::FilesWriteBytes => {
             let parent_ok = folder.fs.borrow().parent_folder_exists(&full_path);
@@ -618,11 +727,49 @@ pub(crate) fn call_fake_file(
     result_ty: u32,
     args: &[Value],
 ) -> Result<Value, HostError> {
-    if op == HostOpId::FilesSync {
-        return make_file_ok(heap, types, result_ty, Value::Unit);
-    }
-
     match op {
+        HostOpId::FilesLockShared => {
+            let res = file.fs.borrow_mut().lock_shared(&file.key, file.handle_id);
+            match res {
+                Ok(()) => make_file_ok(heap, types, result_ty, Value::Unit),
+                Err(p) => make_file_error(heap, types, result_ty, &file.path, p),
+            }
+        }
+        HostOpId::FilesLockExclusive => {
+            if file.read_only {
+                return make_file_error(
+                    heap,
+                    types,
+                    result_ty,
+                    &file.path,
+                    FileProblem::not_allowed(false),
+                );
+            }
+            let res = file
+                .fs
+                .borrow_mut()
+                .lock_exclusive(&file.key, file.handle_id);
+            match res {
+                Ok(()) => make_file_ok(heap, types, result_ty, Value::Unit),
+                Err(p) => make_file_error(heap, types, result_ty, &file.path, p),
+            }
+        }
+        HostOpId::FilesUnlock => {
+            file.fs.borrow_mut().release_lock(&file.key, file.handle_id);
+            make_file_ok(heap, types, result_ty, Value::Unit)
+        }
+        HostOpId::FilesSync => {
+            if file.read_only {
+                return make_file_error(
+                    heap,
+                    types,
+                    result_ty,
+                    &file.path,
+                    FileProblem::not_allowed(false),
+                );
+            }
+            make_file_ok(heap, types, result_ty, Value::Unit)
+        }
         HostOpId::FilesReadAt => {
             let offset = args[1].as_int();
             let count = args[2].as_int();
@@ -640,8 +787,13 @@ pub(crate) fn call_fake_file(
             }
             let current = file.fs.borrow().files.get(&file.key).cloned();
             let Some(val) = current else {
-                let key_val = heap.alloc_text(file.key.clone())?;
-                return make_file_error(heap, types, result_ty, &key_val, FileProblem::not_found());
+                return make_file_error(
+                    heap,
+                    types,
+                    result_ty,
+                    &file.path,
+                    FileProblem::not_found(),
+                );
             };
             let bytes = val.as_bytes();
             let slice = if count > 0 && (offset as u64) < (bytes.len() as u64) {
@@ -663,12 +815,26 @@ pub(crate) fn call_fake_file(
                 .get(&file.key)
                 .map(|v| v.as_bytes().len());
             let Some(len) = len else {
-                let key_val = heap.alloc_text(file.key.clone())?;
-                return make_file_error(heap, types, result_ty, &key_val, FileProblem::not_found());
+                return make_file_error(
+                    heap,
+                    types,
+                    result_ty,
+                    &file.path,
+                    FileProblem::not_found(),
+                );
             };
             make_file_ok(heap, types, result_ty, Value::Int(len as i64))
         }
         HostOpId::FilesWriteAt => {
+            if file.read_only {
+                return make_file_error(
+                    heap,
+                    types,
+                    result_ty,
+                    &file.path,
+                    FileProblem::not_allowed(false),
+                );
+            }
             let offset = args[1].as_int();
             if offset < 0 {
                 return Err(HostError::Bug {
@@ -678,8 +844,13 @@ pub(crate) fn call_fake_file(
             }
             let current = file.fs.borrow().files.get(&file.key).cloned();
             let Some(val) = current else {
-                let key_val = heap.alloc_text(file.key.clone())?;
-                return make_file_error(heap, types, result_ty, &key_val, FileProblem::not_found());
+                return make_file_error(
+                    heap,
+                    types,
+                    result_ty,
+                    &file.path,
+                    FileProblem::not_found(),
+                );
             };
             let src = args[2].as_bytes();
             if src.is_empty() {
@@ -707,6 +878,15 @@ pub(crate) fn call_fake_file(
             Ok(ok_val)
         }
         HostOpId::FilesTruncate => {
+            if file.read_only {
+                return make_file_error(
+                    heap,
+                    types,
+                    result_ty,
+                    &file.path,
+                    FileProblem::not_allowed(false),
+                );
+            }
             let size = args[1].as_int();
             if size < 0 {
                 return Err(HostError::Bug {
@@ -716,8 +896,13 @@ pub(crate) fn call_fake_file(
             }
             let current = file.fs.borrow().files.get(&file.key).cloned();
             let Some(val) = current else {
-                let key_val = heap.alloc_text(file.key.clone())?;
-                return make_file_error(heap, types, result_ty, &key_val, FileProblem::not_found());
+                return make_file_error(
+                    heap,
+                    types,
+                    result_ty,
+                    &file.path,
+                    FileProblem::not_found(),
+                );
             };
             if (size as u64) > MO_LIMIT_VALUE_BYTES {
                 return Err(HostError::OutOfMemory {

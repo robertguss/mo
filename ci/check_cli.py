@@ -251,6 +251,42 @@ def check(binary):
     assert fmt_bad.returncode == 1 and not fmt_bad.stdout and b"<stdin>" in fmt_bad.stderr, fmt_bad
     for version in ("--version", "-V"):
         assert run(binary, [version], 0).stdout == b"mo 0.3.0\n"
+    for help_flag in ("--help", "-h"):
+        top_help = run(binary, [help_flag], 0)
+        assert not top_help.stderr and b"usage: mo <command>" in top_help.stdout, top_help
+        serve_help = run(binary, ["serve", help_flag], 0)
+        assert (not serve_help.stderr and b"usage: mo serve" in serve_help.stdout
+                and b"--data DIR" in serve_help.stdout), serve_help
+        fetch_help = run(binary, ["fetch", help_flag], 0)
+        assert not fetch_help.stderr and b"usage: mo fetch" in fetch_help.stdout, fetch_help
+    for wrong_flag in ("--root", "--state-dir"):
+        mistake(["serve", wrong_flag, "dir", good],
+                f'flag is not accepted by this command: "{wrong_flag}" '
+                "(hint: mo serve uses --data DIR)")
+    with tempfile.TemporaryDirectory(prefix="mo-actor-recovery-") as temp_dir:
+        bad_actor = pathlib.Path(temp_dir) / "main.mo"
+        bad_actor.write_text(
+            "module Main\n\n"
+            "struct AuditEvent\n"
+            "  id: Int\n"
+            "  actor: Text\n"
+            "  action: Text\n"
+            "end\n\n"
+            "fn log_event(\n"
+            "  id: Int,\n"
+            "  actor: Text,\n"
+            "  count: Int\n"
+            ") : Int\n"
+            "  a = id + count\n"
+            "  a + 1\n"
+            "end\n",
+            encoding="utf-8",
+        )
+        actor_err = run(binary, ["check", str(bad_actor)], 1)
+        assert not actor_err.stdout
+        assert b"error E0013:" in actor_err.stderr and b"error E0017:" in actor_err.stderr
+        assert b"reserved keyword" in actor_err.stderr
+        assert b"error E0007:" not in actor_err.stderr, actor_err.stderr
     read_fd, write_fd = os.pipe()
     os.close(read_fd)
     try:

@@ -1115,3 +1115,102 @@ fn deterministic_lexer_parser_formatter_fuzz_smoke() {
         "expected >= 50 accepted mutated seeds, got {accepted}"
     );
 }
+
+#[test]
+fn reserved_keyword_field_and_param_recovery() {
+    // 1. Struct field named `actor: Text` -> single E0013 diagnostic mentioning reserved keyword,
+    //    no E0007 cascade, subsequent fields and functions parse cleanly.
+    let f_struct = Fixture::from_str(
+        "module Main\n\n\
+         struct AuditEvent\n\
+           id: Int\n\
+           actor: Text\n\
+           action: Text\n\
+         end\n\n\
+         fn helper(x: Int) : Int\n\
+           x + 1\n\
+         end\n",
+        false,
+    );
+    assert_eq!(
+        f_struct.diags.len(),
+        1,
+        "expected 1 diagnostic, got: {:?}",
+        f_struct.diags.items()
+    );
+    let d = &f_struct.diags.items()[0];
+    assert_eq!(d.code, ErrorCode::SourceStruct);
+    let m1 = d.message.as_str_lossy();
+    assert!(
+        m1.contains("actor") && m1.contains("reserved keyword"),
+        "unexpected message: {m1}"
+    );
+
+    // 2. Single-line and multi-line function parameters named `actor: Text` ->
+    //    single E0017 diagnostic per misuse, zero E0007 actor-clause cascade.
+    let f_fn = Fixture::from_str(
+        "module Main\n\n\
+         fn log_event(\n\
+           id: Int,\n\
+           actor: Text,\n\
+           count: Int\n\
+         ) : Int\n\
+           a = id + count\n\
+           b = a * 2\n\
+           b + 1\n\
+         end\n\n\
+         fn after_ok(n: Int) : Int\n\
+           n\n\
+         end\n",
+        false,
+    );
+    assert_eq!(
+        f_fn.diags.len(),
+        1,
+        "expected 1 diagnostic without E0007 cascade, got: {:?}",
+        f_fn.diags.items()
+    );
+    let d2 = &f_fn.diags.items()[0];
+    assert_eq!(d2.code, ErrorCode::SourceFunction);
+    let m2 = d2.message.as_str_lossy();
+    assert!(
+        m2.contains("actor") && m2.contains("reserved keyword"),
+        "unexpected message: {m2}"
+    );
+    assert!(
+        f_fn.diags
+            .items()
+            .iter()
+            .all(|item| item.code != ErrorCode::SourceSyntax),
+        "must not cascade into E0007: {:?}",
+        f_fn.diags.items()
+    );
+
+    // 3. `service` and `api` parameters and enum named fields also recover cleanly.
+    let f_enum = Fixture::from_str(
+        "module Main\n\n\
+         enum Audit\n\
+           Recorded(actor: Text, count: Int)\n\
+         end\n\n\
+         fn dispatch(service: Text, api: Text) : Int\n\
+           1\n\
+         end\n",
+        false,
+    );
+    assert_eq!(
+        f_enum.diags.len(),
+        3,
+        "expected 3 crisp diagnostics, got: {:?}",
+        f_enum.diags.items()
+    );
+    assert_eq!(f_enum.diags.items()[0].code, ErrorCode::SourceEnum);
+    assert_eq!(f_enum.diags.items()[1].code, ErrorCode::SourceFunction);
+    assert_eq!(f_enum.diags.items()[2].code, ErrorCode::SourceFunction);
+    for item in f_enum.diags.items() {
+        let msg = item.message.as_str_lossy();
+        assert!(
+            msg.contains("reserved keyword"),
+            "unexpected message: {msg}"
+        );
+    }
+}

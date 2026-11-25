@@ -288,6 +288,50 @@ impl TokenKind {
         }
     }
 
+    /// Whether this token is a reserved language keyword.
+    #[must_use]
+    pub const fn is_keyword(self) -> bool {
+        matches!(
+            self,
+            Self::Module
+                | Self::Expose
+                | Self::Use
+                | Self::Fn
+                | Self::Struct
+                | Self::Enum
+                | Self::Var
+                | Self::If
+                | Self::Else
+                | Self::Case
+                | Self::For
+                | Self::In
+                | Self::While
+                | Self::Break
+                | Self::Continue
+                | Self::Return
+                | Self::Try
+                | Self::And
+                | Self::Or
+                | Self::Not
+                | Self::Is
+                | Self::Implies
+                | Self::True
+                | Self::False
+                | Self::Stop
+                | Self::Promise
+                | Self::Allows
+                | Self::Forbids
+                | Self::Examples
+                | Self::Test
+                | Self::Assert
+                | Self::Where
+                | Self::End
+                | Self::Service
+                | Self::Api
+                | Self::Actor
+        )
+    }
+
     /// Fixed surface spelling for keywords and punctuation (`src/syntax/format.c:spellings`).
     #[must_use]
     pub const fn fixed_spelling(self) -> Option<&'static str> {

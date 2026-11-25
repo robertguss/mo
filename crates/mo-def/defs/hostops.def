@@ -112,6 +112,10 @@ HOSTOP(FILES_WRITE_AT,         "Files",     "write_at",       "fn(Files.File, In
 HOSTOP(FILES_SIZE,             "Files",     "size",           "fn(Files.File) : Result(Int, FileError)",                 "b",   "",                                   false)
 HOSTOP(FILES_TRUNCATE,         "Files",     "truncate",       "fn(Files.File, Int) : Result(Unit, FileError)",           "bb",  "negative file size",                 false)
 HOSTOP(FILES_SYNC,             "Files",     "sync",           "fn(Files.File) : Result(Unit, FileError)",                "b",   "",                                   false)
+HOSTOP(FILES_LOCK_SHARED,      "Files",     "lock_shared",    "fn(Files.File) : Result(Unit, FileError)",                "b",   "",                                   false)
+HOSTOP(FILES_LOCK_EXCLUSIVE,   "Files",     "lock_exclusive", "fn(Files.File) : Result(Unit, FileError)",                "b",   "",                                   false)
+HOSTOP(FILES_UNLOCK,           "Files",     "unlock",         "fn(Files.File) : Result(Unit, FileError)",                "b",   "",                                   false)
+HOSTOP(READFILES_OPEN,         "ReadFiles", "open",           "fn(ReadFiles, Text) : Result(Files.File, FileError)",     "bb",  "too many files open at once",        false)
 
 #undef HOSTOP
 

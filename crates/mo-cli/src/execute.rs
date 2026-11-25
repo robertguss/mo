@@ -513,6 +513,20 @@ pub fn execute_cli(
     output: &mut (dyn Write + Send),
     errors: &mut (dyn Write + Send),
 ) -> i32 {
+    if cli.help || cli.command == Command::Help {
+        let target = match cli.command {
+            Command::Help => None,
+            other => Some(other),
+        };
+        let help = crate::cli::format_help(target);
+        let ok = output.write_all(help.as_bytes()).is_ok() && output.flush().is_ok();
+        if !ok {
+            let _ = errors.write_all(b"mo: could not write help\n");
+            let _ = errors.flush();
+            return 1;
+        }
+        return 0;
+    }
     if cli.source_bundle {
         if cli.command == Command::Test {
             if cli.rlimit_child || cli.confine_child {
@@ -941,6 +955,7 @@ pub fn execute_cli(
             }
             return 0;
         }
+        Command::Help => return 0,
         Command::Guide => {
             let data = if cli.reference {
                 MO_EMBEDDED_REFERENCE.as_bytes()

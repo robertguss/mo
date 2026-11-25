@@ -59,13 +59,18 @@ effects. `sqliteFake` is spec-only.
 | `fileSize` | Files.File | Result(Int, FileError) |
 | `fileTruncate` | Files.File, Int | Result(Unit, FileError) |
 | `fileSync` | Files.File | Result(Unit, FileError) |
+| `fileLockShared` | Files.File | Result(Unit, FileError) |
+| `fileLockExclusive` | Files.File | Result(Unit, FileError) |
+| `fileUnlock` | Files.File | Result(Unit, FileError) |
+| `readFileOpen` | ReadFiles, Text | Result(Files.File, FileError) |
 
 The four `command*` operations stop with `Command is not modeled by mocore`,
 keeping prior effects; `commandFake` is spec-only. The two `secureRandom*`
 operations stop with `SecureRandom is not modeled by mocore`, keeping prior
-effects; `secureRandomSeeded` is spec-only. The eight binary `Files` /
-`Files.File` operations (`writeBytes`, `rename`, `fileOpen`, `fileReadAt`,
-`fileWriteAt`, `fileSize`, `fileTruncate`, `fileSync`) stop with
+effects; `secureRandomSeeded` is spec-only. The twelve binary `Files` /
+`ReadFiles` / `Files.File` operations (`writeBytes`, `rename`, `fileOpen`,
+`fileReadAt`, `fileWriteAt`, `fileSize`, `fileTruncate`, `fileSync`,
+`fileLockShared`, `fileLockExclusive`, `fileUnlock`, `readFileOpen`) stop with
 `Files binary handles are not modeled by mocore`, keeping prior effects;
 `Files.File` (`(file)`) is never a parameter of the entry function. The
 `(crypto CryptoOp)` primitives stop with
