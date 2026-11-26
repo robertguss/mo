@@ -30,9 +30,9 @@ use mo_def::limits::{
     MO_LIMIT_API_HEADER_BYTES, MO_LIMIT_API_HEADERS, MO_LIMIT_API_JOB_POLL_US,
     MO_LIMIT_API_JOB_WORK, MO_LIMIT_API_KEEPALIVE_IDLE_US, MO_LIMIT_API_KEEPALIVE_REQUESTS,
     MO_LIMIT_API_QUEUE, MO_LIMIT_API_READ_US, MO_LIMIT_API_REQUEST_HEAP, MO_LIMIT_API_REQUEST_WORK,
-    MO_LIMIT_API_WATCH_POLL_US, MO_LIMIT_API_WORKERS, MO_LIMIT_API_WORKERS_MAX,
-    MO_LIMIT_API_WRITE_US, MO_LIMIT_HOST_PATH_SIZE, MO_LIMIT_STATIC_FILE_BYTES,
-    MO_SOURCE_STACK_SIZE,
+    MO_LIMIT_API_SSE_PUBLISH_PER_RESPONSE, MO_LIMIT_API_WATCH_POLL_US, MO_LIMIT_API_WORKERS,
+    MO_LIMIT_API_WORKERS_MAX, MO_LIMIT_API_WRITE_US, MO_LIMIT_HOST_PATH_SIZE,
+    MO_LIMIT_STATIC_FILE_BYTES, MO_SOURCE_STACK_SIZE,
 };
 use mo_host::HostContext;
 use mo_lower::lower_services;
@@ -40,6 +40,10 @@ use mo_syntax::{SyntaxKind, parse_module};
 use mo_vm::{Image, Limits, Outcome, Process};
 
 use crate::listener::signals::{install_signal_handlers, is_signalled, reset_signal};
+use crate::sse_broker::{
+    SSE_PUBLISH_HEADER, SSE_SUBSCRIBE_HEADER, SseBroker, SsePublishSpec, SseSubscribeSpec,
+    encode_http_chunk, parse_publish_header, parse_subscribe_header,
+};
 
 const UNICODE_METRICS: DisplayMetrics = DisplayMetrics {
     next_grapheme: mo_prim::unicode16::next_grapheme_bytes,
@@ -1098,17 +1102,20 @@ fn format_utc_now() -> String {
     format!("{year:04}-{m:02}-{d:02}T{hour:02}:{min:02}:{sec:02}Z")
 }
 
+#[cfg(unix)]
 struct WorkerPool {
     active_gen: Mutex<Arc<ApiGeneration>>,
     queue: Mutex<(VecDeque<TcpStream>, bool)>,
     queue_cv: Condvar,
     job_cv: Condvar,
+    sse_broker: SseBroker,
     stopping: AtomicBool,
     data_dir: PathBuf,
     limits: Limits,
     log_mutex: Mutex<()>,
 }
 
+#[cfg(unix)]
 impl WorkerPool {
     fn is_stopping(&self) -> bool {
         self.stopping.load(Ordering::Relaxed) || is_signalled()
@@ -1119,6 +1126,19 @@ impl WorkerPool {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+}
+
+#[cfg(unix)]
+enum DispatchOutcome {
+    Completed { status: i32, keep_alive: bool },
+    UpgradedSse { status: i32 },
+}
+
+#[cfg(unix)]
+fn send_error_status_opt(stream_opt: &mut Option<TcpStream>, code: i64, err_code: &str) {
+    if let Some(stream) = stream_opt.as_mut() {
+        let _ = send_json_status(stream, code, err_code, None, false, false);
     }
 }
 
@@ -1152,14 +1172,17 @@ fn dispatch_vm_request(
     req: &ParsedHttpRequest,
     req_path: &str,
     keep_alive: bool,
-    stream: &mut TcpStream,
-) -> (i32, bool) {
+    stream_opt: &mut Option<TcpStream>,
+) -> DispatchOutcome {
     let env_vars: Vec<(String, String)> = std::env::vars().collect();
     let host = match HostContext::stdio_with_root(Vec::new(), env_vars, Some(&pool.data_dir)) {
         Ok(h) => h,
         Err(_) => {
-            let _ = send_json_status(stream, 500, "internal_server_error", None, false, false);
-            return (500, false);
+            send_error_status_opt(stream_opt, 500, "internal_server_error");
+            return DispatchOutcome::Completed {
+                status: 500,
+                keep_alive: false,
+            };
         }
     };
     let mut proc = Process::new(image, pool.limits, host);
@@ -1168,50 +1191,74 @@ fn dispatch_vm_request(
 
     let mut args = Vec::with_capacity(pcount);
     let Ok(m_val) = proc.heap().alloc_text(req.method.clone()) else {
-        let _ = send_json_status(stream, 500, "internal_server_error", None, false, false);
-        return (500, false);
+        send_error_status_opt(stream_opt, 500, "internal_server_error");
+        return DispatchOutcome::Completed {
+            status: 500,
+            keep_alive: false,
+        };
     };
     args.push(m_val);
     let Ok(t_val) = proc.heap().alloc_text(req.target.clone()) else {
-        let _ = send_json_status(stream, 500, "internal_server_error", None, false, false);
-        return (500, false);
+        send_error_status_opt(stream_opt, 500, "internal_server_error");
+        return DispatchOutcome::Completed {
+            status: 500,
+            keep_alive: false,
+        };
     };
     args.push(t_val);
 
     let list_ty = fn_def.parameters[2].ty;
     let pair_ty = image.file().types.get(list_ty).parameters[0];
     let Some(pair_layout) = image.file().types.find_tuple_layout(pair_ty) else {
-        let _ = send_json_status(stream, 500, "internal_server_error", None, false, false);
-        return (500, false);
+        send_error_status_opt(stream_opt, 500, "internal_server_error");
+        return DispatchOutcome::Completed {
+            status: 500,
+            keep_alive: false,
+        };
     };
     let mut hdr_items = VecDeque::with_capacity(req.headers.len());
     for (k, v) in &req.headers {
         let Ok(kv) = proc.heap().alloc_text(k.clone()) else {
-            let _ = send_json_status(stream, 500, "internal_server_error", None, false, false);
-            return (500, false);
+            send_error_status_opt(stream_opt, 500, "internal_server_error");
+            return DispatchOutcome::Completed {
+                status: 500,
+                keep_alive: false,
+            };
         };
         let Ok(vv) = proc.heap().alloc_text(v.clone()) else {
-            let _ = send_json_status(stream, 500, "internal_server_error", None, false, false);
-            return (500, false);
+            send_error_status_opt(stream_opt, 500, "internal_server_error");
+            return DispatchOutcome::Completed {
+                status: 500,
+                keep_alive: false,
+            };
         };
         let Ok(pair) = proc
             .heap()
             .construct(&image.file().types, pair_layout, vec![kv, vv])
         else {
-            let _ = send_json_status(stream, 500, "internal_server_error", None, false, false);
-            return (500, false);
+            send_error_status_opt(stream_opt, 500, "internal_server_error");
+            return DispatchOutcome::Completed {
+                status: 500,
+                keep_alive: false,
+            };
         };
         hdr_items.push_back(pair);
     }
     let Ok(hdr_list) = proc.heap().alloc_list(hdr_items) else {
-        let _ = send_json_status(stream, 500, "internal_server_error", None, false, false);
-        return (500, false);
+        send_error_status_opt(stream_opt, 500, "internal_server_error");
+        return DispatchOutcome::Completed {
+            status: 500,
+            keep_alive: false,
+        };
     };
     args.push(hdr_list);
 
     let Ok(body_val) = proc.heap().alloc_bytes(req.body.clone()) else {
-        let _ = send_json_status(stream, 500, "internal_server_error", None, false, false);
-        return (500, false);
+        send_error_status_opt(stream_opt, 500, "internal_server_error");
+        return DispatchOutcome::Completed {
+            status: 500,
+            keep_alive: false,
+        };
     };
     args.push(body_val);
 
@@ -1223,18 +1270,22 @@ fn dispatch_vm_request(
             match proc.make_live_actor(p.ty, svc_idx) {
                 Ok(v) => args.push(v),
                 Err(_) => {
-                    let _ =
-                        send_json_status(stream, 500, "internal_server_error", None, false, false);
-                    return (500, false);
+                    send_error_status_opt(stream_opt, 500, "internal_server_error");
+                    return DispatchOutcome::Completed {
+                        status: 500,
+                        keep_alive: false,
+                    };
                 }
             }
         } else {
             match proc.make_real_capability(p.ty) {
                 Ok(v) => args.push(v),
                 Err(_) => {
-                    let _ =
-                        send_json_status(stream, 500, "internal_server_error", None, false, false);
-                    return (500, false);
+                    send_error_status_opt(stream_opt, 500, "internal_server_error");
+                    return DispatchOutcome::Completed {
+                        status: 500,
+                        keep_alive: false,
+                    };
                 }
             }
         }
@@ -1257,8 +1308,11 @@ fn dispatch_vm_request(
                 "mo serve: failure: {} {}\nbug: {}",
                 req.method, req_path, d.reason
             );
-            let _ = send_json_status(stream, 500, "internal_server_error", None, false, false);
-            return (500, false);
+            send_error_status_opt(stream_opt, 500, "internal_server_error");
+            return DispatchOutcome::Completed {
+                status: 500,
+                keep_alive: false,
+            };
         }
     };
 
@@ -1274,6 +1328,12 @@ fn dispatch_vm_request(
     let no_body = (100..200).contains(&status_code) || status_code == 204 || status_code == 304;
     let effective_ka = keep_alive && status_code < 500;
 
+    let mut subscribe_spec: Option<SseSubscribeSpec> = None;
+    let mut publishes: Vec<SsePublishSpec> = Vec::new();
+    let mut has_content_type = false;
+    let mut has_cache_control = false;
+    let mut has_accel_buffering = false;
+
     let mut head = format!(
         "HTTP/1.1 {status_code} {}\r\n",
         status_reason_phrase(status_code)
@@ -1283,11 +1343,32 @@ fn dispatch_vm_request(
         let val_val = proc.heap().extract_field(pair, 1);
         let name = name_val.as_text();
         let val = val_val.as_text();
+        if name.eq_ignore_ascii_case(SSE_SUBSCRIBE_HEADER) {
+            if let Some(spec) = parse_subscribe_header(val) {
+                subscribe_spec = Some(spec);
+            }
+            continue;
+        }
+        if name.eq_ignore_ascii_case(SSE_PUBLISH_HEADER) {
+            if publishes.len() < MO_LIMIT_API_SSE_PUBLISH_PER_RESPONSE as usize
+                && let Some(ev) = parse_publish_header(val)
+            {
+                publishes.push(ev);
+            }
+            continue;
+        }
         if name.eq_ignore_ascii_case("content-length")
             || name.eq_ignore_ascii_case("transfer-encoding")
             || name.eq_ignore_ascii_case("connection")
         {
             continue;
+        }
+        if name.eq_ignore_ascii_case("content-type") {
+            has_content_type = true;
+        } else if name.eq_ignore_ascii_case("cache-control") {
+            has_cache_control = true;
+        } else if name.eq_ignore_ascii_case("x-accel-buffering") {
+            has_accel_buffering = true;
         }
         let sn = sanitize_header(name.as_bytes(), true);
         if sn.is_empty() {
@@ -1299,6 +1380,62 @@ fn dispatch_vm_request(
         head.push_str(&sv);
         head.push_str("\r\n");
     }
+
+    if status_code == 200
+        && !is_head
+        && let Some(sub_spec) = subscribe_spec
+    {
+        if !has_content_type {
+            head.push_str("Content-Type: text/event-stream; charset=utf-8\r\n");
+        }
+        if !has_cache_control {
+            head.push_str("Cache-Control: no-cache, no-transform\r\n");
+        }
+        if !has_accel_buffering {
+            head.push_str("X-Accel-Buffering: no\r\n");
+        }
+        head.push_str("Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n");
+        let mut initial_wire = head.into_bytes();
+        if !res_body.is_empty() {
+            initial_wire.extend_from_slice(&encode_http_chunk(res_body));
+        }
+        if let Some(stream) = stream_opt.take() {
+            match pool
+                .sse_broker
+                .register_client(stream, initial_wire, sub_spec)
+            {
+                Ok(()) => {
+                    if !publishes.is_empty() {
+                        pool.sse_broker.publish(&publishes);
+                    }
+                    return DispatchOutcome::UpgradedSse { status: 200 };
+                }
+                Err(mut returned) => {
+                    let _ = send_json_status(
+                        &mut returned,
+                        503,
+                        "service_unavailable",
+                        generation.cors.as_deref(),
+                        false,
+                        false,
+                    );
+                    return DispatchOutcome::Completed {
+                        status: 503,
+                        keep_alive: false,
+                    };
+                }
+            }
+        }
+        return DispatchOutcome::Completed {
+            status: 500,
+            keep_alive: false,
+        };
+    }
+
+    if (200..300).contains(&status_code) && !publishes.is_empty() {
+        pool.sse_broker.publish(&publishes);
+    }
+
     let conn_val = if effective_ka { "keep-alive" } else { "close" };
     if no_body {
         head.push_str(&format!("Connection: {conn_val}\r\n\r\n"));
@@ -1309,6 +1446,12 @@ fn dispatch_vm_request(
         ));
     }
 
+    let Some(stream) = stream_opt.as_mut() else {
+        return DispatchOutcome::Completed {
+            status: 500,
+            keep_alive: false,
+        };
+    };
     let mut sent = stream.write_all(head.as_bytes()).is_ok();
     if sent && !no_body && !is_head && !res_body.is_empty() {
         sent = stream.write_all(res_body).is_ok();
@@ -1316,12 +1459,16 @@ fn dispatch_vm_request(
     if sent {
         sent = stream.flush().is_ok();
     }
-    (status_code as i32, sent && effective_ka)
+    DispatchOutcome::Completed {
+        status: status_code as i32,
+        keep_alive: sent && effective_ka,
+    }
 }
 
 #[cfg(unix)]
-fn serve_connection(pool: &WorkerPool, cache: &mut Option<WorkerCache>, mut stream: TcpStream) {
+fn serve_connection(pool: &WorkerPool, cache: &mut Option<WorkerCache>, stream: TcpStream) {
     let _ = stream.set_write_timeout(Some(Duration::from_micros(MO_LIMIT_API_WRITE_US)));
+    let mut stream_opt = Some(stream);
     let mut buf = Vec::new();
     for req_idx in 0..MO_LIMIT_API_KEEPALIVE_REQUESTS {
         if pool.is_stopping() {
@@ -1333,20 +1480,25 @@ fn serve_connection(pool: &WorkerPool, cache: &mut Option<WorkerCache>, mut stre
             MO_LIMIT_API_KEEPALIVE_IDLE_US
         };
         let deadline = Instant::now() + Duration::from_micros(timeout_us);
-        let req = match read_http_request(&mut stream, &mut buf, deadline) {
-            Ok(r) => r,
-            Err(code) => {
-                if code > 0 {
-                    let err_str = match code {
-                        408 => "request_timeout",
-                        413 => "payload_too_large",
-                        431 => "headers_too_large",
-                        _ => "bad_request",
-                    };
-                    let _ =
-                        send_json_status(&mut stream, i64::from(code), err_str, None, false, false);
-                }
+        let req = {
+            let Some(stream) = stream_opt.as_mut() else {
                 break;
+            };
+            match read_http_request(stream, &mut buf, deadline) {
+                Ok(r) => r,
+                Err(code) => {
+                    if code > 0 {
+                        let err_str = match code {
+                            408 => "request_timeout",
+                            413 => "payload_too_large",
+                            431 => "headers_too_large",
+                            _ => "bad_request",
+                        };
+                        let _ =
+                            send_json_status(stream, i64::from(code), err_str, None, false, false);
+                    }
+                    break;
+                }
             }
         };
 
@@ -1372,35 +1524,44 @@ fn serve_connection(pool: &WorkerPool, cache: &mut Option<WorkerCache>, mut stre
             && !pool.is_stopping();
 
         let generation = pool.current_gen();
-        let (status, cont) = if let Some((st, io_ok)) = try_serve_static_asset(
-            &generation,
-            &pool.data_dir,
-            &req,
-            req_path,
-            keep_alive,
-            &mut stream,
-        ) {
-            (st, io_ok && keep_alive)
-        } else if let Some(img) = ensure_worker_image(cache, &generation, pool.limits) {
-            dispatch_vm_request(
-                pool,
-                &generation,
-                img,
-                &req,
-                req_path,
-                keep_alive,
-                &mut stream,
-            )
-        } else {
-            let _ = send_json_status(
-                &mut stream,
-                500,
-                "internal_server_error",
-                None,
-                false,
-                false,
-            );
-            (500, false)
+        let outcome = {
+            let static_res = stream_opt.as_mut().and_then(|stream| {
+                try_serve_static_asset(
+                    &generation,
+                    &pool.data_dir,
+                    &req,
+                    req_path,
+                    keep_alive,
+                    stream,
+                )
+            });
+            if let Some((st, io_ok)) = static_res {
+                DispatchOutcome::Completed {
+                    status: st,
+                    keep_alive: io_ok && keep_alive,
+                }
+            } else if let Some(img) = ensure_worker_image(cache, &generation, pool.limits) {
+                dispatch_vm_request(
+                    pool,
+                    &generation,
+                    img,
+                    &req,
+                    req_path,
+                    keep_alive,
+                    &mut stream_opt,
+                )
+            } else {
+                send_error_status_opt(&mut stream_opt, 500, "internal_server_error");
+                DispatchOutcome::Completed {
+                    status: 500,
+                    keep_alive: false,
+                }
+            }
+        };
+
+        let (status, cont) = match outcome {
+            DispatchOutcome::Completed { status, keep_alive } => (status, keep_alive),
+            DispatchOutcome::UpgradedSse { status } => (status, false),
         };
 
         let dur_ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -1545,6 +1706,31 @@ fn job_worker_main(pool: Arc<WorkerPool>) {
     }
 }
 
+#[cfg(unix)]
+fn shutdown_pool_and_threads(
+    pool: &WorkerPool,
+    worker_handles: Vec<std::thread::JoinHandle<()>>,
+    job_handle: Option<std::thread::JoinHandle<()>>,
+) {
+    pool.stopping.store(true, Ordering::Relaxed);
+    {
+        let mut g = pool
+            .queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        g.1 = true;
+        pool.queue_cv.notify_all();
+        pool.job_cv.notify_all();
+    }
+    pool.sse_broker.shutdown();
+    for h in worker_handles {
+        let _ = h.join();
+    }
+    if let Some(jh) = job_handle {
+        let _ = jh.join();
+    }
+}
+
 /// Runs an HTTP/1.1 `api` server (`src/tools/api-server.c:mo_serve_maybe_api`).
 #[cfg(unix)]
 pub fn run_serve_api(
@@ -1635,11 +1821,21 @@ pub fn run_serve_api(
 
     let has_jobs = !initial_gen.jobs.is_empty();
     let has_actors = !initial_gen.actor_services.is_empty();
+    let sse_broker = match SseBroker::default_broker() {
+        Ok(b) => b,
+        Err(e) => {
+            return report_start_error(
+                errors,
+                &format!("mo serve could not start SSE broker: {e}"),
+            );
+        }
+    };
     let pool = Arc::new(WorkerPool {
         active_gen: Mutex::new(Arc::new(initial_gen)),
         queue: Mutex::new((VecDeque::new(), false)),
         queue_cv: Condvar::new(),
         job_cv: Condvar::new(),
+        sse_broker,
         stopping: AtomicBool::new(false),
         data_dir: data_dir.to_path_buf(),
         limits: req_limits,
@@ -1704,22 +1900,7 @@ pub fn run_serve_api(
     if let Some(ready_path) = opts.ready_file
         && let Err(err) = crate::write_ready_file(ready_path, &listen_url, actual_port, data_dir)
     {
-        pool.stopping.store(true, Ordering::Relaxed);
-        {
-            let mut g = pool
-                .queue
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            g.1 = true;
-            pool.queue_cv.notify_all();
-            pool.job_cv.notify_all();
-        }
-        for h in worker_handles {
-            let _ = h.join();
-        }
-        if let Some(jh) = job_handle {
-            let _ = jh.join();
-        }
+        shutdown_pool_and_threads(&pool, worker_handles, job_handle);
         return report_start_error(
             errors,
             &format!("mo serve could not write ready file: {err}"),
@@ -1728,22 +1909,7 @@ pub fn run_serve_api(
     let _ready_guard = crate::ReadyFileGuard(opts.ready_file);
 
     if writeln!(output, "mo serve: listening on {listen_url}").is_err() || output.flush().is_err() {
-        pool.stopping.store(true, Ordering::Relaxed);
-        {
-            let mut g = pool
-                .queue
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            g.1 = true;
-            pool.queue_cv.notify_all();
-            pool.job_cv.notify_all();
-        }
-        for h in worker_handles {
-            let _ = h.join();
-        }
-        if let Some(jh) = job_handle {
-            let _ = jh.join();
-        }
+        shutdown_pool_and_threads(&pool, worker_handles, job_handle);
         return report_start_error(errors, "mo serve could not write its listening line");
     }
 
@@ -1835,22 +2001,7 @@ pub fn run_serve_api(
     }
 
     drop(listener);
-    pool.stopping.store(true, Ordering::Relaxed);
-    {
-        let mut g = pool
-            .queue
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        g.1 = true;
-        pool.queue_cv.notify_all();
-        pool.job_cv.notify_all();
-    }
-    for h in worker_handles {
-        let _ = h.join();
-    }
-    if let Some(jh) = job_handle {
-        let _ = jh.join();
-    }
+    shutdown_pool_and_threads(&pool, worker_handles, job_handle);
 
     let _ = writeln!(errors, "mo serve: stop: a signal asked the server to stop");
     let _ = errors.flush();
