@@ -6,6 +6,7 @@ use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::os::fd::AsFd;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -155,6 +156,99 @@ enum NetErr {
     UnknownHost,
     Broken(String),
     Certificate(String),
+}
+
+/// Errors from [`OutboundStream`] host TCP/TLS streaming outside the Mo VM.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OutboundError {
+    TimedOut,
+    Closed,
+    Refused,
+    UnknownHost,
+    Certificate(String),
+    Broken(String),
+}
+
+impl From<NetErr> for OutboundError {
+    fn from(err: NetErr) -> Self {
+        match err {
+            NetErr::TimedOut => Self::TimedOut,
+            NetErr::Closed => Self::Closed,
+            NetErr::Refused => Self::Refused,
+            NetErr::UnknownHost => Self::UnknownHost,
+            NetErr::Certificate(msg) => Self::Certificate(msg),
+            NetErr::Broken(msg) => Self::Broken(msg),
+        }
+    }
+}
+
+/// Pure-safe-Rust streaming TCP/TLS client with per-operation idle timeout reset and overall ceiling.
+pub struct OutboundStream {
+    transport: RealTransport,
+    idle_timeout: Duration,
+    total_deadline: Instant,
+}
+
+fn saturating_deadline(timeout: Duration) -> Instant {
+    let now = Instant::now();
+    now.checked_add(timeout)
+        .unwrap_or_else(|| now + Duration::from_secs(365 * 24 * 3600 * 100))
+}
+
+impl OutboundStream {
+    /// Connects to `host:port` (with TLS via `rustls` when `secure` is true) within
+    /// `connect_timeout` and `total_timeout`, then applies `idle_timeout` on each send/recv call.
+    pub fn connect(
+        host: &str,
+        port: u16,
+        secure: bool,
+        connect_timeout: Duration,
+        idle_timeout: Duration,
+        total_timeout: Duration,
+    ) -> Result<Self, OutboundError> {
+        if port == 0 || !host_named(host.as_bytes()) {
+            return Err(OutboundError::UnknownHost);
+        }
+        if connect_timeout.is_zero() || total_timeout.is_zero() {
+            return Err(OutboundError::TimedOut);
+        }
+        let total_deadline = saturating_deadline(total_timeout);
+        let connect_deadline = saturating_deadline(connect_timeout).min(total_deadline);
+        let addrs = resolve_host_with_deadline(host, port, connect_deadline)?;
+        let stream = open_tcp_socket(&addrs, connect_deadline)?;
+        let transport = if secure {
+            RealTransport::Tls(Box::new(tls_handshake(stream, host, connect_deadline)?))
+        } else {
+            RealTransport::Plain(stream)
+        };
+        Ok(Self {
+            transport,
+            idle_timeout,
+            total_deadline,
+        })
+    }
+
+    fn op_deadline(&self) -> Instant {
+        saturating_deadline(self.idle_timeout).min(self.total_deadline)
+    }
+
+    /// Writes all of `bytes`, bounded by `idle_timeout` and `total_deadline`, aborting early if `stopping` turns true.
+    pub fn send_all(&mut self, bytes: &[u8], stopping: &AtomicBool) -> Result<(), OutboundError> {
+        let deadline = self.op_deadline();
+        transport_send_all(&mut self.transport, bytes, deadline, Some(stopping))
+            .map_err(OutboundError::from)
+    }
+
+    /// Reads up to `buf.len()` bytes with a fresh per-chunk `idle_timeout` bounded by `total_deadline`.
+    pub fn recv_some(
+        &mut self,
+        buf: &mut [u8],
+        stopping: &AtomicBool,
+    ) -> Result<usize, OutboundError> {
+        let deadline = self.op_deadline();
+        transport_receive_some(&mut self.transport, buf, deadline, Some(stopping))
+            .map_err(OutboundError::from)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -472,18 +566,36 @@ fn wait_fd(
     events: rustix::event::PollFlags,
     deadline: Instant,
 ) -> Result<(), NetErr> {
+    wait_fd_interruptible(fd, events, deadline, None)
+}
+
+#[cfg(unix)]
+fn wait_fd_interruptible(
+    fd: std::os::fd::BorrowedFd<'_>,
+    events: rustix::event::PollFlags,
+    deadline: Instant,
+    stopping: Option<&AtomicBool>,
+) -> Result<(), NetErr> {
     use rustix::event::{PollFd, Timespec, poll};
     use rustix::io::Errno;
 
     loop {
+        if stopping.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Err(NetErr::Closed);
+        }
         let now = Instant::now();
         if now >= deadline {
             return Err(NetErr::TimedOut);
         }
         let rem = deadline - now;
+        let slice = if stopping.is_some() {
+            rem.min(Duration::from_millis(200))
+        } else {
+            rem
+        };
         let ts = Timespec {
-            tv_sec: i64::try_from(rem.as_secs()).unwrap_or(i64::MAX),
-            tv_nsec: i64::from(rem.subsec_nanos()),
+            tv_sec: i64::try_from(slice.as_secs()).unwrap_or(i64::MAX),
+            tv_nsec: i64::from(slice.subsec_nanos()),
         };
         let mut fds = [PollFd::new(&fd, events)];
         match poll(&mut fds, Some(&ts)) {
@@ -701,14 +813,26 @@ fn map_rustls_error_for_host(err: rustls::Error, is_ip: bool) -> NetErr {
     }
 }
 
-fn tls_flush_writes(tls: &mut RealTls, deadline: Instant) -> Result<(), NetErr> {
+fn tls_flush_writes_interruptible(
+    tls: &mut RealTls,
+    deadline: Instant,
+    stopping: Option<&AtomicBool>,
+) -> Result<(), NetErr> {
     while tls.conn.wants_write() {
+        if stopping.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Err(NetErr::Closed);
+        }
         match tls.conn.write_tls(&mut tls.stream) {
             Ok(0) => return Err(NetErr::Closed),
             Ok(_) => {}
             Err(e) if e.kind() == ErrorKind::WouldBlock => {
                 #[cfg(unix)]
-                wait_fd(tls.stream.as_fd(), rustix::event::PollFlags::OUT, deadline)?;
+                wait_fd_interruptible(
+                    tls.stream.as_fd(),
+                    rustix::event::PollFlags::OUT,
+                    deadline,
+                    stopping,
+                )?;
                 #[cfg(not(unix))]
                 if Instant::now() >= deadline {
                     return Err(NetErr::TimedOut);
@@ -722,6 +846,10 @@ fn tls_flush_writes(tls: &mut RealTls, deadline: Instant) -> Result<(), NetErr> 
         }
     }
     Ok(())
+}
+
+fn tls_flush_writes(tls: &mut RealTls, deadline: Instant) -> Result<(), NetErr> {
+    tls_flush_writes_interruptible(tls, deadline, None)
 }
 
 fn tls_handshake(stream: TcpStream, host: &str, deadline: Instant) -> Result<RealTls, NetErr> {
@@ -810,18 +938,35 @@ fn tls_handshake_with_store(
 }
 
 fn real_send_all(conn: &mut RealConnection, bytes: &[u8]) -> Result<(), NetErr> {
-    if Instant::now() >= conn.deadline {
+    transport_send_all(&mut conn.transport, bytes, conn.deadline, None)
+}
+
+fn transport_send_all(
+    transport: &mut RealTransport,
+    bytes: &[u8],
+    deadline: Instant,
+    stopping: Option<&AtomicBool>,
+) -> Result<(), NetErr> {
+    if stopping.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+        return Err(NetErr::Closed);
+    }
+    if Instant::now() >= deadline {
         return Err(NetErr::TimedOut);
     }
     if bytes.is_empty() {
         return Ok(());
     }
-    match &mut conn.transport {
+    match transport {
         RealTransport::Plain(stream) => {
             let mut sent = 0usize;
             while sent < bytes.len() {
                 #[cfg(unix)]
-                wait_fd(stream.as_fd(), rustix::event::PollFlags::OUT, conn.deadline)?;
+                wait_fd_interruptible(
+                    stream.as_fd(),
+                    rustix::event::PollFlags::OUT,
+                    deadline,
+                    stopping,
+                )?;
                 #[cfg(unix)]
                 {
                     use rustix::io::Errno;
@@ -871,7 +1016,7 @@ fn real_send_all(conn: &mut RealConnection, bytes: &[u8]) -> Result<(), NetErr> 
                     .write(&bytes[written..])
                     .map_err(|e| NetErr::Broken(e.to_string()))?;
                 written += n;
-                tls_flush_writes(tls, conn.deadline)?;
+                tls_flush_writes_interruptible(tls, deadline, stopping)?;
             }
             Ok(())
         }
@@ -879,13 +1024,30 @@ fn real_send_all(conn: &mut RealConnection, bytes: &[u8]) -> Result<(), NetErr> 
 }
 
 fn real_receive_some(conn: &mut RealConnection, buf: &mut [u8]) -> Result<usize, NetErr> {
-    if Instant::now() >= conn.deadline {
+    transport_receive_some(&mut conn.transport, buf, conn.deadline, None)
+}
+
+fn transport_receive_some(
+    transport: &mut RealTransport,
+    buf: &mut [u8],
+    deadline: Instant,
+    stopping: Option<&AtomicBool>,
+) -> Result<usize, NetErr> {
+    if stopping.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+        return Err(NetErr::Closed);
+    }
+    if Instant::now() >= deadline {
         return Err(NetErr::TimedOut);
     }
-    match &mut conn.transport {
+    match transport {
         RealTransport::Plain(stream) => loop {
             #[cfg(unix)]
-            wait_fd(stream.as_fd(), rustix::event::PollFlags::IN, conn.deadline)?;
+            wait_fd_interruptible(
+                stream.as_fd(),
+                rustix::event::PollFlags::IN,
+                deadline,
+                stopping,
+            )?;
             match stream.read(buf) {
                 Ok(n) => return Ok(n),
                 Err(e) if e.kind() == ErrorKind::ConnectionReset => return Err(NetErr::Closed),
@@ -896,6 +1058,9 @@ fn real_receive_some(conn: &mut RealConnection, buf: &mut [u8]) -> Result<usize,
             }
         },
         RealTransport::Tls(tls) => loop {
+            if stopping.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+                return Err(NetErr::Closed);
+            }
             match tls.conn.reader().read(buf) {
                 Ok(n) => return Ok(n),
                 Err(e) if e.kind() == ErrorKind::WouldBlock => {}
@@ -911,7 +1076,7 @@ fn real_receive_some(conn: &mut RealConnection, buf: &mut [u8]) -> Result<usize,
             }
 
             if tls.conn.wants_write() {
-                tls_flush_writes(tls, conn.deadline)?;
+                tls_flush_writes_interruptible(tls, deadline, stopping)?;
             }
 
             match tls.conn.read_tls(&mut tls.stream) {
@@ -936,10 +1101,11 @@ fn real_receive_some(conn: &mut RealConnection, buf: &mut [u8]) -> Result<usize,
                 }
                 Err(e) if e.kind() == ErrorKind::WouldBlock => {
                     #[cfg(unix)]
-                    wait_fd(
+                    wait_fd_interruptible(
                         tls.stream.as_fd(),
                         rustix::event::PollFlags::IN,
-                        conn.deadline,
+                        deadline,
+                        stopping,
                     )?;
                 }
                 Err(e) if e.kind() == ErrorKind::Interrupted => continue,
@@ -1991,5 +2157,97 @@ mod tests {
         let s1 = load_root_store().expect("default root store");
         let s2 = load_root_store().expect("cached default root store");
         assert!(Arc::ptr_eq(&s1, &s2));
+    }
+
+    #[test]
+    fn outbound_stream_resets_idle_timeout_per_chunk_and_aborts_on_stall_or_stop() {
+        // 1. Active slow peer sending 7 chunks every 60ms (~420ms total) succeeds with 200ms idle timeout.
+        let slow_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let slow_addr = slow_listener.local_addr().unwrap();
+        let slow_thread = std::thread::spawn(move || {
+            let (mut sock, _) = slow_listener.accept().unwrap();
+            let mut req = [0u8; 32];
+            let _ = sock.read(&mut req);
+            for i in 0..7 {
+                std::thread::sleep(Duration::from_millis(60));
+                let _ = sock.write_all(format!("c{i};").as_bytes());
+                let _ = sock.flush();
+            }
+        });
+
+        let stop = AtomicBool::new(false);
+        let mut out = OutboundStream::connect(
+            "127.0.0.1",
+            slow_addr.port(),
+            false,
+            Duration::from_secs(2),
+            Duration::from_millis(200),
+            Duration::from_secs(3),
+        )
+        .unwrap();
+        out.send_all(b"hi", &stop).unwrap();
+        let mut received = Vec::new();
+        let mut buf = [0u8; 64];
+        loop {
+            let n = out.recv_some(&mut buf, &stop).unwrap();
+            if n == 0 {
+                break;
+            }
+            received.extend_from_slice(&buf[..n]);
+        }
+        assert_eq!(received, b"c0;c1;c2;c3;c4;c5;c6;");
+        slow_thread.join().unwrap();
+
+        // 2. Silent peer hits idle timeout promptly.
+        let silent_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let silent_addr = silent_listener.local_addr().unwrap();
+        let (_hold_tx, hold_rx) = std::sync::mpsc::channel::<()>();
+        let silent_thread = std::thread::spawn(move || {
+            let (_sock, _) = silent_listener.accept().unwrap();
+            let _ = hold_rx.recv();
+        });
+        let mut stalled = OutboundStream::connect(
+            "127.0.0.1",
+            silent_addr.port(),
+            false,
+            Duration::from_secs(2),
+            Duration::from_millis(120),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        let err = stalled.recv_some(&mut buf, &stop).unwrap_err();
+        assert_eq!(err, OutboundError::TimedOut);
+        drop(_hold_tx);
+        silent_thread.join().unwrap();
+
+        // 3. Setting stopping flag interrupts blocked recv_some promptly.
+        let stop_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let stop_addr = stop_listener.local_addr().unwrap();
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        let stop_peer = std::thread::spawn(move || {
+            let (_sock, _) = stop_listener.accept().unwrap();
+            let _ = done_rx.recv();
+        });
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let stop_trigger = Arc::clone(&stop_flag);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            stop_trigger.store(true, Ordering::Relaxed);
+        });
+        let mut aborted = OutboundStream::connect(
+            "127.0.0.1",
+            stop_addr.port(),
+            false,
+            Duration::from_secs(2),
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+        )
+        .unwrap();
+        let t0 = Instant::now();
+        let err = aborted.recv_some(&mut buf, &stop_flag).unwrap_err();
+        assert_eq!(err, OutboundError::Closed);
+        assert!(t0.elapsed() < Duration::from_secs(1));
+        drop(done_tx);
+        stop_peer.join().unwrap();
     }
 }

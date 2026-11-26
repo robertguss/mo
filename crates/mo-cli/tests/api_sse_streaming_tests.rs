@@ -351,4 +351,421 @@ end
         let _ = fs::remove_dir_all(&dir);
         Ok(())
     }
+
+    #[test]
+    fn mo_run_http_open_stream_reads_incremental_sse_from_live_loopback_peer()
+    -> Result<(), Box<dyn Error>> {
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let peer_port = listener.local_addr()?.port();
+        listener.set_nonblocking(true)?;
+        let stop_peer = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_peer_bg = std::sync::Arc::clone(&stop_peer);
+        let peer_thread = std::thread::spawn(move || {
+            while !stop_peer_bg.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((mut sock, _)) => {
+                        let _ = sock.set_read_timeout(Some(Duration::from_secs(2)));
+                        let mut req_buf = [0u8; 1024];
+                        let _ = sock.read(&mut req_buf);
+                        let _ = sock.write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n",
+                        );
+                        let part1 =
+                            b": keepalive\n\nid: 1\nevent: ai.token\ndata: {\"delta\":\"Hel";
+                        let _ = sock.write_all(format!("{:x}\r\n", part1.len()).as_bytes());
+                        let _ = sock.write_all(part1);
+                        let _ = sock.write_all(b"\r\n");
+                        let _ = sock.flush();
+                        std::thread::sleep(Duration::from_millis(60));
+                        let part2 = b"lo\"}\n\nevent: ai.done\ndata: {\"model\":\"m1\"}\n\n";
+                        let _ = sock.write_all(format!("{:x}\r\n", part2.len()).as_bytes());
+                        let _ = sock.write_all(part2);
+                        let _ = sock.write_all(b"\r\n0\r\n\r\n");
+                        let _ = sock.flush();
+                        break;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        let dir = temp_dir("http-open-stream")?;
+        let prog = dir.join("stream-demo.mo");
+        let src = r###"module StreamDemo
+use Http
+
+fn main(args: Args, console: Console, network: Network) : Result(Unit, Http.HttpError)
+  url = args.list.first or ""
+  var st = try Http.get(url).open_stream(network)
+  console.print("status=#{st.stream_status}")
+  var done = false
+  while not done
+    (ev_opt, next_st) = try st.next_sse_event
+    st = next_st
+    case ev_opt
+      Some(ev):
+        name = ev.event or "message"
+        console.print("#{name}|#{ev.data}")
+      None: done = true
+    end
+  end
+  Ok(Unit)
+end
+"###;
+        fs::write(&prog, src)?;
+
+        let out = Command::new(mo_bin())
+            .arg("run")
+            .arg(&prog)
+            .arg(format!("http://127.0.0.1:{peer_port}/stream"))
+            .output()?;
+        stop_peer.store(true, Ordering::Relaxed);
+        peer_thread.join().unwrap();
+        let _ = fs::remove_dir_all(&dir);
+
+        assert!(
+            out.status.success(),
+            "mo run failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8(out.stdout)?;
+        assert_eq!(
+            stdout,
+            "status=200\nai.token|{\"delta\":\"Hello\"}\nai.done|{\"model\":\"m1\"}\n"
+        );
+        Ok(())
+    }
+
+    fn open_post_sse_stream(
+        port: u16,
+        path: &str,
+        body: &str,
+    ) -> Result<SseStreamReader, Box<dyn Error>> {
+        let mut stream = TcpStream::connect(("127.0.0.1", port))?;
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        let req = format!(
+            "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept: text/event-stream\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(req.as_bytes())?;
+        stream.flush()?;
+
+        let mut reader = BufReader::new(stream);
+        let mut headers = String::new();
+        loop {
+            let mut line = String::new();
+            let n = reader.read_line(&mut line)?;
+            if n == 0 {
+                return Err("unexpected EOF while reading SSE relay headers".into());
+            }
+            headers.push_str(&line);
+            if headers.ends_with("\r\n\r\n") {
+                break;
+            }
+        }
+        Ok(SseStreamReader {
+            headers,
+            reader,
+            leftover: String::new(),
+        })
+    }
+
+    #[test]
+    fn mo_serve_streams_outbound_http_sse_relays_incrementally_without_starving_workers()
+    -> Result<(), Box<dyn Error>> {
+        use std::net::TcpListener;
+
+        let upstream = TcpListener::bind("127.0.0.1:0")?;
+        let up_port = upstream.local_addr()?.port();
+        let stop_up = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_up_bg = std::sync::Arc::clone(&stop_up);
+        upstream.set_nonblocking(true)?;
+        let up_thread = std::thread::spawn(move || {
+            let mut workers = Vec::new();
+            while !stop_up_bg.load(Ordering::Relaxed) {
+                match upstream.accept() {
+                    Ok((mut sock, _)) => {
+                        workers.push(std::thread::spawn(move || {
+                            let _ = sock.set_read_timeout(Some(Duration::from_secs(2)));
+                            let mut buf = Vec::new();
+                            let mut tmp = [0u8; 1024];
+                            loop {
+                                match sock.read(&mut tmp) {
+                                    Ok(0) => break,
+                                    Ok(n) => {
+                                        buf.extend_from_slice(&tmp[..n]);
+                                        if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                                            break;
+                                        }
+                                    }
+                                    Err(_) => return,
+                                }
+                            }
+                            let req_str = String::from_utf8_lossy(&buf);
+                            let path = req_str
+                                .lines()
+                                .next()
+                                .and_then(|l| l.split_whitespace().nth(1))
+                                .unwrap_or("/");
+                            match path {
+                                "/v1/chat/completions" => {
+                                    if !req_str.to_ascii_lowercase().contains("authorization: bearer upstream-secret-xyz") {
+                                        let _ = sock.write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n");
+                                        return;
+                                    }
+                                    let _ = sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n");
+                                    let _ = sock.flush();
+                                    for tok in ["Rotate ", "gateway ", "keys."] {
+                                        std::thread::sleep(Duration::from_millis(120));
+                                        let sse = format!(
+                                            "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{tok}\"}}}}]}}\n\n"
+                                        );
+                                        let chunk = format!("{:x}\r\n{sse}\r\n", sse.len());
+                                        let _ = sock.write_all(chunk.as_bytes());
+                                        let _ = sock.flush();
+                                    }
+                                    let done = b"data: [DONE]\n\n";
+                                    let _ = sock.write_all(
+                                        format!("{:x}\r\n", done.len()).as_bytes(),
+                                    );
+                                    let _ = sock.write_all(done);
+                                    let _ = sock.write_all(b"\r\n0\r\n\r\n");
+                                    let _ = sock.flush();
+                                }
+                                "/v1/messages" => {
+                                    let _ = sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n");
+                                    for tok in ["Anthropic ", "stream."] {
+                                        std::thread::sleep(Duration::from_millis(60));
+                                        let sse = format!(
+                                            "event: content_block_delta\ndata: {{\"type\":\"content_block_delta\",\"delta\":{{\"type\":\"text_delta\",\"text\":\"{tok}\"}}}}\n\n"
+                                        );
+                                        let _ = sock.write_all(format!("{:x}\r\n{sse}\r\n", sse.len()).as_bytes());
+                                        let _ = sock.flush();
+                                    }
+                                    let stop_sse = b"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+                                    let _ = sock.write_all(format!("{:x}\r\n", stop_sse.len()).as_bytes());
+                                    let _ = sock.write_all(stop_sse);
+                                    let _ = sock.write_all(b"\r\n0\r\n\r\n");
+                                    let _ = sock.flush();
+                                }
+                                "/slow" => {
+                                    let _ = sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n");
+                                    let _ = sock.flush();
+                                    std::thread::sleep(Duration::from_millis(600));
+                                }
+                                _ => {
+                                    let _ = sock.write_all(b"HTTP/1.1 429 Too Many Requests\r\nAuthorization-Leak: upstream-secret-xyz\r\nContent-Length: 10\r\n\r\nrate limit");
+                                    let _ = sock.flush();
+                                }
+                            }
+                        }));
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => break,
+                }
+            }
+            for h in workers {
+                let _ = h.join();
+            }
+        });
+
+        let dir = temp_dir("relay")?;
+        let main_mo = dir.join("main.mo");
+        let ready_file = dir.join("ready.json");
+        let src = format!(
+            r##"module Main
+use Api
+
+api
+  port 0
+  get "/ping" ping
+  post "/ask-openai" ask_openai
+  post "/ask-anthropic" ask_anthropic
+  post "/ask-timeout" ask_timeout
+  post "/ask-429" ask_429
+end
+
+fn ping() : Text
+  "pong"
+end
+
+fn ask_openai(_req: Api.Request) : Api.Response
+  relay = Api.SseRelay(
+    method: "POST",
+    url: "http://127.0.0.1:{up_port}/v1/chat/completions",
+    headers: [("Authorization", "Bearer upstream-secret-xyz"), ("Content-Type", "application/json")],
+    body: "{{\"stream\":true}}",
+    mode: "openai_sse",
+    idle_timeout_ms: 5000,
+    token_event: Some("ai.token"),
+    done_event: Some("ai.done"),
+    done_data: Some("{{\"model\":\"gpt-4o\"}}"),
+    error_event: Some("ai.error")
+  )
+  Api.sse_relay_stream([(Some("ai.citation"), "{{\"page\":\"p1\"}}")], relay)
+end
+
+fn ask_anthropic(_req: Api.Request) : Api.Response
+  relay = Api.SseRelay(
+    method: "POST",
+    url: "http://127.0.0.1:{up_port}/v1/messages",
+    headers: [("x-api-key", "ant-secret"), ("Content-Type", "application/json")],
+    body: "{{\"stream\":true}}",
+    mode: "anthropic_sse",
+    idle_timeout_ms: 5000,
+    token_event: Some("ai.token"),
+    done_event: Some("ai.done"),
+    done_data: Some("{{\"model\":\"claude\"}}"),
+    error_event: Some("ai.error")
+  )
+  Api.sse_relay_stream([], relay)
+end
+
+fn ask_timeout(_req: Api.Request) : Api.Response
+  relay = Api.SseRelay(
+    method: "POST",
+    url: "http://127.0.0.1:{up_port}/slow",
+    headers: [("Authorization", "Bearer upstream-secret-xyz")],
+    body: "{{}}",
+    mode: "openai_sse",
+    idle_timeout_ms: 250,
+    token_event: Some("ai.token"),
+    done_event: Some("ai.done"),
+    done_data: None,
+    error_event: Some("ai.error")
+  )
+  Api.sse_relay_stream([(Some("ai.citation"), "{{\"page\":\"p1\"}}")], relay)
+end
+
+fn ask_429(_req: Api.Request) : Api.Response
+  relay = Api.SseRelay(
+    method: "POST",
+    url: "http://127.0.0.1:{up_port}/err429",
+    headers: [("Authorization", "Bearer upstream-secret-xyz")],
+    body: "{{}}",
+    mode: "openai_sse",
+    idle_timeout_ms: 5000,
+    token_event: Some("ai.token"),
+    done_event: Some("ai.done"),
+    done_data: None,
+    error_event: Some("ai.error")
+  )
+  Api.sse_relay_stream([], relay)
+end
+
+fn main() : Int
+  0
+end
+"##
+        );
+        fs::write(&main_mo, src)?;
+
+        let child = Command::new(mo_bin())
+            .arg("serve")
+            .arg(&main_mo)
+            .arg("--bind")
+            .arg("127.0.0.1")
+            .arg("--port")
+            .arg("0")
+            .arg("--workers")
+            .arg("2")
+            .arg("--data")
+            .arg(&dir)
+            .arg("--ready-file")
+            .arg(&ready_file)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let mut guard = ServeGuard { child };
+        let port = wait_ready_port(&ready_file, &mut guard.child)?;
+
+        // 1. Open 3 concurrent slow OpenAI relay streams (> --workers 2) while pinging /ping.
+        let t_start = Instant::now();
+        let mut r1 = open_post_sse_stream(port, "/ask-openai", "{}")?;
+        let mut r2 = open_post_sse_stream(port, "/ask-openai", "{}")?;
+        let mut r3 = open_post_sse_stream(port, "/ask-openai", "{}")?;
+        let lower_h = r1.headers.to_ascii_lowercase();
+        assert!(lower_h.starts_with("http/1.1 200 ok"));
+        assert!(!lower_h.contains("x-mo-sse-relay"));
+        assert!(!lower_h.contains("upstream-secret-xyz"));
+        r1.read_until_contains("event: ai.citation\ndata: {\"page\":\"p1\"}\n\n")?;
+        let t_cit = t_start.elapsed();
+        assert!(
+            t_cit < Duration::from_millis(250),
+            "initial citation delayed: {t_cit:?}"
+        );
+
+        let (pst, _, pbdy) = http_request(port, "GET", "/ping", None)?;
+        assert_eq!(pst, 200);
+        assert_eq!(pbdy, "\"pong\"");
+
+        let full1 = r1.read_until_contains("event: ai.done\ndata: {\"model\":\"gpt-4o\"}\n\n")?;
+        let t_done = t_start.elapsed();
+        assert!(
+            t_done.saturating_sub(t_cit) >= Duration::from_millis(200),
+            "tokens were buffered instead of streamed: t_cit={t_cit:?}, t_done={t_done:?}"
+        );
+        assert!(full1.contains("data: {\"delta\":\"Rotate \"}"));
+        assert!(full1.contains("data: {\"delta\":\"gateway \"}"));
+        assert!(full1.contains("data: {\"delta\":\"keys.\"}"));
+        assert!(!full1.contains("upstream-secret-xyz"));
+        assert_eq!(r1.read_next_chunk_text()?, "");
+
+        r2.read_until_contains("event: ai.done")?;
+        r3.read_until_contains("event: ai.done")?;
+
+        // 2. Anthropic SSE transform
+        let mut ant = open_post_sse_stream(port, "/ask-anthropic", "{}")?;
+        let ant_body =
+            ant.read_until_contains("event: ai.done\ndata: {\"model\":\"claude\"}\n\n")?;
+        assert!(ant_body.contains("data: {\"delta\":\"Anthropic \"}"));
+        assert!(ant_body.contains("data: {\"delta\":\"stream.\"}"));
+        assert!(!ant_body.contains("ant-secret"));
+
+        // 3. Idle timeout emits sanitized ai.error without ai.done
+        let mut to_stream = open_post_sse_stream(port, "/ask-timeout", "{}")?;
+        let to_body = to_stream.read_until_contains("event: ai.error")?;
+        assert!(to_body.contains("\"upstream_timeout\""));
+        assert!(!to_body.contains("event: ai.done"));
+        assert!(!to_body.contains("upstream-secret-xyz"));
+        assert_eq!(to_stream.read_next_chunk_text()?, "");
+
+        // 4. Non-2xx upstream status emits upstream_http_status without leaking upstream headers/secrets
+        let mut err_stream = open_post_sse_stream(port, "/ask-429", "{}")?;
+        let err_body = err_stream.read_until_contains("event: ai.error")?;
+        assert!(err_body.contains("\"upstream_http_status\""));
+        assert!(err_body.contains("\"status\":429"));
+        assert!(!err_body.contains("upstream-secret-xyz"));
+        assert_eq!(err_stream.read_next_chunk_text()?, "");
+
+        if let Some(pid) = rustix::process::Pid::from_raw(guard.child.id() as i32) {
+            rustix::process::kill_process(pid, rustix::process::Signal::TERM)?;
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = guard.child.try_wait()? {
+                assert!(
+                    status.success(),
+                    "expected clean SIGTERM exit, got {status}"
+                );
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err("mo serve did not exit cleanly after SIGTERM".into());
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        stop_up.store(true, Ordering::Relaxed);
+        up_thread.join().unwrap();
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
 }

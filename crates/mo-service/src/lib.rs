@@ -12,6 +12,7 @@ pub mod protocol;
 pub mod serve;
 pub mod service_loop;
 pub(crate) mod sse_broker;
+pub(crate) mod sse_relay;
 pub mod store;
 pub mod upgrade;
 

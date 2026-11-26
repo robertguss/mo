@@ -44,6 +44,7 @@ use crate::sse_broker::{
     SSE_PUBLISH_HEADER, SSE_SUBSCRIBE_HEADER, SseBroker, SsePublishSpec, SseSubscribeSpec,
     encode_http_chunk, parse_publish_header, parse_subscribe_header,
 };
+use crate::sse_relay::{SSE_RELAY_HEADER, SseRelayPool, SseRelaySpec, parse_relay_header};
 
 const UNICODE_METRICS: DisplayMetrics = DisplayMetrics {
     next_grapheme: mo_prim::unicode16::next_grapheme_bytes,
@@ -1109,6 +1110,7 @@ struct WorkerPool {
     queue_cv: Condvar,
     job_cv: Condvar,
     sse_broker: SseBroker,
+    sse_relay: SseRelayPool,
     stopping: AtomicBool,
     data_dir: PathBuf,
     limits: Limits,
@@ -1329,6 +1331,7 @@ fn dispatch_vm_request(
     let effective_ka = keep_alive && status_code < 500;
 
     let mut subscribe_spec: Option<SseSubscribeSpec> = None;
+    let mut relay_spec: Option<SseRelaySpec> = None;
     let mut publishes: Vec<SsePublishSpec> = Vec::new();
     let mut has_content_type = false;
     let mut has_cache_control = false;
@@ -1346,6 +1349,12 @@ fn dispatch_vm_request(
         if name.eq_ignore_ascii_case(SSE_SUBSCRIBE_HEADER) {
             if let Some(spec) = parse_subscribe_header(val) {
                 subscribe_spec = Some(spec);
+            }
+            continue;
+        }
+        if name.eq_ignore_ascii_case(SSE_RELAY_HEADER) {
+            if let Some(spec) = parse_relay_header(val) {
+                relay_spec = Some(spec);
             }
             continue;
         }
@@ -1419,6 +1428,60 @@ fn dispatch_vm_request(
                         false,
                         false,
                     );
+                    return DispatchOutcome::Completed {
+                        status: 503,
+                        keep_alive: false,
+                    };
+                }
+            }
+        }
+        return DispatchOutcome::Completed {
+            status: 500,
+            keep_alive: false,
+        };
+    }
+
+    if status_code == 200
+        && !is_head
+        && let Some(r_spec) = relay_spec
+    {
+        if !has_content_type {
+            head.push_str("Content-Type: text/event-stream; charset=utf-8\r\n");
+        }
+        if !has_cache_control {
+            head.push_str("Cache-Control: no-cache, no-transform\r\n");
+        }
+        if !has_accel_buffering {
+            head.push_str("X-Accel-Buffering: no\r\n");
+        }
+        head.push_str("Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n");
+        let mut initial_wire = head.into_bytes();
+        if !res_body.is_empty() {
+            initial_wire.extend_from_slice(&encode_http_chunk(res_body));
+        }
+        if let Some(stream) = stream_opt.take() {
+            match pool.sse_relay.spawn(stream, initial_wire, r_spec) {
+                Ok(()) => {
+                    if !publishes.is_empty() {
+                        pool.sse_broker.publish(&publishes);
+                    }
+                    return DispatchOutcome::UpgradedSse { status: 200 };
+                }
+                Err(Some(mut returned)) => {
+                    let _ = send_json_status(
+                        &mut returned,
+                        503,
+                        "service_unavailable",
+                        generation.cors.as_deref(),
+                        false,
+                        false,
+                    );
+                    return DispatchOutcome::Completed {
+                        status: 503,
+                        keep_alive: false,
+                    };
+                }
+                Err(None) => {
                     return DispatchOutcome::Completed {
                         status: 503,
                         keep_alive: false,
@@ -1723,6 +1786,7 @@ fn shutdown_pool_and_threads(
         pool.job_cv.notify_all();
     }
     pool.sse_broker.shutdown();
+    pool.sse_relay.shutdown();
     for h in worker_handles {
         let _ = h.join();
     }
@@ -1836,6 +1900,7 @@ pub fn run_serve_api(
         queue_cv: Condvar::new(),
         job_cv: Condvar::new(),
         sse_broker,
+        sse_relay: SseRelayPool::default_pool(),
         stopping: AtomicBool::new(false),
         data_dir: data_dir.to_path_buf(),
         limits: req_limits,

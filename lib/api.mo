@@ -4,6 +4,7 @@ expose Request(..),
 Response(..),
 RouteSpec(..),
 SsePublish(..),
+SseRelay(..),
 request,
 get,
 post,
@@ -35,10 +36,13 @@ redirect_with,
 sse_response,
 sse_stream,
 sse_stream_with,
+sse_relay_stream,
 with_sse_subscribe,
+with_sse_relay,
 with_sse_publish,
 with_sse_publish_json,
 sse_subscribe_topics,
+sse_relay_spec,
 sse_published_events,
 percent_decode,
 parse_query_string,
@@ -108,6 +112,20 @@ struct SsePublish
   topic: Text
   event: Option(Text)
   data: Text
+end
+
+## Server-side outbound HTTP-to-SSE streaming relay directive attached to an HTTP response.
+struct SseRelay
+  method: Text
+  url: Text
+  headers: List((Text, Text))
+  body: Text
+  mode: Text
+  idle_timeout_ms: Int
+  token_event: Option(Text)
+  done_event: Option(Text)
+  done_data: Option(Text)
+  error_event: Option(Text)
 end
 
 fn hex_nibble(b: Int) : Option(Int)
@@ -523,6 +541,61 @@ fn sse_stream(topics: List(Text), initial_events: List((Option(Text), Text))) : 
   sse_stream_with(topics, None, None, initial_events)
 end
 
+fn optional_json_text(value: Option(Text)) : Json
+  case value
+    Some(s): Json.String(s)
+    None: Json.Null
+  end
+end
+
+## Upgrades a `Response` into a live server-relayed Server-Sent Events stream in `mo serve`.
+## `mo serve` flushes `res.body` first, strips `X-Mo-Sse-Relay`, opens the upstream HTTP/HTTPS
+## request with per-chunk idle timeout, and streams SSE frames/deltas until completion or error.
+fn with_sse_relay(res: Response, relay: SseRelay) : Response
+  hdr_json = Json.Array(
+    relay.headers.map(fn(h) Json.Array([Json.String(h.0), Json.String(h.1)]) end)
+  )
+  directive = Json.Object({
+    "method": Json.String(relay.method),
+    "url": Json.String(relay.url),
+    "headers": hdr_json,
+    "body": Json.String(relay.body),
+    "mode": Json.String(relay.mode),
+    "idle_timeout_ms": Json.int(relay.idle_timeout_ms),
+    "token_event": optional_json_text(relay.token_event),
+    "done_event": optional_json_text(relay.done_event),
+    "done_data": optional_json_text(relay.done_data),
+    "error_event": optional_json_text(relay.error_event)
+  }).to_text
+  var next = res.with_header("X-Mo-Sse-Relay", directive)
+  if next.header("Content-Type") == None
+    next = next.with_header("Content-Type", "text/event-stream; charset=utf-8")
+  end
+  if next.header("Cache-Control") == None
+    next = next.with_header("Cache-Control", "no-cache, no-transform")
+  end
+  if next.header("X-Accel-Buffering") == None
+    next = next.with_header("X-Accel-Buffering", "no")
+  end
+  next
+end
+
+## Builds a `200 OK` Server-Sent Events response that immediately emits `initial_events` and then
+## streams live upstream deltas/events according to `relay`.
+fn sse_relay_stream(initial_events: List((Option(Text), Text)), relay: SseRelay) : Response
+  payload = initial_events.map(format_sse_frame).join("")
+  base = Response(
+    status: 200,
+    headers: [
+      ("Content-Type", "text/event-stream; charset=utf-8"),
+      ("Cache-Control", "no-cache, no-transform"),
+      ("X-Accel-Buffering", "no")
+    ],
+    body: payload.bytes
+  )
+  with_sse_relay(base, relay)
+end
+
 ## Attaches a server-side SSE publish directive for `topic` onto any HTTP response.
 ## `mo serve` broadcasts attached events to matching SSE subscribers on 2xx responses and
 ## strips the internal directive header before sending the HTTP response to the caller.
@@ -593,6 +666,67 @@ fn sse_published_events(res: Response) : List(SsePublish)
     out = out.append(SsePublish(topic: topic, event: event, data: data))
   end
   out
+end
+
+## Returns the outbound SSE relay directive attached to an `Api.Response` (for `ApiTest.send`).
+fn sse_relay_spec(res: Response) : Option(SseRelay)
+  raw = case res.header("X-Mo-Sse-Relay")
+    Some(v): v
+    None: return None
+  end
+  parsed = case Json.parse(raw)
+    Ok(j): j
+    Error(_): return None
+  end
+  method = parsed.text_at("method") or ""
+  url = parsed.text_at("url") or ""
+  mode = parsed.text_at("mode") or ""
+  return None if method.empty? or url.empty? or mode.empty?
+  var hdrs = []
+  case parsed.get("headers")
+    Some(Json.Array(items)):
+      for pair in items
+        case pair
+          Json.Array(kv):
+            if kv.size == 2
+              k_opt = case kv.get(0)
+                Some(Json.String(k)): Some(k)
+                Some(Json.Null) | Some(Json.Boolean(_)) | Some(Json.Number(_)) | Some(Json.Array(_)) | Some(
+                  Json.Object(_)
+                ) | None: None
+              end
+              v_opt = case kv.get(1)
+                Some(Json.String(v)): Some(v)
+                Some(Json.Null) | Some(Json.Boolean(_)) | Some(Json.Number(_)) | Some(Json.Array(_)) | Some(
+                  Json.Object(_)
+                ) | None: None
+              end
+              case (k_opt, v_opt)
+                (Some(k), Some(v)): hdrs = hdrs.append((k, v))
+                (Some(_), None) | (None, Some(_)) | (None, None): Unit
+              end
+            end
+          Json.String(_) | Json.Null | Json.Boolean(_) | Json.Number(_) | Json.Object(_): Unit
+        end
+      end
+    Some(Json.String(_)) | Some(Json.Null) | Some(Json.Boolean(_)) | Some(Json.Number(_)) | Some(
+      Json.Object(_)
+    ) | None: Unit
+  end
+  Some(
+    SseRelay(
+      method: method,
+      url: url,
+      headers: hdrs,
+      body: parsed.text_at("body") or "",
+      mode: mode,
+      idle_timeout_ms: parsed.int_at("idle_timeout_ms") or 60000,
+      token_event: parsed.text_at("token_event"),
+      done_event: parsed.text_at("done_event"),
+      done_data: parsed.text_at("done_data"),
+      error_event: parsed.text_at("error_event")
+    )
+  )
 end
 
 ## Decodes a response's body as UTF-8 text (or empty string if non-UTF-8).
@@ -1198,4 +1332,22 @@ test "request and response builders, path matching and validation helpers"
   assert published.get(0) ==
     Some(SsePublish(topic: "page:1", event: Some("blocks"), data: "{\"v\":2}"))
   assert published.get(1) == Some(SsePublish(topic: "claims", event: None, data: "line1\nline2"))
+
+  relay_in = SseRelay(
+    method: "POST",
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: [("Authorization", "Bearer sk-test"), ("Content-Type", "application/json")],
+    body: "{\"model\":\"gpt-4o-mini\",\"stream\":true}",
+    mode: "openai_sse",
+    idle_timeout_ms: 45000,
+    token_event: Some("ai.token"),
+    done_event: Some("ai.done"),
+    done_data: Some("{\"model\":\"gpt-4o-mini\"}"),
+    error_event: Some("ai.error")
+  )
+  relay_res = sse_relay_stream([(Some("ai.citation"), "{\"page_id\":\"p1\"}")], relay_in)
+  assert relay_res.status == 200
+  assert relay_res.header("Content-Type") == Some("text/event-stream; charset=utf-8")
+  assert relay_res.text == "event: ai.citation\ndata: {\"page_id\":\"p1\"}\n\n"
+  assert relay_res.sse_relay_spec == Some(relay_in)
 end
