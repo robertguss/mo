@@ -5,6 +5,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+use mo_def::limits::MO_LIMIT_RECEIVE_BYTES;
+
 fn mo_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_mo"))
 }
@@ -167,6 +169,42 @@ end
     assert!(
         out.status.success(),
         "expected mo test success:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+fn network_scripted_truncation_can_span_multiple_reads() -> Result<(), Box<dyn Error>> {
+    let dir = TempDir::new("multi-read-truncation")?;
+    let main = dir.path.join("main.mo");
+    let read_limit = MO_LIMIT_RECEIVE_BYTES;
+    let prefix_len = read_limit + 64;
+    let declared_len = prefix_len + 64;
+    let header_len = format!("HTTP/1.1 200 OK\r\nContent-Length: {declared_len}\r\n\r\n").len();
+    fs::write(
+        &main,
+        format!(
+            r#"module Main
+
+test "truncation counts payload bytes across reads"
+  net = Network.fake_scripted([("GET", "/", [Network.TruncateAfter(bytes: {prefix_len})])])
+  assert net.connect("example.org", 80, 5.seconds) is Ok(conn)
+  assert conn.send("GET / HTTP/1.1\r\n\r\n".bytes) == Ok(Unit)
+  assert conn.receive({read_limit}) is Ok(first)
+  assert first.size == {read_limit}
+  assert conn.receive({read_limit}) is Ok(second)
+  assert first.size + second.size == {prefix_len} + {header_len}
+  assert conn.receive({read_limit}) == Ok("".bytes)
+end
+"#,
+        ),
+    )?;
+    let out = Command::new(mo_bin()).arg("test").arg(main).output()?;
+    assert!(
+        out.status.success(),
+        "stdout: {}\nstderr: {}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );

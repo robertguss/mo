@@ -122,7 +122,11 @@ struct FakeConnection {
 enum ActiveScriptedReply {
     Pending,
     Closed,
-    Bytes { wire: Value, pos: usize },
+    Bytes {
+        wire: Value,
+        pos: usize,
+        fill_left: u64,
+    },
 }
 
 struct ScriptedConnection {
@@ -1722,31 +1726,42 @@ pub(crate) fn call_network(
                             ScriptedReply::Respond(wire_bytes) => {
                                 let wire = wire_bytes.clone();
                                 drop(state_mut);
-                                scripted.active = ActiveScriptedReply::Bytes { wire, pos: 0 };
+                                scripted.active = ActiveScriptedReply::Bytes {
+                                    wire,
+                                    pos: 0,
+                                    fill_left: 0,
+                                };
                             }
                             ScriptedReply::TruncateAfter(n) => {
-                                let prefix_len =
-                                    (*n).clamp(0, MO_LIMIT_RECEIVE_BYTES as i64) as usize;
-                                let declared_len = prefix_len.saturating_add(64);
-                                let mut wire = format!(
+                                let fill_left = (*n).max(0) as u64;
+                                let declared_len = fill_left + 64;
+                                let wire = format!(
                                     "HTTP/1.1 200 OK\r\nContent-Length: {declared_len}\r\n\r\n"
                                 )
                                 .into_bytes();
-                                wire.resize(wire.len() + prefix_len, b'x');
                                 drop(state_mut);
                                 scripted.active = ActiveScriptedReply::Bytes {
                                     wire: heap.alloc_bytes(wire)?,
                                     pos: 0,
+                                    fill_left,
                                 };
                             }
                         }
                     }
                     let chunk = match &mut scripted.active {
-                        ActiveScriptedReply::Bytes { wire, pos } => {
+                        ActiveScriptedReply::Bytes {
+                            wire,
+                            pos,
+                            fill_left,
+                        } => {
                             let wire = wire.as_bytes();
-                            let left = wire.len().saturating_sub(*pos).min(most_usize);
-                            let chunk = wire[*pos..*pos + left].to_vec();
-                            *pos += left;
+                            let take = (wire.len() - *pos).min(most_usize);
+                            let fill = (*fill_left).min((most_usize - take) as u64) as usize;
+                            let mut chunk = Vec::with_capacity(take + fill);
+                            chunk.extend_from_slice(&wire[*pos..*pos + take]);
+                            chunk.resize(take + fill, b'x');
+                            *pos += take;
+                            *fill_left -= fill as u64;
                             chunk
                         }
                         ActiveScriptedReply::Closed => Vec::new(),
