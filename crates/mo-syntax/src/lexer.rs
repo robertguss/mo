@@ -91,23 +91,6 @@ pub(crate) fn decode_utf8(bytes: &[u8]) -> Option<(u32, u32)> {
     ch.map(|c| (c as u32, width as u32))
 }
 
-const fn is_invisible(c: u32) -> bool {
-    (c < 32 && c != 9 && c != 10 && c != 13)
-        || c == 127
-        || (c >= 128 && c <= 159)
-        || c == 0xad
-        || c == 0x61c
-        || c == 0x180e
-        || (c >= 0x200b && c <= 0x200f)
-        || (c >= 0x2028 && c <= 0x202e)
-        || (c >= 0x2060 && c <= 0x2064)
-        || (c >= 0x2066 && c <= 0x206f)
-        || c == 0xfeff
-        || (c >= 0xfff9 && c <= 0xfffb)
-        || c == 0xe0001
-        || (c >= 0xe0020 && c <= 0xe007f)
-}
-
 const fn is_lower(c: u8) -> bool {
     c.is_ascii_lowercase()
 }
@@ -413,7 +396,7 @@ impl<'a> Lexer<'a> {
             self.pos += 1;
             return false;
         };
-        if is_invisible(c) || (c == 13 && self.peek(1) != Some(10)) {
+        if mo_def::is_invisible_scalar(c) || (c == 13 && self.peek(1) != Some(10)) {
             self.lex_error(
                 diags,
                 ErrorCode::SourceInvisible,

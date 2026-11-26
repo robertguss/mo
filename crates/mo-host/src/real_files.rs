@@ -21,7 +21,7 @@ use rustix::io::{Errno, fcntl_dupfd_cloexec, pread, pwrite, read, write};
 use crate::HostError;
 use crate::files_common::{
     EntryKind, FileProblem, errno_to_problem, find_case_tag, make_file_error, make_file_ok,
-    make_names_or_entries, prepare_real_path,
+    make_names_or_entries, normalize_path,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1187,11 +1187,11 @@ fn real_rename(
     result_ty: u32,
     args: &[Value],
 ) -> Result<Value, HostError> {
-    let from_path = match prepare_real_path(args[1].as_text().as_bytes()) {
+    let from_path = match normalize_path(args[1].as_text().as_bytes()) {
         Ok(p) => p,
         Err(p) => return make_file_error(heap, types, result_ty, &args[1], p),
     };
-    let to_path = match prepare_real_path(args[2].as_text().as_bytes()) {
+    let to_path = match normalize_path(args[2].as_text().as_bytes()) {
         Ok(p) => p,
         Err(p) => return make_file_error(heap, types, result_ty, &args[2], p),
     };
@@ -1205,15 +1205,6 @@ fn real_rename(
             types,
             result_ty,
             &args[1],
-            FileProblem::failed("is a folder"),
-        );
-    }
-    if to_path.is_empty() {
-        return make_file_error(
-            heap,
-            types,
-            result_ty,
-            &args[2],
             FileProblem::failed("is a folder"),
         );
     }
@@ -1265,6 +1256,15 @@ fn real_rename(
         }
     }
 
+    if to_path.is_empty() {
+        return make_file_error(
+            heap,
+            types,
+            result_ty,
+            &args[2],
+            FileProblem::failed("is a folder"),
+        );
+    }
     let to_res = match resolve(resolver, root_fd.as_fd(), &to_path, PathMode::StrictParent) {
         Ok(r) => r,
         Err(p) => return make_file_error(heap, types, result_ty, &args[2], p),
@@ -1348,7 +1348,7 @@ pub(crate) fn call_real_folder(
     let path_res = if op == HostOpId::FilesReadOnly {
         Ok(String::new())
     } else {
-        prepare_real_path(args[1].as_text().as_bytes())
+        normalize_path(args[1].as_text().as_bytes())
     };
     if matches!(
         op,

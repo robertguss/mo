@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 use mo_base::{DiagBag, Diagnostic, ErrorCode, Span};
 use mo_def::core_ops::{
     CoreBase, CoreBigOp, CoreByteOp, CoreBytesOp, CoreCharOp, CoreCryptoOp, CoreDecOp, CoreFloatOp,
-    CoreIntOp, CoreIoNullaryOp, CoreListNullaryOp, CoreMapNullaryOp, CoreRangeOp, CoreSetOp,
-    CoreTextOp, CoreTimeOp, CoreUnicodeOp,
+    CoreIntOp, CoreIoNullaryOp, CoreJsonOp, CoreListNullaryOp, CoreMapNullaryOp, CoreRangeOp,
+    CoreSetOp, CoreTextOp, CoreTimeOp, CoreUnicodeOp,
 };
 use mo_def::limits::{MO_LIMIT_CORE_CHECK_SCRATCH_SIZE, MO_LIMIT_CORE_DEPTH, MO_LIMIT_CORE_NODES};
 
@@ -953,7 +953,7 @@ impl<'a> Checker<'a> {
                     self.sig1(s_bool, s_char)
                 }
                 CoreCharOp::Lower | CoreCharOp::Upper => self.sig1(s_char, s_char),
-                CoreCharOp::ToText => self.sig1(s_text, s_char),
+                CoreCharOp::ToText | CoreCharOp::Quoted => self.sig1(s_text, s_char),
             },
             Prim::Text(op) => match op {
                 CoreTextOp::Concat => self.sig2(s_text, s_text, s_text),
@@ -1008,6 +1008,7 @@ impl<'a> Checker<'a> {
                     self.sig2(s_text, lt, s_text)
                 }
                 CoreTextOp::Bytes => self.sig1(s_bytes, s_text),
+                CoreTextOp::Quoted => self.sig1(s_text, s_text),
             },
             Prim::Bytes(op) => match op {
                 CoreBytesOp::Size => self.sig1(s_int, s_bytes),
@@ -1077,6 +1078,22 @@ impl<'a> Checker<'a> {
                     self.sig2(res, s_text, s_bytes)
                 }
                 CoreCryptoOp::VerifyPassword => self.sig2(s_bool, s_text, s_text),
+            },
+            Prim::Json(op) => match op {
+                CoreJsonOp::QuoteRaw => self.sig1(s_text, s_text),
+                CoreJsonOp::ParseRaw => {
+                    let li = self.unary(TyTag::List, s_int);
+                    let lt = self.unary(TyTag::List, s_text);
+                    let ok_ty = self.binary(TyTag::Tuple, li, lt);
+                    let err_ty = self.intern(
+                        TyTag::Tuple,
+                        vec![s_int, s_int, s_int, s_text],
+                        "",
+                        Cap::Console,
+                    );
+                    let res = self.binary(TyTag::Result, ok_ty, err_ty);
+                    self.sig1(res, s_text)
+                }
             },
             Prim::Range(op) => match op {
                 CoreRangeOp::Make => self.sig2(s_range, s_int, s_int),

@@ -903,7 +903,7 @@ fn decode_hex_utf8(hex: &str) -> Option<String> {
         return None;
     }
     let mut bytes = Vec::with_capacity(hex.len() / 2);
-    for pair in hex.as_bytes().chunks_exact(2) {
+    for pair in hex.as_bytes().as_chunks::<2>().0 {
         let s = std::str::from_utf8(pair).ok()?;
         let one = hex_decode_exact::<1>(s)?;
         bytes.push(one[0]);

@@ -219,6 +219,7 @@ def evalCharOp (op : CharOp) (vs : List Value) (w : World) : Outcome :=
   | .lower, [.char c] => .ok (.char (asciiLowerChar c)) w
   | .upper, [.char c] => .ok (.char (asciiUpperChar c)) w
   | .toText, [.char c] => .ok (.text (String.singleton c)) w
+  | .quoted, [.char c] => .ok (.text (Text.referenceQuote (String.singleton c) '\'')) w
   | _, _ => wrongArgs "Char primitive"
 
 /-- The characters of a list of `Char` values. -/
@@ -238,6 +239,7 @@ def texts (xs : List String) : Value := .list (xs.map .text)
 def evalTextOp (op : TextOp) (vs : List Value) (w : World) : Outcome :=
   match op, vs with
   | .concat, [.text a, .text b] => .ok (.text (a ++ b)) w
+  | .quoted, [.text s] => .ok (.text (Text.referenceQuote s '"')) w
   | .byteCount, [.text a] => okInt a.utf8ByteSize w
   | .charCount, [.text a] => okInt a.length w
   | .isEmpty, [.text a] => .ok (.bool a.isEmpty) w
@@ -549,10 +551,11 @@ def fileErrorV (ctor path : String) : Value := .con ctor [.text path]
 /-- Kind mismatches have stable reasons, independent of the host's OS. -/
 def fileFailedV (path reason : String) : Value := .con "Failed" [.text path, .text reason]
 
-/-- Constructor keys are stored verbatim: nonempty slash-separated components,
-none of which is `.` or `..`. Operation paths have different rules below. -/
+/-- Constructor keys are stored verbatim: no NUL and nonempty slash-separated
+components, none of which is `.` or `..`. -/
 def plainRelativePath (path : String) : Bool :=
-  (textSplit path "/").all fun part => part != "" && part != "." && part != ".."
+  !path.contains '\x00' &&
+    (textSplit path "/").all (fun part => part != "" && part != "." && part != "..")
 
 /-- The parts of a path inside a folder: `.` parts are dropped, so `"."` is the
 folder itself, and a `..` takes back the part before it. `none` for a path
@@ -561,7 +564,7 @@ for one that isn't relative and written with `/`, which has an empty part, as
 in `""`, `/a`, `a//b` and `a/`. -/
 def pathParts (path : String) : Option (List String) :=
   (textSplit path "/").foldl (fun acc part => acc.bind fun ps =>
-    if part = "" then none
+    if part == "" || part.contains '\x00' then none
     else if part = "." then some ps
     else if part = ".." then (if ps.isEmpty then none else some ps.dropLast)
     else some (ps ++ [part])) (some [])
@@ -891,6 +894,7 @@ def Prim.eval (p : Prim) (vs : List Value) (w : World)
   | .bytes op, vs, w => evalBytesOp op vs w
   | .unicode16 _, _, w => outside "Unicode16 is a trusted primitive unavailable in mocore" w
   | .crypto _, _, w => outside "Crypto is a trusted primitive unavailable in mocore" w
+  | .json _, _, w => outside "Json is a trusted primitive unavailable in mocore" w
   | .sim _, _, w => outside "Simulation is not modeled by mocore" w
   | .range op, vs, w => evalRangeOp op vs w
   | .time op, vs, w => evalTimeOp op vs w

@@ -7,13 +7,32 @@ namespace MoCore.Text
 def delimited (a b : String) (ss : List String) : String :=
   a ++ String.intercalate ", " ss ++ b
 
-/-- Reference 9.2 escapes C0/C1 controls and interpolation, with the value's delimiter. -/
+/-- Reference 2.1 invisible scalars: controls other than tab/line breaks, DEL, C1,
+zero-width, direction overrides, and invisible formatting scalars. -/
+def isInvisibleScalar (c : Nat) : Bool :=
+  (c < 32 && c != 9 && c != 10 && c != 13)
+    || c == 127
+    || (128 ≤ c && c ≤ 159)
+    || c == 0xad
+    || c == 0x61c
+    || c == 0x180e
+    || (0x200b ≤ c && c ≤ 0x200f)
+    || (0x2028 ≤ c && c ≤ 0x202e)
+    || (0x2060 ≤ c && c ≤ 0x2064)
+    || (0x2066 ≤ c && c ≤ 0x206f)
+    || c == 0xfeff
+    || (0xfff9 ≤ c && c ≤ 0xfffb)
+    || c == 0xe0001
+    || (0xe0020 ≤ c && c ≤ 0xe007f)
+
+/-- Reference 2.1 / 9.2 escapes C0/C1 controls, invisible scalars, and interpolation,
+with the value's delimiter. -/
 def referenceQuote (s : String) (delimiter : Char) : String :=
   let contents := String.join (s.toList.map fun c =>
     match c with
     | '\\' => "\\\\" | '\n' => "\\n" | '\r' => "\\r" | '\t' => "\\t"
     | c => if c == delimiter then "\\" ++ String.singleton c
-      else if c.toNat < 32 || (127 ≤ c.toNat && c.toNat ≤ 159) then
+      else if isInvisibleScalar c.toNat then
         "\\u{" ++ hex c.toNat ++ "}"
       else String.singleton c)
   String.singleton delimiter ++ contents.replace "#{" "\\#{" ++ String.singleton delimiter

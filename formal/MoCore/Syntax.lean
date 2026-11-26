@@ -287,7 +287,7 @@ inductive CmpOp where
 
 /-- Operations on `Char`. -/
 inductive CharOp where
-  | code | isDigit | isLetter | isWhiteSpace | lower | upper | toText
+  | code | isDigit | isLetter | isWhiteSpace | lower | upper | toText | quoted
   deriving DecidableEq, Repr, Inhabited
 
 /-- Operations on `Text`. -/
@@ -298,6 +298,7 @@ inductive TextOp where
   | toInt | toDecimal | toFloat | join
   /-- `text.bytes`: the text's UTF-8 encoding. -/
   | bytes
+  | quoted
   deriving DecidableEq, Repr, Inhabited
 
 /-- Operations on `Bytes`. `decodeUtf8` gives `None` for bytes that aren't
@@ -318,6 +319,11 @@ inductive UnicodeOp where
 /-- Cryptographic trusted primitives; Core specifies their interface, not OpenSSL implementations. -/
 inductive CryptoOp where
   | sha256 | hmacSha256 | constantTimeEq | sealRaw | openRaw | hashPasswordRaw | verifyPassword
+  deriving DecidableEq, Repr, Inhabited
+
+/-- Native RFC 8259 JSON primitives; Core specifies their interface, not the runtime codec. -/
+inductive JsonOp where
+  | quoteRaw | parseRaw
   deriving DecidableEq, Repr, Inhabited
 
 /-- Operations on `Range`. `make a b` is `a..b`, the whole numbers from `a` up
@@ -413,6 +419,7 @@ inductive Prim where
   | bytes (op : BytesOp)
   | unicode16 (op : UnicodeOp)
   | crypto (op : CryptoOp)
+  | json (op : JsonOp)
   | sim (op : SimOp)
   | range (op : RangeOp)
   | time (op : TimeOp)
@@ -476,7 +483,7 @@ def CharOp.sig : CharOp → List Ty × Ty
   | .code => ([.char], .int)
   | .isDigit | .isLetter | .isWhiteSpace => ([.char], .bool)
   | .lower | .upper => ([.char], .char)
-  | .toText => ([.char], .text)
+  | .toText | .quoted => ([.char], .text)
 
 def TextOp.sig : TextOp → List Ty × Ty
   | .concat => ([.text, .text], .text)
@@ -486,7 +493,7 @@ def TextOp.sig : TextOp → List Ty × Ty
   | .fromChars => ([.list .char], .text)
   | .lines | .words => ([.text], .list .text)
   | .split => ([.text, .text], .list .text)
-  | .trim | .trimStart | .trimEnd | .lower | .upper => ([.text], .text)
+  | .trim | .trimStart | .trimEnd | .lower | .upper | .quoted => ([.text], .text)
   | .startsWith | .endsWith | .contains => ([.text, .text], .bool)
   | .dropPrefix | .dropSuffix => ([.text, .text], .option .text)
   | .replace => ([.text, .text, .text], .text)
@@ -597,6 +604,11 @@ def CryptoOp.sig : CryptoOp → List Ty × Ty
   | .hashPasswordRaw => ([.text, .bytes], .result .text .text)
   | .verifyPassword => ([.text, .text], .bool)
 
+def JsonOp.sig : JsonOp → List Ty × Ty
+  | .quoteRaw => ([.text], .text)
+  | .parseRaw =>
+    ([.text], .result (.tuple [.list .int, .list .text]) (.tuple [.int, .int, .int, .text]))
+
 def IoOp.sig : IoOp → List Ty × Ty
   | .argsList => ([.cap .args], .list .text)
   | .envGet => ([.cap .env, .text], .option .text)
@@ -688,6 +700,7 @@ def Prim.sig : Prim → List Ty × Ty
   | .bytes op => op.sig
   | .unicode16 op => op.sig
   | .crypto op => op.sig
+  | .json op => op.sig
   | .sim op => op.sig
   | .range op => op.sig
   | .time op => op.sig

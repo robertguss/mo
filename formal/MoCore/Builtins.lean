@@ -984,7 +984,7 @@ def fakeFileKindChecks : Expr :=
       (tCap .files) (.fileFolderConflict path)
 
 #guard (["/a", "", ".", "..", "./a", "../a", "a/", "a//b", "a/./b", "a/../b",
-  "a/.", "a/..", "a\x00/../b"]).all fun path =>
+  "a/.", "a/..", "a\x00/../b", "a\x00b"]).all fun path =>
     stops program (io .filesInMemory [mapOf tText tText [(str path, str "file")]])
       (tCap .files) (.filePathInvalid path)
 #guard ([("a", "a/", "a/"), ("a//b", "/bad", "a//b"), ("valid", "../bad", "../bad")] :
@@ -993,12 +993,15 @@ def fakeFileKindChecks : Expr :=
       (tCap .files) (.filePathInvalid expected)
 
 def fakeFileKeyChecks : Expr :=
-  let keys := ["leaf", ".hidden", "...", "..name", "a/.b", "a/..b", "β/é", "a\x00b"]
+  let keys := ["leaf", ".hidden", "...", "..name", "a/.b", "a/..b", "β/é"]
   let files := mapOf tText tText (keys.map fun path => (str path, str "kept"))
   lets [("files", io .filesInMemory [files])] <|
     keys.foldr (fun path rest => and_
       (eq (tRes tText tFileError) (io (.readText false) [v "files", str path])
-        (ok_ tText tFileError (str "kept"))) rest) tt
+        (ok_ tText tFileError (str "kept"))) rest) <|
+    and_ (eq (tRes tText tFileError) (io (.readText false) [v "files", str "a\x00b"])
+      (err_ tText tFileError (notAllowed "a\x00b"))) <|
+    not_ (io (.exists false) [v "files", str "a\x00/../leaf"])
 
 def libraryChecks : Expr :=
   and_ numberChecks (and_ randomChecks (and_ entryChecks (and_ fakeFileKindChecks fakeFileKeyChecks)))
@@ -1139,6 +1142,14 @@ def sqliteTy (ok : Ty) : Ty := .result ok .sqliteError
   typedAs? program [] (prim (.crypto .verifyPassword) [str "pw", str "enc"]) tBool &&
   stops program (prim (.crypto .sha256) [.lit (.bytes [])]) tBytes
     (.outside "Crypto is a trusted primitive unavailable in mocore")
+
+#guard Text.exprRoundTrip (prim (.json .quoteRaw) [str "hi"]) &&
+  Text.exprRoundTrip (prim (.json .parseRaw) [str "{}"]) &&
+  typedAs? program [] (prim (.json .quoteRaw) [str "hi"]) tText &&
+  typedAs? program [] (prim (.json .parseRaw) [str "{}"])
+    (.result (.tuple [.list .int, .list .text]) (.tuple [.int, .int, .int, .text])) &&
+  stops program (prim (.json .quoteRaw) [str "hi"]) tText
+    (.outside "Json is a trusted primitive unavailable in mocore")
 
 #guard Text.exprRoundTrip (io .secureRandomBytes [v "r", int 16]) &&
   Text.exprRoundTrip (io .secureRandomSeeded [int 42]) &&

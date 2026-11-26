@@ -2045,11 +2045,12 @@ operations behave identically to real files, while `read_text` gives
 last file was removed, as on a disk, and `list` and `entries` give the names
 directly inside a folder, each subfolder once. Files that make one path both a
 file and a folder, as `{"a": "x", "a/b": "y"}` do, are a bug (13.2).
-So are keys that aren't plain relative paths, such as `"/a"`, `"./a"`, `"a/"` or `"a//b"`.
+So are keys that aren't plain relative paths, such as `"/a"`, `"./a"`, `"a/"`, `"a//b"` or
+paths containing NUL.
 **ReadFiles** has `read_text`,
 `read_bytes`, `open` (opening an existing confined regular file read-only as a `Files.File`, giving `Error(NotFound(path: path))` if missing), `list`, `entries`, `walk`, `exists?` and `within`. Paths are relative and use `/`; `"."` is the capability's own
-folder, and no path can leave it. Given a path that would leave the folder,
-such as `"../a.txt"`, reading, writing, removing and listing give
+folder, and no path can leave it. Given a path that contains NUL or would leave
+the folder, such as `"../a.txt"`, reading, writing, removing and listing give
 `Error(NotAllowed(path: path))`, and `exists?` gives `false`. Calling `within` with
 such a path gives a capability that reaches nothing: every call on it that
 returns a `Result` gives `Error(NotAllowed(path: path))`, and `exists?` on it gives
@@ -2257,10 +2258,14 @@ body isn't empty or the method is neither `GET` nor `HEAD`. The program's
 headers follow, sorted by name without regard to case, and headers with the
 same name keep the order they were added in.
 
-A response's body ends where its `Content-Length` says, where its chunks end
-when its `Transfer-Encoding` is `chunked`, and otherwise where the server
-closes the connection. The response to a `HEAD` request and one with status 204
-or 304 have an empty body. Any status is a response: 404 and 500 are not
+A response's body ends where its chunks end when its `Transfer-Encoding` is
+`chunked`, where its `Content-Length` says when there is no transfer encoding,
+and otherwise where the server closes the connection. When used, the length
+must be written in ASCII digits and all values must agree, whether on separate
+header lines or in a comma-separated list. Empty list members are ignored, but
+if length headers supply no length or give invalid or conflicting values, the
+result is `Error(BadResponse(reason))`. The response to a `HEAD` request and one
+with status 204 or 304 have an empty body. Any status is a response: 404 and 500 are not
 errors, and a status from 100 to 199 is read like any other. `send` follows no
 redirect, retries nothing, keeps no cookie, uses no proxy, reuses no connection
 and asks for no compression. Headers longer than 65,536 bytes, a status line or

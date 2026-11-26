@@ -16,3 +16,5 @@ $5 Square(side: 1)
 Greater Greater Square(side: 1) | Circle(radius: 2)
 ["Less", "Greater"]
 Less $70 ["Some(4)", "None"] ["[1]", "[]"]
+["\u{80}\u{200b}\u{e0001}"]
+['\u{202e}', '\u{9f}']

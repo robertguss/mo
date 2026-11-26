@@ -102,22 +102,7 @@ pub fn sanitize_terminal_text(s: &str) -> String {
             out.push('\t');
         } else if code < 0x20 || code == 0x7f {
             let _ = write!(out, "\\x{code:02x}");
-        } else if (0x80..=0x9f).contains(&code)
-            || matches!(
-                code,
-                0x00ad
-                    | 0x061c
-                    | 0x180e
-                    | 0x200b..=0x200f
-                    | 0x2028..=0x202e
-                    | 0x2060..=0x2064
-                    | 0x2066..=0x206f
-                    | 0xfeff
-                    | 0xfff9..=0xfffb
-                    | 0xe0001
-                    | 0xe0020..=0xe007f
-            )
-        {
+        } else if mo_def::is_invisible_scalar(code) {
             if code <= 0xfff {
                 let _ = write!(out, "\\u{{{code:03x}}}");
             } else if code <= 0xffff {

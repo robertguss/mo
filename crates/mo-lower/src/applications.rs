@@ -12,8 +12,8 @@ use mo_core::{
 use mo_def::ErrorCode;
 use mo_def::core_ops::{
     CoreBase, CoreBigOp, CoreByteOp, CoreBytesOp, CoreCharOp, CoreCmpOp, CoreCryptoOp, CoreDecOp,
-    CoreFloatOp, CoreIntOp, CoreIoNullaryOp, CoreListNullaryOp, CoreMapNullaryOp, CoreRangeOp,
-    CoreSetOp, CoreTextOp, CoreTimeOp, CoreUnicodeOp,
+    CoreFloatOp, CoreIntOp, CoreIoNullaryOp, CoreJsonOp, CoreListNullaryOp, CoreMapNullaryOp,
+    CoreRangeOp, CoreSetOp, CoreTextOp, CoreTimeOp, CoreUnicodeOp,
 };
 use mo_syntax::{SyntaxKind, TokenKind};
 
@@ -1050,6 +1050,9 @@ fn match_static_prim(native: &str) -> Option<Prim> {
         "Crypto.open_raw" => Some(Prim::Crypto(CoreCryptoOp::OpenRaw)),
         "Crypto.hash_password_raw" => Some(Prim::Crypto(CoreCryptoOp::HashPasswordRaw)),
         "Crypto.verify_password" => Some(Prim::Crypto(CoreCryptoOp::VerifyPassword)),
+        // Json
+        "Json.quote_raw" => Some(Prim::Json(CoreJsonOp::QuoteRaw)),
+        "Json.parse_raw" => Some(Prim::Json(CoreJsonOp::ParseRaw)),
         // Char
         "Char.code" => Some(Prim::Char(CoreCharOp::Code)),
         "Char.ascii_digit?" => Some(Prim::Char(CoreCharOp::IsDigit)),

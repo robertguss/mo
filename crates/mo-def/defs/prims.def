@@ -255,4 +255,7 @@ PRIM(BYTES_I64_BE_AT,           "Bytes",     "i64_be_at",          "fn(Bytes, In
 PRIM(BYTES_IS_EMPTY,            "Bytes",     "empty?",             "fn(Bytes) : Bool",                           "b",   "")
 PRIM(BYTES_COMPARE_SLICE_AT,    "Bytes",     "compare_slice_at",   "fn(Bytes, Int, Int, Bytes) : Option(Ordering)", "bbbb", "")
 
+PRIM(JSON_QUOTE_RAW,            "Json",      "quote_raw",          "fn(Text) : Text",                            "b",   "")
+PRIM(JSON_PARSE_RAW,            "Json",      "parse_raw",          "fn(Text) : Result((List(Int), List(Text)), (Int, Int, Int, Text))", "b", "")
+
 #undef PRIM

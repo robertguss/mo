@@ -82,7 +82,9 @@ effects; `secureRandomSeeded` is spec-only. The twelve binary `Files` /
 `Files binary handles are not modeled by mocore`, keeping prior effects;
 `Files.File` (`(file)`) is never a parameter of the entry function. The
 `(crypto CryptoOp)` primitives stop with
-`Crypto is a trusted primitive unavailable in mocore`.
+`Crypto is a trusted primitive unavailable in mocore`, and the
+`(json JsonOp)` primitives stop with
+`Json is a trusted primitive unavailable in mocore`.
 
 ### Earlier changes from 0.9
 
@@ -460,7 +462,7 @@ bindings, and an absent span. The other Lean-written fixtures use `noSource`.
 P := (int IntOp) | (big BigOp) | (byte ByteOp) | (dec DecOp)
    | (float FloatOp) | (not) | (cmp Base CmpOp) | (char CharOp)
    | (text TextOp) | (bytes BytesOp) | (range RangeOp) | (time TimeOp)
-   | (unicode16 UnicodeOp) | (crypto CryptoOp)
+   | (unicode16 UnicodeOp) | (crypto CryptoOp) | (json JsonOp)
    | (list T ListOp) | (map T T MapOp) | (set T SetOp) | (eq T)
    | (structural T) | (io IoOp)
 ```
@@ -477,8 +479,8 @@ Each name in the following table means a **nullary S-expression**, e.g.
 | `FloatOp` | `add sub mul div rem neg abs sqrt floor ceil round isNan isInfinite toDecimal toText` |
 | `Base` | `int bigInt byte decimal float bool char text bytes time duration` |
 | `CmpOp` | `lt le gt ge` |
-| `CharOp` | `code isDigit isLetter isWhiteSpace lower upper toText` |
-| `TextOp` | `concat byteCount charCount isEmpty chars fromChars lines words split trim trimStart trimEnd startsWith endsWith contains dropPrefix dropSuffix replace repeat padLeft padRight lower upper toInt toDecimal toFloat join bytes` |
+| `CharOp` | `code isDigit isLetter isWhiteSpace lower upper toText quoted` |
+| `TextOp` | `concat byteCount charCount isEmpty chars fromChars lines words split trim trimStart trimEnd startsWith endsWith contains dropPrefix dropSuffix replace repeat padLeft padRight lower upper toInt toDecimal toFloat join bytes quoted` |
 | `BytesOp` | `size get decodeUtf8 slice join toHex fromHex toBase64url fromBase64url empty zeroed fromList toList fromU16Be fromU32Be fromI64Be u16BeAt u32BeAt i64BeAt isEmpty compareSliceAt` |
 | `UnicodeOp` | `graphemes displayWidth normalizeNfc lowercase uppercase letter digit` |
 | `CryptoOp` | `sha256 hmacSha256 constantTimeEq sealRaw openRaw hashPasswordRaw verifyPassword` |

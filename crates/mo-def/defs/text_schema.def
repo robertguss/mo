@@ -157,6 +157,9 @@ ENUM(unicode_op, enum mo_core_unicode_op, MO_CORE_UNICODE_OPS(OP));
 #define OP(tag, wire) V(enum mo_core_crypto_op, MO_CORE_CRYPTO_OP_##tag, wire, END),
 ENUM(crypto_op, enum mo_core_crypto_op, MO_CORE_CRYPTO_OPS(OP));
 #undef OP
+#define OP(tag, wire) V(enum mo_core_json_op, MO_CORE_JSON_OP_##tag, wire, END),
+ENUM(json_op, enum mo_core_json_op, MO_CORE_JSON_OPS(OP));
+#undef OP
 #define OP(tag, wire) V(enum mo_core_range_op, MO_CORE_RANGE_OP_##tag, wire, END),
 ENUM(range_op, enum mo_core_range_op, MO_CORE_RANGE_OPS(OP));
 #undef OP
@@ -207,7 +210,8 @@ NODE(prim, struct mo_core_prim, enum mo_core_prim_tag, P(INT, "int", PF(int_, in
      P(CHAR, "char", PF(char_, char_op), END), P(TEXT, "text", PF(text, text_op), END),
      P(BYTES, "bytes", PF(bytes, bytes_op), END), P(RANGE, "range", PF(range, range_op), END),
      P(UNICODE16, "unicode16", PF(unicode16, unicode_op), END),
-     P(CRYPTO, "crypto", PF(crypto, crypto_op), END), P(SIM, "sim", PF(sim, sim_op), END),
+     P(CRYPTO, "crypto", PF(crypto, crypto_op), END),
+     P(JSON, "json", PF(json, json_op), END), P(SIM, "sim", PF(sim, sim_op), END),
      P(TIME, "time", PF(time, time_op), END),
      P(LIST, "list", PF(list.t, ty), PF(list.op, list_op), END),
      P(MAP, "map", PF(map.k, ty), PF(map.v, ty), PF(map.op, map_op), END),

@@ -210,7 +210,7 @@ fn phc_b64_encode(input: &[u8], out: &mut String) {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let full = input.len() / 3;
     let rem = input.len() % 3;
-    for chunk in input[..full * 3].chunks_exact(3) {
+    for chunk in input.as_chunks::<3>().0 {
         let v = (u32::from(chunk[0]) << 16) | (u32::from(chunk[1]) << 8) | u32::from(chunk[2]);
         out.push(TABLE[((v >> 18) & 0x3f) as usize] as char);
         out.push(TABLE[((v >> 12) & 0x3f) as usize] as char);
@@ -252,7 +252,7 @@ fn phc_b64_decode(input: &[u8], out: &mut [u8]) -> Option<usize> {
         return None;
     }
     let mut o = 0usize;
-    for chunk in input[..full * 4].chunks_exact(4) {
+    for chunk in input.as_chunks::<4>().0 {
         let v0 = phc_b64_value(chunk[0])?;
         let v1 = phc_b64_value(chunk[1])?;
         let v2 = phc_b64_value(chunk[2])?;

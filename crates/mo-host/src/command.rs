@@ -29,7 +29,7 @@ use rustix::io::fcntl_dupfd_cloexec;
 use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
 
 use crate::HostError;
-use crate::files_common::{FileStatus, find_case_tag, join_path, prepare_real_path};
+use crate::files_common::{FileStatus, find_case_tag, join_path, normalize_path};
 #[cfg(unix)]
 use crate::real_files::{PathMode, ResolverState, dir_fd_path, resolve};
 
@@ -937,7 +937,7 @@ fn command_within_fake(
         });
         return Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?);
     }
-    let Ok(norm) = prepare_real_path(raw.as_bytes()) else {
+    let Ok(norm) = normalize_path(raw.as_bytes()) else {
         let new_cap = CommandCap::Fake(FakeCommandCap {
             replies: orig.replies.clone(),
             prefix: Some(raw.to_string()),
@@ -1011,7 +1011,7 @@ fn command_within_real(
         return make_cap(dup_orig()?, false, true, orig.prefix.clone());
     }
 
-    let Ok(norm) = prepare_real_path(raw.as_bytes()) else {
+    let Ok(norm) = normalize_path(raw.as_bytes()) else {
         return make_cap(dup_orig()?, false, true, Some(raw.to_string()));
     };
     let joined = if orig.pending {
