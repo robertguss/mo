@@ -121,6 +121,8 @@ struct FakeConnection {
 
 enum ActiveScriptedReply {
     Pending,
+    Refused,
+    Failed(Value),
     Closed,
     Bytes {
         wire: Value,
@@ -1231,6 +1233,106 @@ pub(crate) fn network_fake_scripted(
     )?)
 }
 
+fn chunked_request_len(mut body: &[u8]) -> Option<usize> {
+    let total = body.len();
+    loop {
+        let end = body.windows(2).position(|w| w == b"\r\n")?;
+        let line = std::str::from_utf8(&body[..end]).ok()?;
+        let size = line.split(';').next()?.trim_end();
+        let size = usize::from_str_radix(size, 16).ok()?;
+        body = &body[end + 2..];
+        if size == 0 {
+            let trailers_len = if body.starts_with(b"\r\n") {
+                2
+            } else {
+                body.windows(4).position(|w| w == b"\r\n\r\n")? + 4
+            };
+            return Some(total - body.len() + trailers_len);
+        }
+        body = body.get(size..)?.strip_prefix(b"\r\n")?;
+    }
+}
+
+fn scripted_request_len(sent: &[u8]) -> Option<usize> {
+    let head_end = sent.windows(4).position(|w| w == b"\r\n\r\n")?;
+    let body_start = head_end + 4;
+    let head = String::from_utf8_lossy(&sent[..head_end]);
+    let mut headers = head
+        .split("\r\n")
+        .skip(1)
+        .filter_map(|line| line.split_once(':'));
+    let body = &sent[body_start..];
+    let body_len = if headers.clone().any(|(name, value)| {
+        name.eq_ignore_ascii_case("transfer-encoding")
+            && value
+                .split(',')
+                .any(|coding| coding.trim().eq_ignore_ascii_case("chunked"))
+    }) {
+        chunked_request_len(body)?
+    } else {
+        match headers.find(|(name, _)| name.eq_ignore_ascii_case("content-length")) {
+            Some((_, value)) => value.trim().parse::<usize>().ok()?,
+            None => 0,
+        }
+    };
+    (body_len <= body.len()).then(|| body_start + body_len)
+}
+
+fn resolve_scripted_reply(
+    heap: &Heap,
+    scripted: &mut ScriptedConnection,
+    request_len: usize,
+) -> Result<(), HostError> {
+    let (entry, path) = parse_sent_http_request(
+        &scripted.sent[..request_len],
+        scripted.secure,
+        &scripted.host,
+        scripted.port,
+    );
+    scripted.sent = Vec::new();
+    let mut state = scripted.state.borrow_mut();
+    let matched_idx = state.scripts.iter().position(|script| {
+        (script.method == "*" || script.method.eq_ignore_ascii_case(&entry.method))
+            && scripted_url_matches(&entry.url, &path, &script.url_prefix)
+    });
+    push_recorded_call(heap, &mut state.recorded, entry)?;
+    let Some(sidx) = matched_idx else {
+        scripted.active = ActiveScriptedReply::Refused;
+        return Ok(());
+    };
+    if state.scripts[sidx].replies.is_empty() {
+        scripted.active = ActiveScriptedReply::Refused;
+        return Ok(());
+    }
+    let ridx = state.scripts[sidx]
+        .cursor
+        .min(state.scripts[sidx].replies.len() - 1);
+    if state.scripts[sidx].cursor + 1 < state.scripts[sidx].replies.len() {
+        state.scripts[sidx].cursor += 1;
+    }
+    match &state.scripts[sidx].replies[ridx] {
+        ScriptedReply::Fail(err) => scripted.active = ActiveScriptedReply::Failed(err.clone()),
+        ScriptedReply::Respond(wire) => {
+            scripted.active = ActiveScriptedReply::Bytes {
+                wire: wire.clone(),
+                pos: 0,
+                fill_left: 0,
+            }
+        }
+        ScriptedReply::TruncateAfter(n) => {
+            let fill_left = (*n).max(0) as u64;
+            let declared_len = fill_left + 64;
+            let wire = format!("HTTP/1.1 200 OK\r\nContent-Length: {declared_len}\r\n\r\n");
+            scripted.active = ActiveScriptedReply::Bytes {
+                wire: heap.alloc_bytes(wire.into_bytes())?,
+                pos: 0,
+                fill_left,
+            };
+        }
+    }
+    Ok(())
+}
+
 fn push_recorded_call(
     heap: &Heap,
     recorded: &mut Vec<RecordedCall>,
@@ -1595,6 +1697,10 @@ pub(crate) fn call_network(
                         let mut scratch = ScratchGuard::new(heap.budget());
                         scratch.charge(new_len)?;
                         scripted.sent.extend_from_slice(bytes);
+                        drop(scratch);
+                        if let Some(request_len) = scripted_request_len(&scripted.sent) {
+                            resolve_scripted_reply(heap, &mut scripted, request_len)?;
+                        }
                     }
                     make_network_ok(heap, types, result_ty, Value::Unit)
                 }
@@ -1661,93 +1767,6 @@ pub(crate) fn call_network(
                 }
                 ConnectionCap::Scripted(cell) => {
                     let mut scripted = cell.borrow_mut();
-                    if matches!(scripted.active, ActiveScriptedReply::Pending) {
-                        let (entry, path) = parse_sent_http_request(
-                            &scripted.sent,
-                            scripted.secure,
-                            &scripted.host,
-                            scripted.port,
-                        );
-                        let mut state_mut = scripted.state.borrow_mut();
-                        let matched_idx = state_mut.scripts.iter().position(|s| {
-                            (s.method == "*" || s.method.eq_ignore_ascii_case(&entry.method))
-                                && scripted_url_matches(&entry.url, &path, &s.url_prefix)
-                        });
-                        push_recorded_call(heap, &mut state_mut.recorded, entry)?;
-                        let Some(sidx) = matched_idx else {
-                            drop(state_mut);
-                            scripted.active = ActiveScriptedReply::Closed;
-                            let host_val = scripted.host_val.clone();
-                            let port = i64::from(scripted.port);
-                            return make_network_error(
-                                heap,
-                                types,
-                                result_ty,
-                                NetErr::Refused,
-                                &host_val,
-                                port,
-                            );
-                        };
-                        if state_mut.scripts[sidx].replies.is_empty() {
-                            drop(state_mut);
-                            scripted.active = ActiveScriptedReply::Closed;
-                            let host_val = scripted.host_val.clone();
-                            let port = i64::from(scripted.port);
-                            return make_network_error(
-                                heap,
-                                types,
-                                result_ty,
-                                NetErr::Refused,
-                                &host_val,
-                                port,
-                            );
-                        }
-                        let ridx = state_mut.scripts[sidx]
-                            .cursor
-                            .min(state_mut.scripts[sidx].replies.len() - 1);
-                        if state_mut.scripts[sidx].cursor + 1
-                            < state_mut.scripts[sidx].replies.len()
-                        {
-                            state_mut.scripts[sidx].cursor += 1;
-                        }
-                        match &state_mut.scripts[sidx].replies[ridx] {
-                            ScriptedReply::Fail(err_val) => {
-                                let cloned_err = err_val.clone();
-                                drop(state_mut);
-                                scripted.active = ActiveScriptedReply::Closed;
-                                let err_tag = find_case_tag(types, result_ty, "Error");
-                                return Ok(heap.make_case(
-                                    types,
-                                    result_ty,
-                                    err_tag,
-                                    vec![cloned_err],
-                                )?);
-                            }
-                            ScriptedReply::Respond(wire_bytes) => {
-                                let wire = wire_bytes.clone();
-                                drop(state_mut);
-                                scripted.active = ActiveScriptedReply::Bytes {
-                                    wire,
-                                    pos: 0,
-                                    fill_left: 0,
-                                };
-                            }
-                            ScriptedReply::TruncateAfter(n) => {
-                                let fill_left = (*n).max(0) as u64;
-                                let declared_len = fill_left + 64;
-                                let wire = format!(
-                                    "HTTP/1.1 200 OK\r\nContent-Length: {declared_len}\r\n\r\n"
-                                )
-                                .into_bytes();
-                                drop(state_mut);
-                                scripted.active = ActiveScriptedReply::Bytes {
-                                    wire: heap.alloc_bytes(wire)?,
-                                    pos: 0,
-                                    fill_left,
-                                };
-                            }
-                        }
-                    }
                     let chunk = match &mut scripted.active {
                         ActiveScriptedReply::Bytes {
                             wire,
@@ -1764,9 +1783,35 @@ pub(crate) fn call_network(
                             *fill_left -= fill as u64;
                             chunk
                         }
+                        ActiveScriptedReply::Failed(err_val) => {
+                            let err_val = err_val.clone();
+                            scripted.active = ActiveScriptedReply::Closed;
+                            let err_tag = find_case_tag(types, result_ty, "Error");
+                            return Ok(heap.make_case(types, result_ty, err_tag, vec![err_val])?);
+                        }
+                        ActiveScriptedReply::Refused => {
+                            scripted.active = ActiveScriptedReply::Closed;
+                            let host_val = scripted.host_val.clone();
+                            let port = i64::from(scripted.port);
+                            return make_network_error(
+                                heap,
+                                types,
+                                result_ty,
+                                NetErr::Refused,
+                                &host_val,
+                                port,
+                            );
+                        }
                         ActiveScriptedReply::Closed => Vec::new(),
                         ActiveScriptedReply::Pending => {
-                            unreachable!("scripted reply resolved above")
+                            return make_network_error(
+                                heap,
+                                types,
+                                result_ty,
+                                NetErr::TimedOut,
+                                &Value::Unit,
+                                0,
+                            );
                         }
                     };
                     let val = heap.alloc_bytes(chunk)?;

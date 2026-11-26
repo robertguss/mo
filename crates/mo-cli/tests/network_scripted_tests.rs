@@ -176,6 +176,60 @@ end
 }
 
 #[test]
+fn network_scripted_assigns_replies_on_send_order() -> Result<(), Box<dyn Error>> {
+    let dir = TempDir::new("send-order")?;
+    let main_mo = dir.path.join("main.mo");
+    fs::write(
+        &main_mo,
+        r#"module Main
+use Http
+
+test "assigns replies on send order"
+  net = Network.fake_scripted([
+    ("*", "/", [
+      Network.Respond(response: Http.reply(200, "first")),
+      Network.Respond(response: Http.reply(200, "second")),
+      Network.Respond(response: Http.reply(200, "third"))
+    ])
+  ])
+  assert net.connect("example.org", 80, 5.seconds) is Ok(c1)
+  assert net.connect("example.org", 80, 5.seconds) is Ok(c2)
+  assert net.connect("example.org", 80, 5.seconds) is Ok(c3)
+  assert c1.send("POST /length HTTP/1.1\r\nContent-Length: 4\r\n\r\nab".bytes) == Ok(Unit)
+  assert c1.receive(4096) == Error(Network.TimedOut)
+  assert c2.send("POST /chunk HTTP/1.1\r\nTransfer-Encoding: Chunked\r\n\r\n5\r\n0\r\n\r\n\r\n".bytes) == Ok(Unit)
+  assert net.recorded_calls().size == 0
+  assert c2.send("0\r\nTrailer: done\r\n".bytes) == Ok(Unit)
+  assert net.recorded_calls().size == 0
+  assert c2.send("\r\n".bytes) == Ok(Unit)
+  assert c1.send("cd".bytes) == Ok(Unit)
+  assert c3.send("GET /unread HTTP/1.1\r\n\r\n".bytes) == Ok(Unit)
+  calls = net.recorded_calls()
+  assert calls.size == 3
+  assert calls.get(0) is Some(chunked) and chunked.url == "http://example.org/chunk"
+  assert calls.get(1) is Some(length) and length.url == "http://example.org/length"
+  assert length.body == "abcd".bytes
+  assert calls.get(2) is Some(unread) and unread.url == "http://example.org/unread"
+  assert c1.receive(4096) is Ok(second) and second.decode_utf8 is Some(second_text)
+  assert c2.receive(4096) is Ok(first) and first.decode_utf8 is Some(first_text)
+  assert second_text.contains?("second")
+  assert first_text.contains?("first")
+end
+"#,
+    )?;
+    let out = Command::new(mo_bin())
+        .args(["test", main_mo.to_str().unwrap_or("")])
+        .output()?;
+    assert!(
+        out.status.success(),
+        "expected mo test success:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Ok(())
+}
+
+#[test]
 fn network_scripted_truncation_can_span_multiple_reads() -> Result<(), Box<dyn Error>> {
     let dir = TempDir::new("multi-read-truncation")?;
     let main = dir.path.join("main.mo");
