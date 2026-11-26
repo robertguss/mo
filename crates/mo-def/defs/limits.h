@@ -270,6 +270,16 @@
 #define MO_LIMIT_API_WRITE_US UINT64_C(15000000)
 #endif
 
+/* Streaming Server-Sent Events (SSE) broker bounds in `mo serve`. */
+#define MO_LIMIT_API_SSE_CLIENTS 256
+#define MO_LIMIT_API_SSE_TOPICS 1024
+#define MO_LIMIT_API_SSE_TOPICS_PER_CLIENT 32
+#define MO_LIMIT_API_SSE_HISTORY 512
+#define MO_LIMIT_API_SSE_CLIENT_QUEUE 256
+#define MO_LIMIT_API_SSE_EVENT_BYTES 65536
+#define MO_LIMIT_API_SSE_PUBLISH_PER_RESPONSE 32
+#define MO_LIMIT_API_SSE_KEEPALIVE_US UINT64_C(15000000)
+
 /* Service promises in one service block; each runs after every step of every sequence. */
 #define MO_LIMIT_SERVICE_PROMISES 64
 

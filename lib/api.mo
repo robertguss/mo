@@ -3,6 +3,7 @@ module Api
 expose Request(..),
 Response(..),
 RouteSpec(..),
+SsePublish(..),
 request,
 get,
 post,
@@ -32,6 +33,13 @@ redirect,
 redirect_see_other,
 redirect_with,
 sse_response,
+sse_stream,
+sse_stream_with,
+with_sse_subscribe,
+with_sse_publish,
+with_sse_publish_json,
+sse_subscribe_topics,
+sse_published_events,
 percent_decode,
 parse_query_string,
 match_path,
@@ -93,6 +101,13 @@ struct RouteSpec
   auth_mode: Text
   has_json_body?: Bool
   job_names: List(Text)
+end
+
+## A server-side Server-Sent Events publish directive attached to an HTTP response.
+struct SsePublish
+  topic: Text
+  event: Option(Text)
+  data: Text
 end
 
 fn hex_nibble(b: Int) : Option(Int)
@@ -379,12 +394,30 @@ fn redirect_with(status: Int, location: Text) : Response
   Response(status: status, headers: [("Location", location)], body: "".bytes)
 end
 
+fn sanitize_sse_line(raw: Text) : Text
+  raw.replace("\r", "").replace("\n", "")
+end
+
+fn normalize_sse_topics(topics: List(Text)) : List(Text)
+  var out = []
+  for raw in topics
+    clean = sanitize_sse_line(raw).trim
+    if not clean.empty? and not out.contains?(clean)
+      out = out.append(clean)
+    end
+  end
+  out
+end
+
 fn format_sse_frame(event: (Option(Text), Text)) : Text
   head = case event.0
-    Some(name): "event: #{name}\n"
+    Some(name):
+      clean = sanitize_sse_line(name).trim
+      if clean.empty?: "" else: "event: #{clean}\n"
     None: ""
   end
-  data_lines = event.1.lines
+  normalized_data = event.1.replace("\r\n", "\n").replace("\r", "\n")
+  data_lines = normalized_data.split("\n")
   body = if data_lines.empty?
     "data: \n"
   else
@@ -432,6 +465,134 @@ end
 fn headers_named(res: Response, name: Text) : List(Text)
   low = name.ascii_lowercase
   res.headers.filter(fn(h) h.0.ascii_lowercase == low end).map(fn(h) h.1 end)
+end
+
+## Upgrades a `Response` into a persistent chunked SSE subscription in `mo serve`
+## for all non-empty deduplicated `topics`, optionally replaying missed events since `last_event_id`.
+fn with_sse_subscribe(res: Response, topics: List(Text), last_event_id: Option(Text)) : Response
+  clean_topics = normalize_sse_topics(topics)
+  return res if clean_topics.empty?
+  clean_id_json = case last_event_id
+    Some(raw):
+      cleaned = sanitize_sse_line(raw).trim
+      if cleaned.empty?: Json.Null else: Json.String(cleaned)
+    None: Json.Null
+  end
+  topic_json = Json.Array(clean_topics.map(fn(t) Json.String(t) end))
+  directive = Json.Object({"topics": topic_json, "last_event_id": clean_id_json}).to_text
+  var next = res.with_header("X-Mo-Sse-Subscribe", directive)
+  if next.header("Content-Type") == None
+    next = next.with_header("Content-Type", "text/event-stream; charset=utf-8")
+  end
+  if next.header("Cache-Control") == None
+    next = next.with_header("Cache-Control", "no-cache, no-transform")
+  end
+  if next.header("X-Accel-Buffering") == None
+    next = next.with_header("X-Accel-Buffering", "no")
+  end
+  next
+end
+
+## Builds a persistent streaming `200 OK` Server-Sent Events response subscribed to `topics`,
+## optionally setting browser `retry:` interval, `Last-Event-ID` catchup cursor, and initial events.
+fn sse_stream_with(
+  topics: List(Text),
+  last_event_id: Option(Text),
+  retry_ms: Option(Int),
+  initial_events: List((Option(Text), Text))
+) : Response
+  retry_prefix = case retry_ms
+    Some(ms) if ms >= 0: "retry: #{ms}\n\n"
+    Some(_) | None: ""
+  end
+  payload = "#{retry_prefix}#{initial_events.map(format_sse_frame).join("")}"
+  base = Response(
+    status: 200,
+    headers: [
+      ("Content-Type", "text/event-stream; charset=utf-8"),
+      ("Cache-Control", "no-cache, no-transform"),
+      ("X-Accel-Buffering", "no")
+    ],
+    body: payload.bytes
+  )
+  with_sse_subscribe(base, topics, last_event_id)
+end
+
+## Builds a persistent streaming `200 OK` Server-Sent Events response subscribed to `topics`.
+fn sse_stream(topics: List(Text), initial_events: List((Option(Text), Text))) : Response
+  sse_stream_with(topics, None, None, initial_events)
+end
+
+## Attaches a server-side SSE publish directive for `topic` onto any HTTP response.
+## `mo serve` broadcasts attached events to matching SSE subscribers on 2xx responses and
+## strips the internal directive header before sending the HTTP response to the caller.
+fn with_sse_publish(res: Response, topic: Text, event: Option(Text), data: Text) : Response
+  clean_topic = sanitize_sse_line(topic).trim
+  return res if clean_topic.empty?
+  ev_json = case event
+    Some(raw):
+      cleaned = sanitize_sse_line(raw).trim
+      if cleaned.empty?: Json.Null else: Json.String(cleaned)
+    None: Json.Null
+  end
+  directive = Json.Object({
+    "topic": Json.String(clean_topic),
+    "event": ev_json,
+    "data": Json.String(data)
+  }).to_text
+  res.add_header("X-Mo-Sse-Publish", directive)
+end
+
+## Attaches a JSON-encoded server-side SSE publish directive onto an HTTP response.
+fn with_sse_publish_json(res: Response, topic: Text, event: Text, payload: Json) : Response
+  with_sse_publish(res, topic, Some(event), payload.to_text)
+end
+
+## Returns the subscribed SSE topics requested by an `Api.Response` (for `ApiTest.send`).
+fn sse_subscribe_topics(res: Response) : List(Text)
+  raw = case res.header("X-Mo-Sse-Subscribe")
+    Some(v): v
+    None: return []
+  end
+  parsed = case Json.parse(raw)
+    Ok(j): j
+    Error(_): return []
+  end
+  arr = case parsed.get("topics")
+    Some(Json.Array(items)): items
+    Some(_) | None: return []
+  end
+  var out = []
+  for item in arr
+    case item
+      Json.String(s) if not s.empty?: out = out.append(s)
+      Json.String(_) | Json.Null | Json.Boolean(_) | Json.Number(_) | Json.Array(_) | Json.Object(_): Unit
+    end
+  end
+  out
+end
+
+## Returns all SSE publish directives attached to an `Api.Response` (for `ApiTest.send`).
+fn sse_published_events(res: Response) : List(SsePublish)
+  raw_headers = res.headers_named("X-Mo-Sse-Publish")
+  var out = []
+  for raw in raw_headers
+    parsed = case Json.parse(raw)
+      Ok(j): j
+      Error(_): continue
+    end
+    topic = case parsed.text_at("topic")
+      Some(t) if not t.empty?: t
+      Some(_) | None: continue
+    end
+    data = parsed.text_at("data") or ""
+    event = case parsed.text_at("event")
+      Some(ev) if not ev.empty?: Some(ev)
+      Some(_) | None: None
+    end
+    out = out.append(SsePublish(topic: topic, event: event, data: data))
+  end
+  out
 end
 
 ## Decodes a response's body as UTF-8 text (or empty string if non-UTF-8).
@@ -1014,4 +1175,27 @@ test "request and response builders, path matching and validation helpers"
   sse = sse_response([(Some("token"), "hello"), (None, "done")])
   assert sse.status == 200
   assert sse.text == "event: token\ndata: hello\n\ndata: done\n\n"
+
+  live_sse = sse_stream_with(
+    ["claims\r\n", " page:1 ", "claims", ""],
+    Some(" 7\n"),
+    Some(3000),
+    [(Some("ready\r\n"), "{\"ok\":true}")]
+  )
+  assert live_sse.status == 200
+  assert live_sse.header("Content-Type") == Some("text/event-stream; charset=utf-8")
+  assert live_sse.header("X-Accel-Buffering") == Some("no")
+  assert live_sse.sse_subscribe_topics == ["claims", "page:1"]
+  assert live_sse.text == "retry: 3000\n\nevent: ready\ndata: {\"ok\":true}\n\n"
+
+  ev_res = json_response(200, {"saved": true}).with_sse_publish_json(
+    "page:1\n",
+    "blocks\r",
+    Json.Object({"v": Json.int(2)})
+  ).with_sse_publish("claims", None, "line1\nline2")
+  published = ev_res.sse_published_events
+  assert published.size == 2
+  assert published.get(0) ==
+    Some(SsePublish(topic: "page:1", event: Some("blocks"), data: "{\"v\":2}"))
+  assert published.get(1) == Some(SsePublish(topic: "claims", event: None, data: "line1\nline2"))
 end
