@@ -18,7 +18,7 @@ mod unix_tests {
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::path::{Path, PathBuf};
-    use std::process::Command;
+    use std::process::{Child, Command, Stdio};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{Duration, Instant};
 
@@ -39,6 +39,138 @@ mod unix_tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir)?;
         Ok(dir)
+    }
+
+    const MCP_SOURCE: &str = r#"module App
+
+service
+  state Int = 0
+  tools count
+  token from env "MO_READY_TEST_TOKEN"
+end
+
+fn count(state: Int, _at: Time) : Text
+  "count: #{state}"
+end
+"#;
+
+    struct RunningServer(Child);
+
+    impl Drop for RunningServer {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    fn wait_for_ready(
+        command: &mut Command,
+        path: &Path,
+    ) -> Result<(RunningServer, String), Box<dyn Error>> {
+        let mut server = RunningServer(command.stdout(Stdio::null()).spawn()?);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match fs::read_to_string(path) {
+                Ok(json) => return Ok((server, json)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                Err(e) => return Err(e.into()),
+            }
+            assert!(
+                server.0.try_wait()?.is_none(),
+                "server exited before publishing readiness"
+            );
+            assert!(Instant::now() < deadline, "timed out waiting for readiness");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn ready_port(json: &str) -> Result<u16, Box<dyn Error>> {
+        Ok(json
+            .split_once("\"port\":")
+            .and_then(|(_, rest)| rest.split_once(','))
+            .ok_or("missing port")?
+            .0
+            .parse()?)
+    }
+
+    #[test]
+    fn mcp_readiness_publishes_endpoint_url() -> Result<(), Box<dyn Error>> {
+        let dir = temp_dir("mcp-ready")?;
+        fs::write(dir.join("app.mo"), MCP_SOURCE)?;
+        let mut command = Command::new(mo_bin());
+        command
+            .current_dir(&dir)
+            .env("MO_READY_TEST_TOKEN", "readiness-canary")
+            .args([
+                "serve",
+                "app.mo",
+                "--port",
+                "0",
+                "--data",
+                ".",
+                "--ready-file",
+                "ready.json",
+            ]);
+        let (server, json) = wait_for_ready(&mut command, &dir.join("ready.json"))?;
+        let port = ready_port(&json)?;
+        assert!(
+            json.contains(&format!("\"url\":\"http://127.0.0.1:{port}/mcp\"")),
+            "{json}"
+        );
+        drop(server);
+        fs::remove_dir_all(dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn failed_bind_does_not_remove_running_servers_ready_file() -> Result<(), Box<dyn Error>> {
+        let api_source = r#"module App
+
+api
+  port 8080
+  get "/health" health
+end
+
+fn health() : Text
+  "ready-ok"
+end
+"#;
+        for (kind, source) in [("api", api_source), ("mcp", MCP_SOURCE)] {
+            let dir = temp_dir(kind)?;
+            fs::write(dir.join("app.mo"), source)?;
+            fs::create_dir(dir.join("first"))?;
+            fs::create_dir(dir.join("second"))?;
+            let ready = dir.join("ready.json");
+            let command = |port: &str, data: &str| {
+                let mut command = Command::new(mo_bin());
+                command
+                    .current_dir(&dir)
+                    .env("MO_READY_TEST_TOKEN", "readiness-canary")
+                    .args([
+                        "serve",
+                        "app.mo",
+                        "--port",
+                        port,
+                        "--data",
+                        data,
+                        "--ready-file",
+                        "ready.json",
+                    ]);
+                command
+            };
+            let (server, json) = wait_for_ready(&mut command("0", "first"), &ready)?;
+            let port = ready_port(&json)?;
+            let output = command(&port.to_string(), "second").output()?;
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                !output.status.success() && stderr.contains("could not listen"),
+                "{kind}: {stderr}"
+            );
+            assert_eq!(fs::read_to_string(&ready)?, json, "{kind}");
+            drop(server);
+            fs::remove_dir_all(dir)?;
+        }
+        Ok(())
     }
 
     #[test]
@@ -183,6 +315,58 @@ end
         assert!(stdout.contains("DATAGRAM_PAIR_BLOCKED 1"), "{stdout}");
 
         let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn command_process_capture_and_wait_cache_share_the_vm_heap_limit() -> Result<(), Box<dyn Error>>
+    {
+        if !mo_host::confine::can_confine() {
+            return Ok(());
+        }
+        let dir = temp_dir("process-heap")?;
+        let main = dir.join("main.mo");
+        fs::write(
+            &main,
+            r#"module Main
+use Command
+
+fn check_output(proc: Command.Process) : Unit
+  assert proc.wait(5.seconds) is Ok(out)
+  assert out.stdout.bytes.size == 1000000
+end
+
+fn spawn_many(cmd: Command, args: List(Text), remaining: Int) : Unit
+  if remaining == 0
+    Unit
+  else
+    assert cmd.spawn("python3", args) is Ok(proc)
+    spawn_many(cmd, args, remaining - 1)
+    check_output(proc)
+  end
+end
+
+fn main(_console: Console, cmd: Command) : Unit
+  args = ["-c", "import sys; sys.stdout.write('x' * 1000000)"]
+  spawn_many(cmd, args, 5)
+end
+"#,
+        )?;
+        let out = Command::new(mo_bin())
+            .current_dir(&dir)
+            .args(["run", "--max-heap", "4MiB", "main.mo"])
+            .output()?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !stdout.contains("first capture succeeded"),
+            "{stdout}\n{stderr}"
+        );
+        assert!(
+            !out.status.success() && stderr.contains("running out of memory"),
+            "{stdout}\n{stderr}"
+        );
+        fs::remove_dir_all(dir)?;
         Ok(())
     }
 

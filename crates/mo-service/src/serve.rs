@@ -473,9 +473,6 @@ pub fn run_serve_service(
         .file()
         .string(cand_img.image.file().services[cand_img.service as usize].token_env)
         .to_string();
-    if let Some(ready_path) = opts.ready_file {
-        crate::clear_ready_file(ready_path);
-    }
     let listener = match Listener::open_tcp(
         &ListenerConfig {
             address: opts.bind.map(str::to_string),
@@ -509,6 +506,9 @@ pub fn run_serve_service(
         }
     };
 
+    if let Some(ready_path) = opts.ready_file {
+        crate::clear_ready_file(ready_path);
+    }
     let admin_cfg = match opts.admin_socket {
         Some(sock_path) => match Listener::open_unix(sock_path) {
             Ok(adm_listener) => Some(AdminConfig {
@@ -959,13 +959,10 @@ pub fn run_serve_service(
         let _ = errors.flush();
     }
 
+    let listen_url = format!("http://{numeric}/mcp");
     if let Some(ready_path) = opts.ready_file
-        && let Err(err) = crate::write_ready_file(
-            ready_path,
-            &format!("http://{numeric}"),
-            bound_port,
-            opts.data_dir,
-        )
+        && let Err(err) =
+            crate::write_ready_file(ready_path, &listen_url, bound_port, opts.data_dir)
     {
         let _ = writeln!(
             errors,
@@ -975,9 +972,7 @@ pub fn run_serve_service(
     }
     let _ready_guard = crate::ReadyFileGuard(opts.ready_file);
 
-    if writeln!(output, "mo serve: listening on http://{numeric}/mcp").is_err()
-        || output.flush().is_err()
-    {
+    if writeln!(output, "mo serve: listening on {listen_url}").is_err() || output.flush().is_err() {
         let _ = writeln!(
             errors,
             "error E1409: mo serve could not write its listening line"

@@ -2129,7 +2129,21 @@ starts with the same lines, the first line that differs. A `send` after the
 first `receive` gives `Error(Network.Closed)`. A fake opens no connection, runs
 no TLS and reads no clock: `within` is ignored, and a fake's connections don't
 count toward the limit. The `Network` that `mo test` makes for a promise has no
-peers. `Network.fake_scripted(scripts: List((Text, Text, List(Network.FakeReply)))) : Network` scripts an ordered queue of `Network.FakeReply` outcomes matched by `(method, url_prefix)` (`Network.Respond(response: Http.Response)`, `Network.Fail(error: NetworkError)` and `Network.TruncateAfter(bytes: Int)` closing the response stream mid-body after `bytes` payload bytes), obeying `allow_hosts` narrowing, repeating a target's final reply once exhausted, and returning `Error(Network.Refused(host: host, port: port))` for unmatched targets, and `Network.recorded_calls(network: Network) : List(Network.RecordedCall)` returns the `Network.RecordedCall(method: Text, url: Text, headers: List((Text, Text)), body: Bytes)` entries sent on a fake `Network` in order.
+peers. `Network.fake_scripted(scripts: List((Text, Text, List(Network.FakeReply)))) : Network` matches `Network.FakeReply` queues by
+`(method, url_prefix)` when a connection sends a complete HTTP request: the
+header terminator followed by any body declared by `Content-Length` or
+`Transfer-Encoding: chunked`. It obeys `allow_hosts` narrowing and repeats the
+final reply when its queue is exhausted. Each connection reads its own assigned
+`Network.Respond(response: Http.Response)`, `Network.Fail(error: NetworkError)`,
+or `Network.TruncateAfter(bytes: Int)` reply. Truncation closes the response
+stream after `bytes` payload bytes; unmatched targets give
+`Error(Network.Refused(host: host, port: port))` on receive. A scripted receive
+before the request is complete gives `Error(Network.TimedOut)` without
+consuming a reply.
+`Network.recorded_calls(network: Network) : List(Network.RecordedCall)` returns
+the `Network.RecordedCall(method: Text, url: Text, headers: List((Text, Text)), body: Bytes)`
+entries for a fake network. Scripted entries are logged in request-completion
+order, even when the connection never reads the reply.
 
 <!-- mo-example: fragment -->
 ```mo

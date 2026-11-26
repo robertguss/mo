@@ -103,7 +103,7 @@ fn publish_ready_file(ready_path: &Path, tmp_path: &Path, json: &[u8]) -> Result
     Ok(())
 }
 
-/// Removes a stale readiness file before server bind if present, ignoring `NotFound`.
+/// Removes a stale readiness file after server bind if present, ignoring `NotFound`.
 pub fn clear_ready_file(ready_path: &Path) {
     let _ = fs::remove_file(ready_path);
 }

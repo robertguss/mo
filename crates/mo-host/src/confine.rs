@@ -9,9 +9,48 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::OnceLock;
+#[cfg(unix)]
+use std::time::Duration;
+
+#[cfg(unix)]
+use rustix::time::{ClockId, Timespec, clock_gettime};
 
 /// Hidden `argv[1]` sentinel triggering the safe self-exec confinement trampoline for `Command`.
 pub const INTERNAL_COMMAND_TRAMPOLINE_ARG: &str = "--mo-internal-confine-command";
+#[cfg(unix)]
+pub(crate) const EXEC_STATUS_STDIN: &str = "MO_EXEC_STATUS_STDIN";
+#[cfg(unix)]
+pub(crate) const EXEC_STATUS_BYTES: usize = 256;
+
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+pub(crate) struct ExecDeadline(Timespec);
+
+#[cfg(unix)]
+impl ExecDeadline {
+    pub(crate) fn after(timeout: Duration) -> Option<Self> {
+        clock_gettime(ClockId::Monotonic)
+            .checked_add(Timespec::try_from(timeout).ok()?)
+            .map(Self)
+    }
+
+    pub(crate) fn remaining(self) -> Option<Timespec> {
+        let now = clock_gettime(ClockId::Monotonic);
+        (now < self.0).then(|| self.0 - now)
+    }
+
+    pub(crate) fn argument(self) -> String {
+        format!("{}:{}", self.0.tv_sec, self.0.tv_nsec)
+    }
+
+    fn parse(arg: &OsString) -> Option<Self> {
+        let (seconds, nanoseconds) = arg.to_str()?.split_once(':')?;
+        let tv_sec = seconds.parse().ok()?;
+        let tv_nsec = nanoseconds.parse().ok()?;
+        (tv_sec >= 0 && (0..1_000_000_000).contains(&tv_nsec))
+            .then_some(Self(Timespec { tv_sec, tv_nsec }))
+    }
+}
 
 static TRAMPOLINE_EXE: OnceLock<PathBuf> = OnceLock::new();
 
@@ -227,18 +266,43 @@ pub fn maybe_run_command_trampoline(args: impl IntoIterator<Item = OsString>) ->
 }
 
 #[cfg(unix)]
-fn fail_trampoline(step: &str) -> u8 {
+fn fail_trampoline(status: Option<&std::os::fd::OwnedFd>, step: &str) -> u8 {
     use std::io::Write;
+    if let Some(status) = status {
+        write_exec_failure(status, step);
+    }
     let _ = writeln!(std::io::stderr(), "mo: cannot confine the child: {step}");
     let _ = std::io::stderr().flush();
-    125
+    1
+}
+
+#[cfg(unix)]
+fn write_exec_failure(status: impl std::os::fd::AsFd, step: &str) {
+    let bytes = &step.as_bytes()[..step.len().min(EXEC_STATUS_BYTES)];
+    while let Err(rustix::io::Errno::INTR) = rustix::io::write(&status, bytes) {}
 }
 
 #[cfg(unix)]
 fn run_trampoline_inner(args: Vec<OsString>) -> u8 {
+    use std::os::fd::AsFd;
     use std::os::unix::process::CommandExt;
-    use std::process::Command;
+    use std::process::{Command, Stdio};
 
+    let status = if std::env::var_os(EXEC_STATUS_STDIN).is_some() {
+        // Stdin carries the pipe through the first exec; restore null stdin for the target.
+        let stdin = std::io::stdin();
+        match rustix::io::fcntl_dupfd_cloexec(stdin.as_fd(), 3) {
+            Ok(fd) => Some(fd),
+            Err(_) => {
+                let step = "could not duplicate exec status pipe";
+                write_exec_failure(stdin.as_fd(), step);
+                return fail_trampoline(None, step);
+            }
+        }
+    } else {
+        None
+    };
+    let fail = |step| fail_trampoline(status.as_ref(), step);
     let mut expected_dev: Option<String> = None;
     let mut expected_ino: Option<String> = None;
     let mut workdir: Option<PathBuf> = None;
@@ -246,6 +310,7 @@ fn run_trampoline_inner(args: Vec<OsString>) -> u8 {
     let mut cpu_seconds: Option<u64> = None;
     let mut mem_bytes: Option<u64> = None;
     let mut parent_pid: Option<u32> = None;
+    let mut deadline = None;
     let mut confine = false;
     let mut allow_loopback = false;
     let mut loopback_ports_filter: Option<Vec<u16>> = None;
@@ -289,24 +354,31 @@ fn run_trampoline_inner(args: Vec<OsString>) -> u8 {
                 i += 1;
                 parent_pid = args.get(i).and_then(|v| v.to_string_lossy().parse().ok());
             }
+            "--exec-deadline" => {
+                i += 1;
+                let Some(value) = args.get(i).and_then(ExecDeadline::parse) else {
+                    return fail("invalid exec deadline");
+                };
+                deadline = Some(value);
+            }
             "--confine" => confine = true,
             "--no-confine" => confine = false,
             "--allow-loopback" => allow_loopback = true,
             "--loopback-ports" => {
                 i += 1;
                 let Some(raw) = args.get(i).and_then(|v| v.to_str()) else {
-                    return fail_trampoline("invalid --loopback-ports argument");
+                    return fail("invalid --loopback-ports argument");
                 };
                 if raw.is_empty() {
-                    return fail_trampoline("empty --loopback-ports argument");
+                    return fail("empty --loopback-ports argument");
                 }
                 let mut parsed = Vec::new();
                 for tok in raw.split(',') {
                     let Ok(p) = tok.parse::<u16>() else {
-                        return fail_trampoline("invalid port in --loopback-ports");
+                        return fail("invalid port in --loopback-ports");
                     };
                     if p == 0 {
-                        return fail_trampoline("zero port in --loopback-ports");
+                        return fail("zero port in --loopback-ports");
                     }
                     parsed.push(p);
                 }
@@ -316,7 +388,7 @@ fn run_trampoline_inner(args: Vec<OsString>) -> u8 {
                 i += 1;
                 exe_path = args.get(i).map(PathBuf::from);
             }
-            _ => return fail_trampoline("invalid trampoline argument"),
+            _ => return fail("invalid trampoline argument"),
         }
         i += 1;
     }
@@ -331,7 +403,7 @@ fn run_trampoline_inner(args: Vec<OsString>) -> u8 {
         parent_pid,
         exe_path,
     ) else {
-        return fail_trampoline("incomplete trampoline arguments");
+        return fail("incomplete trampoline arguments");
     };
 
     enter_own_process_group();
@@ -339,11 +411,11 @@ fn run_trampoline_inner(args: Vec<OsString>) -> u8 {
     // Verify cwd identity matches the capability-resolved directory fd (eliminates TOCTOU).
     match rustix::fs::statat(rustix::fs::CWD, ".", rustix::fs::AtFlags::empty()) {
         Ok(st) if st.st_dev.to_string() == dev && st.st_ino.to_string() == ino => {}
-        _ => return fail_trampoline("working directory changed"),
+        _ => return fail("working directory changed"),
     }
 
     if let Err(step) = apply_child_rlimits(mem, cpu) {
-        return fail_trampoline(step);
+        return fail(step);
     }
 
     if confine
@@ -356,11 +428,19 @@ fn run_trampoline_inner(args: Vec<OsString>) -> u8 {
             loopback_ports_filter.as_deref(),
         )
     {
-        return fail_trampoline(&step);
+        return fail(&step);
     }
 
-    let err = Command::new(&exe).args(&cmd_args).exec();
-    fail_trampoline(&format!("exec failed: {err}"))
+    let mut target = Command::new(&exe);
+    target
+        .args(&cmd_args)
+        .stdin(Stdio::null())
+        .env_remove(EXEC_STATUS_STDIN);
+    if deadline.is_some_and(|deadline| deadline.remaining().is_none()) {
+        return fail("exec deadline expired");
+    }
+    let err = target.exec();
+    fail(&format!("exec failed: {err}"))
 }
 
 #[cfg(all(

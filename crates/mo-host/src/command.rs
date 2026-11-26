@@ -20,15 +20,23 @@ use mo_def::limits::{
     MO_LIMIT_COMMAND_MEMORY, MO_LIMIT_COMMAND_OUTPUT_BYTES, MO_LIMIT_HOST_PATH_SIZE,
     MO_LIMIT_OPEN_FOLDERS, MO_LIMIT_OPEN_PROCESSES, MO_LIMIT_VALUE_BYTES,
 };
+#[cfg(unix)]
+use mo_heap::{ChargedBytes, HeapBudget, HeapError};
 use mo_heap::{Heap, ScratchGuard, Value};
 #[cfg(unix)]
 use rustix::fs::{Access, AtFlags, CWD, FileType, OFlags, access, fcntl_setfl, fstat, statat};
 #[cfg(unix)]
 use rustix::io::fcntl_dupfd_cloexec;
+#[cfg(unix)]
+use rustix::io::read as read_fd;
+#[cfg(unix)]
+use rustix::pipe::{PipeFlags, pipe_with};
 #[cfg(target_os = "linux")]
 use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
 
 use crate::HostError;
+#[cfg(unix)]
+use crate::confine::ExecDeadline;
 use crate::files_common::{FileStatus, find_case_tag, join_path, normalize_path};
 #[cfg(unix)]
 use crate::real_files::{PathMode, ResolverState, dir_fd_path, resolve};
@@ -69,7 +77,7 @@ enum CommandCap {
 }
 
 #[cfg(unix)]
-type CapturedProcessOutput = Result<(i64, Vec<u8>, Vec<u8>), &'static str>;
+type CapturedProcessOutput = Result<Value, &'static str>;
 
 pub(crate) struct CommandCounters<'a> {
     pub open_folders: &'a Rc<Cell<u32>>,
@@ -78,9 +86,14 @@ pub(crate) struct CommandCounters<'a> {
 
 #[cfg(unix)]
 struct PipeDrainInner {
-    buf: Vec<u8>,
-    too_large: bool,
-    done: bool,
+    output: Option<Result<ChargedBytes, PipeError>>,
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+enum PipeError {
+    TooLarge,
+    Heap,
 }
 
 #[cfg(unix)]
@@ -143,16 +156,16 @@ fn reap_and_kill_tree(st: &mut RealProcessState) {
 fn take_drainer_bounded(
     drainer_opt: &mut Option<PipeDrainer>,
     budget: Duration,
-) -> (Vec<u8>, bool) {
+) -> Result<Option<ChargedBytes>, PipeError> {
     let Some(mut d) = drainer_opt.take() else {
-        return (Vec::new(), false);
+        return Ok(None);
     };
     let (lock, cv) = &*d.shared;
     let deadline = Instant::now() + budget;
     let mut inner = lock
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    while !inner.done {
+    while inner.output.is_none() {
         let now = Instant::now();
         if now >= deadline {
             break;
@@ -162,18 +175,18 @@ fn take_drainer_bounded(
             .wait_timeout(inner, rem)
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         inner = guard;
-        if !inner.done && wait_res.timed_out() {
+        if inner.output.is_none() && wait_res.timed_out() {
             break;
         }
     }
-    let buf = std::mem::take(&mut inner.buf);
-    let too_large = inner.too_large;
-    let is_done = inner.done;
+    let output = inner.output.take();
     drop(inner);
-    if is_done && let Some(h) = d.handle.take() {
+    if output.is_some()
+        && let Some(h) = d.handle.take()
+    {
         let _ = h.join();
     }
-    (buf, too_large)
+    output.transpose()
 }
 
 #[cfg(unix)]
@@ -274,10 +287,21 @@ fn command_ok_tuple(
     stdout_bytes: Vec<u8>,
     stderr_bytes: Vec<u8>,
 ) -> Result<Value, HostError> {
+    let stdout = heap.alloc_bytes(stdout_bytes)?;
+    let stderr = heap.alloc_bytes(stderr_bytes)?;
+    command_ok_output(heap, types, result_ty, status, stdout, stderr)
+}
+
+fn command_ok_output(
+    heap: &Heap,
+    types: &TypeTable,
+    result_ty: u32,
+    status: i64,
+    stdout: Value,
+    stderr: Value,
+) -> Result<Value, HostError> {
     let ok_tag = find_case_tag(types, result_ty, "Ok");
     let tup_ty = types.get(result_ty).cases[ok_tag as usize].fields[0].ty;
-    let out_val = heap.alloc_bytes(stdout_bytes)?;
-    let err_val = heap.alloc_bytes(stderr_bytes)?;
     #[expect(
         clippy::expect_used,
         reason = "verified bytecode guarantees tuple layout exists"
@@ -285,7 +309,7 @@ fn command_ok_tuple(
     let layout = types
         .find_tuple_layout(tup_ty)
         .expect("tuple layout for Command output");
-    let tup = heap.construct(types, layout, vec![Value::Int(status), out_val, err_val])?;
+    let tup = heap.construct(types, layout, vec![Value::Int(status), stdout, stderr])?;
     Ok(heap.make_case(types, result_ty, ok_tag, vec![tup])?)
 }
 
@@ -545,35 +569,30 @@ fn make_temp_dir() -> Option<TempDirGuard> {
 }
 
 #[cfg(unix)]
-fn spawn_pipe_drainer<R: Read + Send + 'static>(pipe: R) -> Result<PipeDrainer, &'static str> {
+fn spawn_pipe_drainer<R: Read + Send + 'static>(
+    pipe: R,
+    budget: HeapBudget,
+) -> Result<PipeDrainer, &'static str> {
     let mut pipe = pipe;
     let max_out = MO_LIMIT_COMMAND_OUTPUT_BYTES as usize;
-    let shared = Arc::new((
-        Mutex::new(PipeDrainInner {
-            buf: Vec::new(),
-            too_large: false,
-            done: false,
-        }),
-        Condvar::new(),
-    ));
+    let shared = Arc::new((Mutex::new(PipeDrainInner { output: None }), Condvar::new()));
     let worker_shared = Arc::clone(&shared);
     let builder = std::thread::Builder::new()
         .name("mo-cmd-pipe".to_string())
         .stack_size(256 * 1024);
     let task = move || {
-        let mut buf = Vec::new();
-        let mut too_large = false;
+        let mut output = Ok(ChargedBytes::new(budget));
         let mut chunk = [0u8; 8192];
         loop {
             match pipe.read(&mut chunk) {
                 Ok(0) => break,
                 Ok(n) => {
-                    if !too_large {
-                        if n > max_out - buf.len() {
-                            too_large = true;
-                            buf.clear();
-                        } else {
-                            buf.extend_from_slice(&chunk[..n]);
+                    if let Ok(buf) = &mut output {
+                        if n > max_out - buf.as_slice().len() {
+                            output = Err(PipeError::TooLarge);
+                        } else if buf.extend(&chunk[..n]).is_err() {
+                            output = Err(PipeError::Heap);
+                            break;
                         }
                     }
                 }
@@ -585,9 +604,7 @@ fn spawn_pipe_drainer<R: Read + Send + 'static>(pipe: R) -> Result<PipeDrainer, 
         let mut inner = lock
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        inner.buf = buf;
-        inner.too_large = too_large;
-        inner.done = true;
+        inner.output = Some(output);
         cv.notify_all();
     };
     let handle = builder
@@ -607,6 +624,7 @@ fn spawn_confined_child(
     cmd_args_val: &Value,
     cpu_seconds: u64,
     require_confinement: bool,
+    deadline: Option<ExecDeadline>,
 ) -> Result<(Child, TempDirGuard), (&'static str, String)> {
     if root.forbidden {
         let esc = root.prefix.as_deref().unwrap_or("");
@@ -682,9 +700,14 @@ fn spawn_confined_child(
         return Err(("spawn_failed:confinement unavailable", String::new()));
     }
 
+    let mut exec_status = None;
     let mut cmd = if let Some(trampoline) = trampoline {
+        let (read, write) = pipe_with(PipeFlags::CLOEXEC)
+            .map_err(|_| ("spawn_failed:pipe failed", String::new()))?;
+        exec_status = Some(read);
         let mut c = Command::new(trampoline);
-        c.arg(crate::confine::INTERNAL_COMMAND_TRAMPOLINE_ARG)
+        c.stdin(Stdio::from(write))
+            .arg(crate::confine::INTERNAL_COMMAND_TRAMPOLINE_ARG)
             .arg("--dev")
             .arg(workdir_stat.st_dev.to_string())
             .arg("--ino")
@@ -704,6 +727,9 @@ fn spawn_confined_child(
             } else {
                 "--no-confine"
             });
+        if let Some(deadline) = deadline {
+            c.arg("--exec-deadline").arg(deadline.argument());
+        }
         match &root.loopback {
             crate::network::LoopbackAccess::Denied => {}
             crate::network::LoopbackAccess::AllPorts => {
@@ -723,14 +749,12 @@ fn spawn_confined_child(
         c
     } else {
         let mut c = Command::new(&exe_path);
-        c.args(&arg_strs);
+        c.stdin(Stdio::null()).args(&arg_strs);
         c
     };
 
-    let child = cmd
-        .process_group(0)
+    cmd.process_group(0)
         .current_dir(&workdir_path)
-        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env_clear()
@@ -738,10 +762,86 @@ fn spawn_confined_child(
         .env("HOME", &workdir_path)
         .env("TMPDIR", &tmp_guard.0)
         .env("LANG", "C.UTF-8")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    if exec_status.is_some() {
+        cmd.env(crate::confine::EXEC_STATUS_STDIN, "1");
+    }
+    let child = launch_command(cmd, exec_status, deadline)?;
+    Ok((child, tmp_guard))
+}
+
+#[cfg(unix)]
+fn launch_command(
+    mut cmd: Command,
+    exec_status: Option<OwnedFd>,
+    deadline: Option<ExecDeadline>,
+) -> Result<Child, (&'static str, String)> {
+    if deadline.is_some_and(|deadline| deadline.remaining().is_none()) {
+        return Err(("timed_out", String::new()));
+    }
+    let child = cmd
         .spawn()
         .map_err(|_| ("spawn_failed:fork failed", String::new()))?;
-    Ok((child, tmp_guard))
+    drop(cmd);
+    confirm_command_exec(child, exec_status, deadline)
+}
+
+#[cfg(unix)]
+fn confirm_command_exec(
+    mut child: Child,
+    exec_status: Option<OwnedFd>,
+    deadline: Option<ExecDeadline>,
+) -> Result<Child, (&'static str, String)> {
+    let timed_out = || ("timed_out", String::new());
+    let confirm_exec = || {
+        let Some(read) = exec_status else {
+            return Ok(());
+        };
+        let mut status = [0u8; crate::confine::EXEC_STATUS_BYTES];
+        loop {
+            if let Some(deadline) = deadline {
+                let timeout = deadline.remaining().ok_or_else(timed_out)?;
+                let mut fds = [rustix::event::PollFd::new(
+                    &read,
+                    rustix::event::PollFlags::IN,
+                )];
+                match rustix::event::poll(&mut fds, Some(&timeout)) {
+                    Ok(0) | Err(rustix::io::Errno::INTR) => continue,
+                    Ok(_) => {}
+                    Err(err) => {
+                        return Err(("spawn_failed:exec status poll failed: ", err.to_string()));
+                    }
+                }
+            }
+            match read_fd(&read, &mut status) {
+                Ok(0) => return Ok(()),
+                Ok(n) => {
+                    return Err((
+                        "spawn_failed:",
+                        String::from_utf8_lossy(&status[..n]).into_owned(),
+                    ));
+                }
+                Err(rustix::io::Errno::INTR) => continue,
+                Err(err) => {
+                    return Err(("spawn_failed:exec status pipe failed: ", err.to_string()));
+                }
+            }
+        }
+    };
+    let result = confirm_exec();
+    let result = if deadline.is_some_and(|deadline| deadline.remaining().is_none()) {
+        Err(timed_out())
+    } else {
+        result
+    };
+    match result {
+        Ok(()) => Ok(child),
+        Err(err) => {
+            crate::confine::kill_child_tree(child.id());
+            let _ = child.wait();
+            Err(err)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1106,7 +1206,7 @@ fn command_spawn_real(
     let prog = args[1].as_text();
     let cpu_seconds = ((MO_LIMIT_COMMAND_DURATION_US as u64) / 1_000_000).saturating_add(1);
     let (mut child, tmp_guard) =
-        match spawn_confined_child(resolver, root, prog, &args[2], cpu_seconds, true) {
+        match spawn_confined_child(resolver, root, prog, &args[2], cpu_seconds, true, None) {
             Ok(pair) => pair,
             Err((prefix, detail)) => {
                 return command_error_tag(heap, types, result_ty, prefix, &detail);
@@ -1116,7 +1216,7 @@ fn command_spawn_real(
     let raw_pid = child.id();
     let pid = i64::from(raw_pid);
     let out_reader = match child.stdout.take() {
-        Some(p) => match spawn_pipe_drainer(p) {
+        Some(p) => match spawn_pipe_drainer(p, heap.budget().clone()) {
             Ok(d) => Some(d),
             Err(tag) => {
                 crate::confine::kill_child_tree(raw_pid);
@@ -1128,7 +1228,7 @@ fn command_spawn_real(
         None => None,
     };
     let err_reader = match child.stderr.take() {
-        Some(p) => match spawn_pipe_drainer(p) {
+        Some(p) => match spawn_pipe_drainer(p, heap.budget().clone()) {
             Ok(d) => Some(d),
             Err(tag) => {
                 crate::confine::kill_child_tree(raw_pid);
@@ -1173,16 +1273,27 @@ fn command_run_real(
     timeout_us: i64,
 ) -> Result<Value, HostError> {
     let prog = args[1].as_text();
-    let deadline = Instant::now() + Duration::from_micros(timeout_us as u64);
+    let deadline = ExecDeadline::after(Duration::from_micros(timeout_us as u64)).ok_or(
+        HostError::Internal {
+            reason: "command deadline overflowed",
+        },
+    )?;
     let cpu_seconds = ((timeout_us as u64).saturating_add(999_999) / 1_000_000).saturating_add(1);
 
-    let (mut child, tmp_guard) =
-        match spawn_confined_child(resolver, root, prog, &args[2], cpu_seconds, false) {
-            Ok(pair) => pair,
-            Err((prefix, detail)) => {
-                return command_error_tag(heap, types, result_ty, prefix, &detail);
-            }
-        };
+    let (mut child, tmp_guard) = match spawn_confined_child(
+        resolver,
+        root,
+        prog,
+        &args[2],
+        cpu_seconds,
+        false,
+        Some(deadline),
+    ) {
+        Ok(pair) => pair,
+        Err((prefix, detail)) => {
+            return command_error_tag(heap, types, result_ty, prefix, &detail);
+        }
+    };
 
     let mut out_pipe = child.stdout.take();
     let mut err_pipe = child.stderr.take();
@@ -1204,19 +1315,16 @@ fn command_run_real(
 
     let mut leader_exited = false;
     while out_pipe.is_some() || err_pipe.is_some() || !leader_exited {
-        let now = Instant::now();
-        if now >= deadline {
+        let Some(rem) = deadline.remaining() else {
             timed_out = true;
             break;
-        }
+        };
 
         if out_pipe.is_some() || err_pipe.is_some() {
-            let rem = deadline.saturating_duration_since(now);
-            let wait = rem.min(Duration::from_millis(20));
-            let ts = rustix::event::Timespec {
-                tv_sec: i64::try_from(wait.as_secs()).unwrap_or(i64::MAX),
-                tv_nsec: i64::from(wait.subsec_nanos()),
-            };
+            let ts = rem.min(rustix::event::Timespec {
+                tv_sec: 0,
+                tv_nsec: 20_000_000,
+            });
 
             let mut poll_ready = [false; 2];
             {
@@ -1349,17 +1457,6 @@ fn command_run_real(
         drop(io_scratch);
         return command_error_tag(heap, types, result_ty, "timed_out", "");
     }
-    if st.code() == Some(125) {
-        drop(io_scratch);
-        return command_error_tag(
-            heap,
-            types,
-            result_ty,
-            "spawn_failed:could not confine command child",
-            "",
-        );
-    }
-
     let exit_code = match st.code() {
         Some(c) => i64::from(c),
         None => 128 + i64::from(st.signal().unwrap_or(0)),
@@ -1369,15 +1466,19 @@ fn command_run_real(
 }
 
 #[cfg(unix)]
-fn drainer_done(drainer: &Option<PipeDrainer>) -> bool {
+fn drainer_status(drainer: &Option<PipeDrainer>) -> (bool, bool) {
     let Some(d) = drainer else {
-        return true;
+        return (true, false);
     };
-    d.shared
+    let inner = d
+        .shared
         .0
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .done
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    (
+        inner.output.is_some(),
+        matches!(inner.output, Some(Err(PipeError::Heap))),
+    )
 }
 
 #[cfg(unix)]
@@ -1389,7 +1490,7 @@ fn wait_drainer_briefly(drainer: &Option<PipeDrainer>, step: Duration) {
     let guard = lock
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if !guard.done {
+    if guard.output.is_none() {
         let _ = cv.wait_timeout(guard, step);
     }
 }
@@ -1405,9 +1506,7 @@ fn process_wait_real(
     let mut st = proc_cap.state.borrow_mut();
     if let Some(ref cached) = st.captured {
         return match cached {
-            Ok((code, out_b, err_b)) => {
-                command_ok_tuple(heap, types, result_ty, *code, out_b.clone(), err_b.clone())
-            }
+            Ok(value) => Ok(value.clone()),
             Err(tag) => command_error_tag(heap, types, result_ty, tag, ""),
         };
     }
@@ -1416,9 +1515,9 @@ fn process_wait_real(
     let mut timed_out = false;
     loop {
         let exited = st.reaped || child_exited_nowait(&st.child);
-        let out_done = drainer_done(&st.out_reader);
-        let err_done = drainer_done(&st.err_reader);
-        if exited && out_done && err_done {
+        let (out_done, out_oom) = drainer_status(&st.out_reader);
+        let (err_done, err_oom) = drainer_status(&st.err_reader);
+        if out_oom || err_oom || (exited && out_done && err_done) {
             break;
         }
         let now = Instant::now();
@@ -1438,17 +1537,20 @@ fn process_wait_real(
 
     reap_and_kill_tree(&mut st);
 
-    let (out_buf, out_large) = take_drainer_bounded(&mut st.out_reader, Duration::from_millis(250));
-    let (err_buf, err_large) = take_drainer_bounded(&mut st.err_reader, Duration::from_millis(250));
+    let stdout = take_drainer_bounded(&mut st.out_reader, Duration::from_millis(250));
+    let stderr = take_drainer_bounded(&mut st.err_reader, Duration::from_millis(250));
+    if matches!(stdout, Err(PipeError::Heap)) || matches!(stderr, Err(PipeError::Heap)) {
+        return Err(HeapError::OutOfMemory.into());
+    }
 
     if timed_out {
         st.captured = Some(Err("timed_out"));
         return command_error_tag(heap, types, result_ty, "timed_out", "");
     }
-    if out_large || err_large {
+    let (Ok(stdout), Ok(stderr)) = (stdout, stderr) else {
         st.captured = Some(Err("output_too_large"));
         return command_error_tag(heap, types, result_ty, "output_too_large", "");
-    }
+    };
     let Some(es) = st.exit_status else {
         st.captured = Some(Err("spawn_failed:child wait failed"));
         return command_error_tag(heap, types, result_ty, "spawn_failed:child wait failed", "");
@@ -1457,27 +1559,24 @@ fn process_wait_real(
         st.captured = Some(Err("timed_out"));
         return command_error_tag(heap, types, result_ty, "timed_out", "");
     }
-    if es.code() == Some(125) {
-        st.captured = Some(Err("spawn_failed:could not confine command child"));
-        return command_error_tag(
-            heap,
-            types,
-            result_ty,
-            "spawn_failed:could not confine command child",
-            "",
-        );
-    }
-
-    let mut io_scratch = ScratchGuard::new(heap.budget());
-    io_scratch.charge(out_buf.len().saturating_add(err_buf.len()))?;
-    drop(io_scratch);
-
     let exit_code = match es.code() {
         Some(c) => i64::from(c),
         None => 128 + i64::from(es.signal().unwrap_or(0)),
     };
-    st.captured = Some(Ok((exit_code, out_buf.clone(), err_buf.clone())));
-    command_ok_tuple(heap, types, result_ty, exit_code, out_buf, err_buf)
+    let into_value = |bytes: Option<ChargedBytes>| match bytes {
+        Some(bytes) => bytes.into_value(),
+        None => heap.alloc_bytes(Vec::new()),
+    };
+    let value = command_ok_output(
+        heap,
+        types,
+        result_ty,
+        exit_code,
+        into_value(stdout)?,
+        into_value(stderr)?,
+    )?;
+    st.captured = Some(Ok(value.clone()));
+    Ok(value)
 }
 
 // ---------------------------------------------------------------------------
@@ -1637,5 +1736,45 @@ pub(crate) fn call_command(
             }
         }
         _ => unreachable!("non-command hostop routed to command module"),
+    }
+}
+
+#[cfg(all(unix, test))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_run_times_out_while_launcher_still_holds_exec_status_pipe() {
+        let (read, write) = pipe_with(PipeFlags::CLOEXEC).unwrap();
+        let mut child = Command::new("/bin/sh")
+            .args([
+                "-c",
+                "printf x; sleep 5; printf y; exec /bin/true </dev/null",
+            ])
+            .stdin(Stdio::from(write))
+            .stdout(Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let mut ready = [0];
+        child
+            .stdout
+            .as_mut()
+            .unwrap()
+            .read_exact(&mut ready)
+            .unwrap();
+        assert_eq!(ready, *b"x");
+        let stdout = fcntl_dupfd_cloexec(child.stdout.as_ref().unwrap(), 0).unwrap();
+
+        let deadline = ExecDeadline::after(Duration::from_millis(50)).unwrap();
+        assert_eq!(
+            confirm_command_exec(child, Some(read), Some(deadline)).unwrap_err(),
+            ("timed_out", String::new())
+        );
+        assert_eq!(
+            read_fd(stdout, &mut ready).unwrap(),
+            0,
+            "launcher ran past the deadline"
+        );
     }
 }
