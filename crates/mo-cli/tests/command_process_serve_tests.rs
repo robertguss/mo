@@ -18,7 +18,7 @@ mod unix_tests {
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::path::{Path, PathBuf};
-    use std::process::Command;
+    use std::process::{Child, Command, Stdio};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{Duration, Instant};
 
@@ -39,6 +39,87 @@ mod unix_tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir)?;
         Ok(dir)
+    }
+
+    const MCP_SOURCE: &str = r#"module App
+
+service
+  state Int = 0
+  tools count
+  token from env "MO_READY_TEST_TOKEN"
+end
+
+fn count(state: Int, _at: Time) : Text
+  "count: #{state}"
+end
+"#;
+
+    struct RunningServer(Child);
+
+    impl Drop for RunningServer {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    fn wait_for_ready(
+        command: &mut Command,
+        path: &Path,
+    ) -> Result<(RunningServer, String), Box<dyn Error>> {
+        let mut server = RunningServer(command.stdout(Stdio::null()).spawn()?);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match fs::read_to_string(path) {
+                Ok(json) => return Ok((server, json)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                Err(e) => return Err(e.into()),
+            }
+            assert!(
+                server.0.try_wait()?.is_none(),
+                "server exited before publishing readiness"
+            );
+            assert!(Instant::now() < deadline, "timed out waiting for readiness");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn ready_port(json: &str) -> Result<u16, Box<dyn Error>> {
+        Ok(json
+            .split_once("\"port\":")
+            .and_then(|(_, rest)| rest.split_once(','))
+            .ok_or("missing port")?
+            .0
+            .parse()?)
+    }
+
+    #[test]
+    fn mcp_readiness_publishes_endpoint_url() -> Result<(), Box<dyn Error>> {
+        let dir = temp_dir("mcp-ready")?;
+        fs::write(dir.join("app.mo"), MCP_SOURCE)?;
+        let mut command = Command::new(mo_bin());
+        command
+            .current_dir(&dir)
+            .env("MO_READY_TEST_TOKEN", "readiness-canary")
+            .args([
+                "serve",
+                "app.mo",
+                "--port",
+                "0",
+                "--data",
+                ".",
+                "--ready-file",
+                "ready.json",
+            ]);
+        let (server, json) = wait_for_ready(&mut command, &dir.join("ready.json"))?;
+        let port = ready_port(&json)?;
+        assert!(
+            json.contains(&format!("\"url\":\"http://127.0.0.1:{port}/mcp\"")),
+            "{json}"
+        );
+        drop(server);
+        fs::remove_dir_all(dir)?;
+        Ok(())
     }
 
     #[test]
