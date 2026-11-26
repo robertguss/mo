@@ -1053,6 +1053,15 @@ impl<'a> Checker<'a> {
                     let oord = self.unary(TyTag::Option, ord);
                     self.sig4(oord, s_bytes, s_int, s_int, s_bytes)
                 }
+                CoreBytesOp::DotU16BeBiased | CoreBytesOp::DotU8Biased => {
+                    let oi = self.unary(TyTag::Option, s_int);
+                    Signature {
+                        ret: oi,
+                        count: 6,
+                        args: SigArgs::Selected(vec![s_bytes, s_int, s_bytes, s_int, s_int, s_int]),
+                        spec: false,
+                    }
+                }
             },
             Prim::Unicode16(op) => match op {
                 CoreUnicodeOp::Graphemes => {

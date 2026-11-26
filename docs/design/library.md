@@ -302,6 +302,8 @@ no functions, only tests that pin what reference section 14 says they do.
 | `i64_be_at(offset)` | primitive | `BYTES_I64_BE_AT` | reads 8 big-endian bytes as signed 64-bit `Int`, or `None` out of bounds |
 | `empty?` | primitive | `BYTES_IS_EMPTY` | `true` iff `size == 0`, matching `Text.empty?`, `List.empty?`, `Map.empty?`, and `Set.empty?` |
 | `compare_slice_at(offset, len, other)` | primitive | `BYTES_COMPARE_SLICE_AT` | zero-allocation unsigned lexicographic `memcmp` of a slice against `other`, or `None` out of bounds |
+| `dot_u16_be_biased(a_off, other, b_off, count, bias)` | primitive | `BYTES_DOT_U16_BE_BIASED` | exact sum of `(u16_be(a_i) - bias) * (u16_be(b_i) - bias)` over `count` pairs, or `None` out of bounds or on `Int` overflow |
+| `dot_u8_biased(a_off, other, b_off, count, bias)` | primitive | `BYTES_DOT_U8_BIASED` | exact sum of `(u8(a_i) - bias) * (u8(b_i) - bias)` over `count` pairs, or `None` out of bounds or on `Int` overflow |
 
 ## Unit
 

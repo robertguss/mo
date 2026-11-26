@@ -683,6 +683,8 @@ theorem bytesOp_safe (op : BytesOp) : PrimSafe P (.bytes op) := by
   case i64BeAt => exact .optIntOf
   case isEmpty => exact .bool
   case compareSliceAt => exact .optOrdering
+  case dotU16BeBiased => exact .optIntOf
+  case dotU8Biased => exact .optIntOf
 
 /-- The whole numbers of a range between two `Int`s are `Int`s. -/
 theorem intRange_ty {a b : Int} (ha : InInt64 a) (hb : InInt64 b) :

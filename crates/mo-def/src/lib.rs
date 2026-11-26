@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn pin_prim_counts_and_boundaries() {
-        assert_eq!(PRIM_COUNT, 189);
+        assert_eq!(PRIM_COUNT, 191);
         assert_eq!(PrimId::IntAbs as u32, 0);
         assert_eq!(PrimId::FloatToText as u32, 61);
         assert_eq!(PrimId::BytesDecodeUtf8 as u32, 103);
@@ -190,17 +190,19 @@ mod tests {
         assert_eq!(PrimId::BytesCompareSliceAt as u32, 186);
         assert_eq!(PrimId::JsonQuoteRaw as u32, 187);
         assert_eq!(PrimId::JsonParseRaw as u32, 188);
-        assert_eq!(PrimId::from_u32(189), None);
+        assert_eq!(PrimId::BytesDotU16BeBiased as u32, 189);
+        assert_eq!(PrimId::BytesDotU8Biased as u32, 190);
+        assert_eq!(PrimId::from_u32(191), None);
 
         let first = PrimId::IntAbs.info();
         assert_eq!(first.module, "Int");
         assert_eq!(first.name, "abs");
         assert_eq!(first.params, "b");
 
-        let last = PrimId::JsonParseRaw.info();
-        assert_eq!(last.module, "Json");
-        assert_eq!(last.name, "parse_raw");
-        assert_eq!(last.params, "b");
+        let last = PrimId::BytesDotU8Biased.info();
+        assert_eq!(last.module, "Bytes");
+        assert_eq!(last.name, "dot_u8_biased");
+        assert_eq!(last.params, "bbbbbb");
     }
 
     #[test]
@@ -353,7 +355,7 @@ mod tests {
         assert_eq!(CoreCmpOp::ALL.len(), 4);
         assert_eq!(CoreCharOp::ALL.len(), 8);
         assert_eq!(CoreTextOp::ALL.len(), 29);
-        assert_eq!(CoreBytesOp::ALL.len(), 21);
+        assert_eq!(CoreBytesOp::ALL.len(), 23);
         assert_eq!(CoreUnicodeOp::ALL.len(), 7);
         assert_eq!(CoreCryptoOp::ALL.len(), 7);
         assert_eq!(CoreJsonOp::ALL.len(), 2);

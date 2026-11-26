@@ -203,4 +203,30 @@ def bytesCompareSliceAt (bs : List Int) (off len : Int) (other : List Int) : Opt
     some (bytesCompare ((bs.drop off.toNat).take len.toNat) other)
   else none
 
+def dotU16BePairs : List Int → List Int → Int → Nat → Int → Int
+  | a0 :: a1 :: as, b0 :: b1 :: bs, bias, n + 1, acc =>
+    let va := a0 * 256 + a1
+    let vb := b0 * 256 + b1
+    dotU16BePairs as bs bias n (acc + (va - bias) * (vb - bias))
+  | _, _, _, _, acc => acc
+
+def bytesDotU16BeBiased
+    (a : List Int) (aOff : Int) (b : List Int) (bOff : Int) (count bias : Int) : Option Int :=
+  if 0 ≤ aOff ∧ 0 ≤ bOff ∧ 0 ≤ count ∧
+      aOff + count * 2 ≤ a.length ∧ bOff + count * 2 ≤ b.length then
+    some (dotU16BePairs (a.drop aOff.toNat) (b.drop bOff.toNat) bias count.toNat 0)
+  else none
+
+def dotU8Pairs : List Int → List Int → Int → Nat → Int → Int
+  | a0 :: as, b0 :: bs, bias, n + 1, acc =>
+    dotU8Pairs as bs bias n (acc + (a0 - bias) * (b0 - bias))
+  | _, _, _, _, acc => acc
+
+def bytesDotU8Biased
+    (a : List Int) (aOff : Int) (b : List Int) (bOff : Int) (count bias : Int) : Option Int :=
+  if 0 ≤ aOff ∧ 0 ≤ bOff ∧ 0 ≤ count ∧
+      aOff + count ≤ a.length ∧ bOff + count ≤ b.length then
+    some (dotU8Pairs (a.drop aOff.toNat) (b.drop bOff.toNat) bias count.toNat 0)
+  else none
+
 end MoCore

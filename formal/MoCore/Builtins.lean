@@ -1224,7 +1224,40 @@ def sqliteTy (ok : Ty) : Ty := .result ok .sqliteError
     (none_ .ordering)) &&
   passes program (eq (tOpt .ordering)
     (prim (.bytes .compareSliceAt) [.lit (.bytes [1, 2, 3]), int 9223372036854775807, int 1, .lit (.bytes [1])])
-    (none_ .ordering))
+    (none_ .ordering)) &&
+  passes program (eq (tOpt .int)
+    (prim (.bytes .dotU16BeBiased)
+      [.lit (.bytes [9, 0x80, 0x00, 0x7f, 0xfe]), int 1,
+       .lit (.bytes [0x7f, 0xfe, 0x80, 0x00]), int 0, int 2, int 32767])
+    (some_ .int (int (-2)))) &&
+  passes program (eq (tOpt .int)
+    (prim (.bytes .dotU16BeBiased)
+      [.lit (.bytes [1, 2]), int 2, .lit (.bytes [3, 4]), int 2, int 0, int (-9223372036854775808)])
+    (some_ .int (int 0))) &&
+  passes program (eq (tOpt .int)
+    (prim (.bytes .dotU16BeBiased)
+      [.lit (.bytes [1, 2, 3]), int 0, .lit (.bytes [1, 2, 3]), int 0, int 2, int 0])
+    (none_ .int)) &&
+  passes program (eq (tOpt .int)
+    (prim (.bytes .dotU16BeBiased)
+      [.lit (.bytes [0, 1]), int 0, .lit (.bytes [0, 1]), int 0, int 1, int (-9223372036854775808)])
+    (none_ .int)) &&
+  passes program (eq (tOpt .int)
+    (prim (.bytes .dotU8Biased)
+      [.lit (.bytes [9, 130, 125]), int 1, .lit (.bytes [129, 126]), int 0, int 2, int 127])
+    (some_ .int (int 8))) &&
+  passes program (eq (tOpt .int)
+    (prim (.bytes .dotU8Biased)
+      [.lit (.bytes [1]), int (-1), .lit (.bytes [1]), int 0, int 1, int 0])
+    (none_ .int)) &&
+  passes program (eq (tOpt .int)
+    (prim (.bytes .dotU8Biased)
+      [.lit (.bytes [1]), int 0, .lit (.bytes [1]), int 0, int (-1), int 0])
+    (none_ .int)) &&
+  passes program (eq (tOpt .int)
+    (prim (.bytes .dotU8Biased)
+      [.lit (.bytes [1]), int 0, .lit (.bytes [1]), int 0, int 9223372036854775807, int 0])
+    (none_ .int))
 
 #guard Text.exprRoundTrip (io .fileOpen [v "f", str "a.bin"]) &&
   typedAs? program [("f", tCap .files)] (io .writeBytes [v "f", str "a.bin", .lit (.bytes [1])])
