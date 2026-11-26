@@ -36,6 +36,7 @@ use fake_files::{FakeFolderCap, FakeOpenFileCap};
 #[cfg(unix)]
 use real_files::{RealFolder, RealOpenFile, ResolverState};
 
+pub use network::{OutboundError, OutboundStream};
 #[cfg(unix)]
 pub use real_files::open_confined_file;
 

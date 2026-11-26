@@ -4,6 +4,8 @@ module Http
 expose Request(..),
 Response(..),
 HttpError(..),
+SseEvent(..),
+Stream,
 get,
 post,
 request,
@@ -16,6 +18,13 @@ text,
 within,
 max_body,
 send,
+open_stream,
+stream_status,
+stream_headers,
+stream_header,
+next_chunk,
+next_sse_event,
+collect,
 ok?,
 reply,
 replies
@@ -34,6 +43,40 @@ struct Response
   status: Int
   headers: List((Text, Text))
   body: Bytes
+end
+
+## One Server-Sent Event frame decoded incrementally from a streaming HTTP response.
+struct SseEvent
+  id: Option(Text)
+  event: Option(Text)
+  data: Text
+end
+
+enum BodyMode
+  EmptyBody
+  ChunkedBody
+  SizedBody(remaining: Int)
+  CloseBody
+end
+
+struct HeadRead
+  status: Int
+  headers: List((Text, Text))
+  mode: BodyMode
+  rest: Bytes
+end
+
+## An open streaming HTTP/1.1 response handle backed by an active `Connection`.
+struct Stream
+  status: Int
+  headers: List((Text, Text))
+  connection: Connection
+  mode: BodyMode
+  unread: Bytes
+  received: Int
+  body_limit: Int
+  done?: Bool
+  sse_buf: Bytes
 end
 
 enum HttpError
@@ -276,6 +319,64 @@ fn send(request: Request, network: Network) : Result(Response, HttpError)
   end
   try connection.send(written.bytes)
   bound = Limits(headers: 65536, body: request.body_limit)
+  head = try read_head(request.method, connection, bound)
+  case head.mode
+    EmptyBody: Ok(Response(status: head.status, headers: head.headers, body: "".bytes))
+    ChunkedBody:
+      var unread = head.rest
+      var walk = start()
+      var closed = false
+      while true
+        case chunks(unread, bound, walk)
+          Ok(body): return Ok(Response(status: head.status, headers: head.headers, body: body))
+          Error(Bad(refusal)): return Error(refusal)
+          Error(More(next)):
+            if closed
+              return Error(
+                BadResponse(reason: "the connection closed before the response was whole")
+              )
+            end
+            unread = unread.slice(next.at, unread.size)
+            walk = Walk(at: 0, parts: next.parts, total: next.total)
+            part = try connection.receive(1048576)
+            if part.size == 0
+              closed = true
+            else
+              unread = if unread.size == 0: part else: Bytes.join([unread, part])
+            end
+        end
+      end
+      Error(BadResponse(reason: "the response was never whole"))
+    SizedBody(remaining: length):
+      var parts = if head.rest.size == 0: [] else: [head.rest]
+      var received_size = head.rest.size
+      while received_size < length
+        part = try connection.receive(1048576)
+        if part.size == 0
+          return Error(BadResponse(reason: "the connection closed before the response was whole"))
+        end
+        parts = parts.append(part)
+        received_size += part.size
+      end
+      body = Bytes.join(parts)
+      Ok(Response(status: head.status, headers: head.headers, body: body.slice(0, length)))
+    CloseBody:
+      var parts = if head.rest.size == 0: [] else: [head.rest]
+      var received_size = head.rest.size
+      while true
+        part = try connection.receive(1048576)
+        if part.size == 0
+          return Ok(Response(status: head.status, headers: head.headers, body: Bytes.join(parts)))
+        end
+        received_size += part.size
+        return Error(TooLarge(limit: bound.body)) if received_size > bound.body
+        parts = parts.append(part)
+      end
+      Error(BadResponse(reason: "the response was never whole"))
+  end
+end
+
+fn read_head(method: Text, connection: Connection, bound: Limits) : Result(HeadRead, HttpError)
   var head_bytes = "".bytes
   var head_from = 0
   var cut_found = None
@@ -311,8 +412,8 @@ fn send(request: Request, network: Network) : Result(Response, HttpError)
   status = try code(lines.first or "").or_fail(BadResponse(reason: "the status line is malformed"))
   headers = lines.drop(1).filter_map(fn(line) field(line) end)
   return Error(BadResponse(reason: "a header line is malformed")) if headers.size != lines.size - 1
-  if request.method == "HEAD" or status == 204 or status == 304
-    return Ok(Response(status: status, headers: headers, body: "".bytes))
+  if method == "HEAD" or status == 204 or status == 304
+    return Ok(HeadRead(status: status, headers: headers, mode: EmptyBody, rest: "".bytes))
   end
   first_rest = head_bytes.slice(cut + 4, head_bytes.size)
   codings = headers.filter(fn(h) h.0.ascii_lowercase == "transfer-encoding" end)
@@ -321,56 +422,311 @@ fn send(request: Request, network: Network) : Result(Response, HttpError)
     if coding.ascii_lowercase != "chunked"
       return Error(BadResponse(reason: "the transfer encoding #{coding} is not supported"))
     end
-    var unread = first_rest
-    var walk = start()
-    var closed = false
-    while true
-      case chunks(unread, bound, walk)
-        Ok(body): return Ok(Response(status: status, headers: headers, body: body))
-        Error(Bad(refusal)): return Error(refusal)
-        Error(More(next)):
-          if closed
-            return Error(BadResponse(reason: "the connection closed before the response was whole"))
-          end
-          unread = unread.slice(next.at, unread.size)
-          walk = Walk(at: 0, parts: next.parts, total: next.total)
-          part = try connection.receive(1048576)
-          if part.size == 0
-            closed = true
-          else
-            unread = if unread.size == 0: part else: Bytes.join([unread, part])
-          end
-      end
-    end
+    return Ok(HeadRead(status: status, headers: headers, mode: ChunkedBody, rest: first_rest))
   end
   if try content_length(headers) is Some(length)
     return Error(TooLarge(limit: bound.body)) if length > bound.body
-    var parts = if first_rest.size == 0: [] else: [first_rest]
-    var received_size = first_rest.size
-    while received_size < length
-      part = try connection.receive(1048576)
-      if part.size == 0
-        return Error(BadResponse(reason: "the connection closed before the response was whole"))
-      end
-      parts = parts.append(part)
-      received_size += part.size
-    end
-    body = Bytes.join(parts)
-    return Ok(Response(status: status, headers: headers, body: body.slice(0, length)))
+    return Ok(
+      HeadRead(
+        status: status,
+        headers: headers,
+        mode: SizedBody(remaining: length),
+        rest: first_rest
+      )
+    )
   end
   return Error(TooLarge(limit: bound.body)) if first_rest.size > bound.body
-  var parts = if first_rest.size == 0: [] else: [first_rest]
-  var received_size = first_rest.size
-  while true
-    part = try connection.receive(1048576)
-    if part.size == 0
-      return Ok(Response(status: status, headers: headers, body: Bytes.join(parts)))
-    end
-    received_size += part.size
-    return Error(TooLarge(limit: bound.body)) if received_size > bound.body
-    parts = parts.append(part)
+  Ok(HeadRead(status: status, headers: headers, mode: CloseBody, rest: first_rest))
+end
+
+## Sends `request` and returns an open streaming response once headers arrive.
+fn open_stream(request: Request, network: Network) : Result(Stream, HttpError)
+  written = try wire(request)
+  connection = if written.target.secure
+    try network.connect_secure(written.target.host, written.target.port, request.timeout)
+  else
+    try network.connect(written.target.host, written.target.port, request.timeout)
   end
-  Error(BadResponse(reason: "the response was never whole"))
+  try connection.send(written.bytes)
+  bound = Limits(headers: 65536, body: request.body_limit)
+  head = try read_head(request.method, connection, bound)
+  done_now = case head.mode
+    EmptyBody: true
+    ChunkedBody | SizedBody(remaining: _) | CloseBody: false
+  end
+  Ok(
+    Stream(
+      status: head.status,
+      headers: head.headers,
+      connection: connection,
+      mode: head.mode,
+      unread: head.rest,
+      received: 0,
+      body_limit: bound.body,
+      done?: done_now,
+      sse_buf: "".bytes
+    )
+  )
+end
+
+## The HTTP status code of an open streaming response.
+fn stream_status(stream: Stream) : Int
+  stream.status
+end
+
+## All response headers of an open streaming response.
+fn stream_headers(stream: Stream) : List((Text, Text))
+  stream.headers
+end
+
+## The first header value matching `name` (ASCII case-insensitive) on an open streaming response.
+fn stream_header(stream: Stream, name: Text) : Option(Text)
+  named(stream.headers, name.ascii_lowercase)
+end
+
+## Reads the next decoded body chunk from `stream` (or `None` at clean end-of-body), returning
+## the updated `Stream` state.
+fn next_chunk(stream: Stream) : Result((Option(Bytes), Stream), HttpError)
+  var next = stream
+  return Ok((None, next)) if next.done?
+  case next.mode
+    EmptyBody:
+      next.done? = true
+      Ok((None, next))
+    SizedBody(remaining: rem):
+      if rem <= 0
+        next.done? = true
+        return Ok((None, next))
+      end
+      while next.unread.size == 0
+        part = try next.connection.receive(1048576)
+        if part.size == 0
+          return Error(BadResponse(reason: "the connection closed before the response was whole"))
+        end
+        next.unread = part
+      end
+      take = if next.unread.size < rem: next.unread.size else: rem
+      piece = next.unread.slice(0, take)
+      left_rem = rem - take
+      next.unread = if left_rem == 0: "".bytes else: next.unread.slice(take, next.unread.size)
+      next.mode = SizedBody(remaining: left_rem)
+      next.received += take
+      if left_rem == 0
+        next.done? = true
+      end
+      Ok((Some(piece), next))
+    CloseBody:
+      if next.unread.empty?
+        part = try next.connection.receive(1048576)
+        if part.size == 0
+          next.done? = true
+          return Ok((None, next))
+        end
+        next.unread = part
+      end
+      piece = next.unread
+      next.unread = "".bytes
+      next.received += piece.size
+      return Error(TooLarge(limit: next.body_limit)) if next.received > next.body_limit
+      Ok((Some(piece), next))
+    ChunkedBody:
+      var size_cut_opt = None
+      while size_cut_opt is None
+        case mark_at(next.unread, "\r\n".bytes, 0, 256, "a chunk's size line is")
+          Ok(cut_at): size_cut_opt = Some(cut_at)
+          Error(Bad(refusal)): return Error(refusal)
+          Error(More(_)):
+            part = try next.connection.receive(1048576)
+            if part.size == 0
+              return Error(
+                BadResponse(reason: "the connection closed before the response was whole")
+              )
+            end
+            next.unread = Bytes.join([next.unread, part])
+        end
+      end
+      cut_at = size_cut_opt or 0
+      c_size = try chunk_size(next.unread.slice(0, cut_at)).or_fail(
+        BadResponse(reason: "a chunk's size is malformed")
+      )
+      return Error(TooLarge(limit: next.body_limit)) if next.received + c_size > next.body_limit
+      if c_size == 0
+        next.unread = next.unread.slice(cut_at, next.unread.size)
+        var trailer_done = false
+        while not trailer_done
+          case mark_at(next.unread, "\r\n\r\n".bytes, 0, 65536, "the trailers are")
+            Ok(_t_end): trailer_done = true
+            Error(Bad(refusal)): return Error(refusal)
+            Error(More(_)):
+              part = try next.connection.receive(1048576)
+              if part.size == 0
+                return Error(
+                  BadResponse(reason: "the connection closed before the response was whole")
+                )
+              end
+              next.unread = Bytes.join([next.unread, part])
+          end
+        end
+        next.unread = "".bytes
+        next.done? = true
+        return Ok((None, next))
+      end
+      data_start = cut_at + 2
+      needed = data_start + c_size + 2
+      while next.unread.size < needed
+        part = try next.connection.receive(1048576)
+        if part.size == 0
+          return Error(BadResponse(reason: "the connection closed before the response was whole"))
+        end
+        next.unread = Bytes.join([next.unread, part])
+      end
+      if next.unread.slice(data_start + c_size, needed) != "\r\n".bytes
+        return Error(BadResponse(reason: "a chunk's data doesn't end with a line break"))
+      end
+      chunk_data = next.unread.slice(data_start, data_start + c_size)
+      next.unread = next.unread.slice(needed, next.unread.size)
+      next.received += c_size
+      Ok((Some(chunk_data), next))
+  end
+end
+
+fn find_sse_boundary(buf: Bytes) : Option((Int, Int))
+  var i = 0
+  while i < buf.size
+    b0 = case buf.get(i)
+      Some(v): v.to_int
+      None: -1
+    end
+    if b0 == 10
+      b1 = case buf.get(i + 1)
+        Some(v): v.to_int
+        None: -1
+      end
+      return Some((i, 2)) if b1 == 10
+      if b1 == 13
+        b2 = case buf.get(i + 2)
+          Some(v): v.to_int
+          None: -1
+        end
+        return Some((i, 3)) if b2 == 10
+      end
+    end
+    if b0 == 13
+      b1 = case buf.get(i + 1)
+        Some(v): v.to_int
+        None: -1
+      end
+      if b1 == 10
+        b2 = case buf.get(i + 2)
+          Some(v): v.to_int
+          None: -1
+        end
+        return Some((i, 3)) if b2 == 10
+        if b2 == 13
+          b3 = case buf.get(i + 3)
+            Some(v): v.to_int
+            None: -1
+          end
+          return Some((i, 4)) if b3 == 10
+        end
+      end
+    end
+    i += 1
+  end
+  None
+end
+
+fn parse_sse_frame(raw_frame: Text) : Option(SseEvent)
+  normalized = raw_frame.replace("\r\n", "\n").replace("\r", "\n")
+  var ev_opt = None
+  var id_opt = None
+  var data_lines = []
+  var has_data = false
+  for line in normalized.split("\n")
+    if line.starts_with?(":")
+      Unit
+    else if not line.empty?
+      parts = line.split(":")
+      field_name = parts.first or ""
+      raw_val = if parts.size > 1: parts.drop(1).join(":") else: ""
+      val = raw_val.drop_prefix(" ") or raw_val
+      if field_name == "event"
+        ev_opt = if val.empty?: None else: Some(val)
+      else if field_name == "id"
+        if not val.contains?("\u{0}")
+          id_opt = if val.empty?: None else: Some(val)
+        end
+      else if field_name == "data"
+        data_lines = data_lines.append(val)
+        has_data = true
+      end
+    end
+  end
+  return None if not has_data and ev_opt == None and id_opt == None
+  parsed_data = data_lines.join("\n")
+  Some(SseEvent(id: id_opt, event: ev_opt, data: parsed_data))
+end
+
+## Reads the next complete Server-Sent Event from `stream`, skipping comment keepalives, or
+## returns `None` at end-of-stream.
+fn next_sse_event(stream: Stream) : Result((Option(SseEvent), Stream), HttpError)
+  var cur = stream
+  while true
+    case find_sse_boundary(cur.sse_buf)
+      Some((sep_at, sep_len)):
+        raw_bytes = cur.sse_buf.slice(0, sep_at)
+        cur.sse_buf = cur.sse_buf.slice(sep_at + sep_len, cur.sse_buf.size)
+        txt = try raw_bytes.decode_utf8.or_fail(
+          BadResponse(reason: "the SSE event is not UTF-8 text")
+        )
+        case parse_sse_frame(txt)
+          Some(ev): return Ok((Some(ev), cur))
+          None: Unit
+        end
+      None:
+        (chunk_opt, next_st) = try next_chunk(cur)
+        cur = next_st
+        case chunk_opt
+          Some(chunk):
+            if not chunk.empty?
+              if cur.sse_buf.size + chunk.size > cur.body_limit
+                return Error(TooLarge(limit: cur.body_limit))
+              end
+              cur.sse_buf = if cur.sse_buf.empty?: chunk else: Bytes.join([cur.sse_buf, chunk])
+            end
+          None:
+            if cur.sse_buf.empty?
+              return Ok((None, cur))
+            end
+            tail_bytes = cur.sse_buf
+            cur.sse_buf = "".bytes
+            txt = try tail_bytes.decode_utf8.or_fail(
+              BadResponse(reason: "the SSE event is not UTF-8 text")
+            )
+            return Ok((parse_sse_frame(txt), cur))
+        end
+    end
+  end
+  Ok((None, cur))
+end
+
+## Drains all remaining chunks from `stream` into a standard buffered `Response`.
+fn collect(stream: Stream) : Result(Response, HttpError)
+  var cur = stream
+  var parts = []
+  var done = false
+  while not done
+    (chunk_opt, next_st) = try next_chunk(cur)
+    cur = next_st
+    case chunk_opt
+      Some(chunk):
+        if not chunk.empty?
+          parts = parts.append(chunk)
+        end
+      None: done = true
+    end
+  end
+  Ok(Response(status: cur.status, headers: cur.headers, body: Bytes.join(parts)))
 end
 
 ## The limits `send` reads within: 64 KiB of headers and 16 MiB of body.
@@ -1305,4 +1661,50 @@ test "coalesced Content-Length values use the same framing rules in both readers
   decoded = Response(status: 200, headers: headers, body: "hi".bytes)
   assert asked.send(Network.fake(replies([(asked, chunked)]))) == Ok(decoded)
   assert read("GET", answered(chunked), true, limits(), start()) == Ok(decoded)
+end
+
+test "open_stream, next_chunk, collect, and next_sse_event work over Network.fake"
+  chunked_req = get("http://stream.example.org/data")
+  chunked_res = Response(
+    status: 200,
+    headers: [("Transfer-Encoding", "chunked"), ("X-Stream", "yes")],
+    body: "5\r\nhello\r\n1\r\n \r\n5\r\nworld\r\n0\r\nX-Trailer: done\r\n\r\n".bytes
+  )
+  sse_req = post("http://stream.example.org/sse").json(Json.Object({"stream": Json.Boolean(true)}))
+  chunked_sse_body = "10\r\n: keepalive\n\nid:\r\n2e\r\n 1\nevent: ai.token\ndata: {\"delta\":\"Hi\"}\n\ndata:\r\n14\r\n line1\ndata: line2\n\n\r\n0\r\n\r\n"
+  net = Network.fake(
+    replies([
+      (chunked_req, chunked_res),
+      (
+        sse_req,
+        Response(
+          status: 200,
+          headers: [("Content-Type", "text/event-stream"), ("Transfer-Encoding", "chunked")],
+          body: chunked_sse_body.bytes
+        )
+      )
+    ])
+  )
+  assert chunked_req.open_stream(net) is Ok(st0)
+  assert st0.stream_status == 200
+  assert st0.stream_header("x-stream") == Some("yes")
+  assert st0.next_chunk is Ok((Some(c1), st1))
+  assert c1 == "hello".bytes
+  assert st1.next_chunk is Ok((Some(c2), st2))
+  assert c2 == " ".bytes
+  assert st2.next_chunk is Ok((Some(c3), st3))
+  assert c3 == "world".bytes
+  assert st3.next_chunk is Ok((None, _st4))
+
+  assert chunked_req.open_stream(net) is Ok(st_collect)
+  assert st_collect.collect is Ok(collected)
+  assert collected.status == 200
+  assert collected.text == Some("hello world")
+
+  assert sse_req.open_stream(net) is Ok(sse_st0)
+  assert sse_st0.next_sse_event is Ok((Some(ev1), sse_st1))
+  assert ev1 == SseEvent(id: Some("1"), event: Some("ai.token"), data: "{\"delta\":\"Hi\"}")
+  assert sse_st1.next_sse_event is Ok((Some(ev2), sse_st2))
+  assert ev2 == SseEvent(id: None, event: None, data: "line1\nline2")
+  assert sse_st2.next_sse_event is Ok((None, _sse_st3))
 end

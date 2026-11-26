@@ -64,7 +64,7 @@ pub(crate) struct SsePublishSpec {
     pub data: String,
 }
 
-fn sanitize_single_line(raw: &str) -> String {
+pub(crate) fn sanitize_single_line(raw: &str) -> String {
     raw.chars()
         .filter(|&ch| ch != '\r' && ch != '\n' && ch != '\0')
         .collect()
@@ -756,20 +756,23 @@ fn sse_driver_loop(
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum JsonValue {
+pub(crate) enum JsonValue {
     Null,
     Bool(bool),
-    Number,
+    Number(String),
     String(String),
     Array(Vec<JsonValue>),
     Object(Vec<(String, JsonValue)>),
 }
 
-fn find_json_field<'a>(entries: &'a [(String, JsonValue)], key: &str) -> Option<&'a JsonValue> {
+pub(crate) fn find_json_field<'a>(
+    entries: &'a [(String, JsonValue)],
+    key: &str,
+) -> Option<&'a JsonValue> {
     entries.iter().rev().find(|(k, _)| k == key).map(|(_, v)| v)
 }
 
-fn parse_json(raw: &str) -> Option<JsonValue> {
+pub(crate) fn parse_json(raw: &str) -> Option<JsonValue> {
     let mut parser = JsonParser {
         bytes: raw.as_bytes(),
         pos: 0,
@@ -828,6 +831,7 @@ impl JsonParser<'_> {
     }
 
     fn skip_number(&mut self) -> Option<JsonValue> {
+        let full_start = self.pos;
         if self.peek() == Some(b'-') {
             self.pos += 1;
         }
@@ -861,7 +865,10 @@ impl JsonParser<'_> {
                 return None;
             }
         }
-        Some(JsonValue::Number)
+        let num_str = std::str::from_utf8(&self.bytes[full_start..self.pos])
+            .ok()?
+            .to_string();
+        Some(JsonValue::Number(num_str))
     }
 
     fn parse_hex4(&mut self) -> Option<u16> {
