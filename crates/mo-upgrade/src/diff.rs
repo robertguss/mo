@@ -1246,6 +1246,7 @@ fn try_run_contracts(
         calls: 200,
         seconds: 2,
         sequences: 200,
+        jobs: 1,
         limits: Limits::default(),
         door_plan: false,
         gated: true,

@@ -280,6 +280,7 @@
 
 #define MO_LIMIT_STRENGTH_VERSIONS 1024
 #define MO_LIMIT_MUTANTS 65536
+#define MO_LIMIT_TEST_JOBS 256
 #define MO_LIMIT_GATE_STEP_MULTIPLE 4
 #define MO_LIMIT_GATE_STEP_FLOOR 1000000
 
@@ -314,12 +315,14 @@
 #define MO_LIMIT_OPEN_DATABASES 16
 #define MO_LIMIT_SQL_BYTES (1024 * 1024)
 #define MO_LIMIT_SQL_PARAMETERS 32766
+#define MO_LIMIT_SQL_STATS_STATEMENTS 4096
 #define MO_LIMIT_OPEN_CONNECTIONS 64
 #define MO_LIMIT_RECEIVE_BYTES (1U << 20)
 #define MO_LIMIT_HOST_NAME 253
 #define MO_LIMIT_LOOKUPS 8
 #define MO_LIMIT_LOOKUP_ADDRESSES 8
 #define MO_LIMIT_FAKE_QUOTE 120
+#define MO_LIMIT_RECORDED_CALLS 4096
 
 /* Lookup-wide component attempts, including portable ancestor reconstruction.
  * A refusal is Failed naming this limit, not a language bug. Test builds may
@@ -670,6 +673,7 @@ static inline struct mo_limits mo_limits_default(void) {
 #define MO_LIMIT_COMMAND_ARG_BYTES 65536
 #define MO_LIMIT_COMMAND_DURATION_US (INT64_C(3600) * 1000000)
 #define MO_LIMIT_COMMAND_MEMORY (UINT64_C(2) * 1024 * 1024 * 1024)
+#define MO_LIMIT_OPEN_PROCESSES 32
 
 /* Cryptographic randomness and password hashing bounds (reference 11.1, 14). */
 #define MO_LIMIT_SECURE_RANDOM_BYTES 65536

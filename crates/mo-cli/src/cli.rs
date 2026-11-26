@@ -8,7 +8,7 @@ use std::path::Path;
 use mo_def::limits::{
     MO_CLI_ARGUMENT_BYTES, MO_CLI_ARGUMENT_SIZE, MO_CLI_ARGUMENTS, MO_DOOR_PLAN_INPUTS,
     MO_DOOR_PLAN_SEQUENCES, MO_LIMIT_API_WORKERS, MO_LIMIT_API_WORKERS_MAX, MO_LIMIT_CHECK_WALL_US,
-    MO_LIMIT_INSTALL_NAME, MO_LIMIT_QUERY_WORK,
+    MO_LIMIT_INSTALL_NAME, MO_LIMIT_QUERY_WORK, MO_LIMIT_TEST_JOBS,
 };
 use mo_vm::Limits;
 use thiserror::Error;
@@ -120,6 +120,7 @@ pub struct Cli {
     pub calls: u32,
     pub sequences: u32,
     pub seconds: u32,
+    pub jobs: u32,
     pub port: u16,
     pub has_port: bool,
     pub workers: u32,
@@ -127,6 +128,7 @@ pub struct Cli {
     pub watch: bool,
     pub bind_host: Option<Vec<u8>>,
     pub data: Option<Vec<u8>>,
+    pub ready_file: Option<Vec<u8>>,
     pub allow_host: Option<Vec<u8>>,
     pub admin_socket: Option<Vec<u8>>,
     pub push_base: Option<Vec<u8>>,
@@ -178,6 +180,7 @@ impl Default for Cli {
             calls: 200,
             sequences: 200,
             seconds: 2,
+            jobs: 0,
             port: 0,
             has_port: false,
             workers: MO_LIMIT_API_WORKERS as u32,
@@ -185,6 +188,7 @@ impl Default for Cli {
             watch: false,
             bind_host: None,
             data: None,
+            ready_file: None,
             allow_host: None,
             admin_socket: None,
             push_base: None,
@@ -530,9 +534,11 @@ enum FlagId {
     Bind,
     Workers,
     Watch,
+    ReadyFile,
     Tests,
     ConfineChild,
     RlimitChild,
+    Jobs,
 }
 
 impl FlagId {
@@ -913,6 +919,15 @@ const FLAGS_TABLE: &[FlagSpec] = &[
         commands: cmd_mask(&[Command::Test]),
     },
     FlagSpec {
+        id: FlagId::Jobs,
+        name: b"--jobs",
+        prefix: false,
+        repeated: false,
+        value: FlagValue::Count,
+        maximum: MO_LIMIT_TEST_JOBS,
+        commands: cmd_mask(&[Command::Test]),
+    },
+    FlagSpec {
         id: FlagId::Lib,
         name: b"--lib",
         prefix: false,
@@ -1006,6 +1021,15 @@ const FLAGS_TABLE: &[FlagSpec] = &[
         commands: cmd_mask(&[Command::Serve]),
     },
     FlagSpec {
+        id: FlagId::ReadyFile,
+        name: b"--ready-file",
+        prefix: false,
+        repeated: false,
+        value: FlagValue::Text,
+        maximum: 0,
+        commands: cmd_mask(&[Command::Serve]),
+    },
+    FlagSpec {
         id: FlagId::Tests,
         name: b"--tests",
         prefix: false,
@@ -1069,6 +1093,7 @@ fn set_flag(
             out.has_workers = true;
         }
         FlagId::Watch => out.watch = true,
+        FlagId::ReadyFile => out.ready_file = op_bytes(),
         FlagId::Tests => out.emit_tests = true,
         FlagId::Strength => out.strength = op_bytes(),
         FlagId::Context => out.compile_context = op_bytes(),
@@ -1095,6 +1120,7 @@ fn set_flag(
         FlagId::MaxHeap => out.limits.heap_size = n as usize,
         FlagId::Calls => out.calls = n as u32,
         FlagId::Seconds => out.seconds = n as u32,
+        FlagId::Jobs => out.jobs = n as u32,
         FlagId::Output => out.output = op_bytes(),
         FlagId::Port => {
             let Some(port) = parse_port(op_slice) else {
@@ -1657,6 +1683,10 @@ fn flag_help_meta(id: FlagId) -> (&'static str, &'static str) {
             "directory of wrong versions for intent strength measurement",
         ),
         FlagId::Mutants => ("", "run mutation checks after all tests pass"),
+        FlagId::Jobs => (
+            "N",
+            "worker thread count for --mutants and --strength (default: available cores)",
+        ),
         FlagId::Lib => ("DIR", "override embedded standard library with DIR"),
         FlagId::Root => ("DIR", "starting folder for Files, ReadFiles, and Command"),
         FlagId::StateDir => ("DIR", "separate folder for Sqlite databases"),
@@ -1675,6 +1705,10 @@ fn flag_help_meta(id: FlagId) -> (&'static str, &'static str) {
             "worker thread count for api servers (1..64, default 8)",
         ),
         FlagId::Watch => ("", "reload modified .mo modules automatically"),
+        FlagId::ReadyFile => (
+            "PATH",
+            "write server readiness JSON atomically once listening",
+        ),
         FlagId::Tests => ("", "emit bytecode including test functions"),
         FlagId::ConfineChild => ("", "confine internal compile child process"),
         FlagId::RlimitChild => (

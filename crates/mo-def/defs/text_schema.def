@@ -101,7 +101,7 @@ NODE(cap_object, struct mo_core_cap, enum mo_core_cap_tag, C(CONSOLE, "console")
      C(READ_FILES, "readFiles"), C(CLOCK, "clock"), C(RANDOM, "random"), C(ARGS, "args"),
      C(ENV, "env"), C(NETWORK, "network"), C(CONNECTION, "connection"), C(SQLITE, "sqlite"),
      C(DATABASE, "database"), C(COMMAND, "command"), C(SECURE_RANDOM, "secureRandom"),
-     C(FILE, "file"));
+     C(FILE, "file"), C(PROCESS, "process"));
 #undef C
 
 /* The literal subset of Value has the same payloads, but distinct tags and C layouts. */

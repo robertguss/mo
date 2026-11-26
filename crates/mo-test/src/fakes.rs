@@ -198,6 +198,7 @@ impl Fakes {
                     | Capability::Connection
                     | Capability::Database
                     | Capability::File
+                    | Capability::Process
             ) {
                 continue;
             }
@@ -265,7 +266,8 @@ impl FakeFactory<'_> {
             Capability::Simulation
             | Capability::Connection
             | Capability::Database
-            | Capability::File => return Err(InputResult::Unsupported),
+            | Capability::File
+            | Capability::Process => return Err(InputResult::Unsupported),
             Capability::Sqlite | Capability::Network | Capability::Command => {}
             Capability::Args => contents = list_contents(ARGUMENTS, request),
             Capability::Env => contents = env_contents(request),

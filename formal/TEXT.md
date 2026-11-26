@@ -45,9 +45,17 @@ effects. `sqliteFake` is spec-only.
 | `sqliteRun` | Sqlite.Database, Text, List(Sqlite.Value) | Result(Unit, SqliteError) |
 | `sqliteQuery` | Sqlite.Database, Text, List(Sqlite.Value) | Result(Sqlite.Rows, SqliteError) |
 | `sqliteExecuteRaw` | Sqlite.Database, Text, List(Sqlite.Value) | Result((Int, Int), SqliteError) |
+| `sqliteStatsRaw` | Sqlite.Database | (Int, Int, List(Text)) |
+| `sqliteResetStatsRaw` | Sqlite.Database | Unit |
 | `commandRunRaw` | Command, Text, List(Text), Duration | Result((Int, Bytes, Bytes), Text) |
 | `commandWithin` | Command, Text | Command |
 | `commandAllowPrograms` | Command, List(Text) | Command |
+| `commandAllowLoopback` | Command, Network | Command |
+| `commandSpawnRaw` | Command, Text, List(Text) | Result(Command.Process, Text) |
+| `commandProcessPid` | Command.Process | Int |
+| `commandProcessAlive` | Command.Process | Bool |
+| `commandProcessKillRaw` | Command.Process | Result(Unit, Text) |
+| `commandProcessWaitRaw` | Command.Process, Duration | Result((Int, Bytes, Bytes), Text) |
 | `commandFake` | Map(Bytes, Bytes) | Command |
 | `secureRandomBytes` | SecureRandom, Int | Bytes |
 | `secureRandomSeeded` | Int | SecureRandom |

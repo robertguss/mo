@@ -87,6 +87,8 @@ pub struct ServeOptions<'a> {
     pub allow_host: Option<&'a str>,
     /// Optional operator Unix domain socket (`--admin-socket`).
     pub admin_socket: Option<&'a Path>,
+    /// Optional path where readiness JSON is written atomically once listening (`--ready-file`).
+    pub ready_file: Option<&'a Path>,
     /// Optional explicit library directory (`--lib`).
     pub library: Option<&'a Path>,
     /// Whether `--upgrade` was passed (allows changing recorded program on startup).
@@ -471,6 +473,9 @@ pub fn run_serve_service(
         .file()
         .string(cand_img.image.file().services[cand_img.service as usize].token_env)
         .to_string();
+    if let Some(ready_path) = opts.ready_file {
+        crate::clear_ready_file(ready_path);
+    }
     let listener = match Listener::open_tcp(
         &ListenerConfig {
             address: opts.bind.map(str::to_string),
@@ -953,6 +958,22 @@ pub fn run_serve_service(
         let _ = writeln!(errors, "mo serve: upgrades: {msg}");
         let _ = errors.flush();
     }
+
+    if let Some(ready_path) = opts.ready_file
+        && let Err(err) = crate::write_ready_file(
+            ready_path,
+            &format!("http://{numeric}"),
+            bound_port,
+            opts.data_dir,
+        )
+    {
+        let _ = writeln!(
+            errors,
+            "error E1409: mo serve could not write ready file: {err}"
+        );
+        return 1;
+    }
+    let _ready_guard = crate::ReadyFileGuard(opts.ready_file);
 
     if writeln!(output, "mo serve: listening on http://{numeric}/mcp").is_err()
         || output.flush().is_err()

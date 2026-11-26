@@ -1443,6 +1443,39 @@ impl<'a> Checker<'a> {
                     let outer = self.binary(TyTag::Map, s_text, inner);
                     self.sig1(net, outer)
                 }
+                CoreIoNullaryOp::NetworkFakeScripted => {
+                    spec = true;
+                    let net = self.cap_ty(Cap::Network);
+                    let reply_tup = self.intern(
+                        TyTag::Tuple,
+                        vec![s_int, s_int, s_bytes, s_nerr],
+                        "",
+                        Cap::Console,
+                    );
+                    let reply_list = self.unary(TyTag::List, reply_tup);
+                    let script_tup = self.intern(
+                        TyTag::Tuple,
+                        vec![s_text, s_text, reply_list],
+                        "",
+                        Cap::Console,
+                    );
+                    let scripts_list = self.unary(TyTag::List, script_tup);
+                    self.sig1(net, scripts_list)
+                }
+                CoreIoNullaryOp::NetworkRecordedCalls => {
+                    spec = true;
+                    let net = self.cap_ty(Cap::Network);
+                    let hdr_pair = self.binary(TyTag::Tuple, s_text, s_text);
+                    let hdr_list = self.unary(TyTag::List, hdr_pair);
+                    let rec_tup = self.intern(
+                        TyTag::Tuple,
+                        vec![s_text, s_text, hdr_list, s_bytes],
+                        "",
+                        Cap::Console,
+                    );
+                    let rec_list = self.unary(TyTag::List, rec_tup);
+                    self.sig1(rec_list, net)
+                }
                 CoreIoNullaryOp::AllowHosts => {
                     let net = self.cap_ty(Cap::Network);
                     let lt = self.unary(TyTag::List, s_text);
@@ -1478,6 +1511,16 @@ impl<'a> Checker<'a> {
                     let res = self.binary(TyTag::Result, tup, s_serr);
                     self.sig3(res, db, s_text, lv)
                 }
+                CoreIoNullaryOp::SqliteStatsRaw => {
+                    let db = self.cap_ty(Cap::Database);
+                    let lt = self.unary(TyTag::List, s_text);
+                    let tup = self.intern(TyTag::Tuple, vec![s_int, s_int, lt], "", Cap::Console);
+                    self.sig1(tup, db)
+                }
+                CoreIoNullaryOp::SqliteResetStatsRaw => {
+                    let db = self.cap_ty(Cap::Database);
+                    self.sig1(s_unit, db)
+                }
                 CoreIoNullaryOp::CommandRunRaw => {
                     let cmd = self.cap_ty(Cap::Command);
                     let lt = self.unary(TyTag::List, s_text);
@@ -1504,6 +1547,42 @@ impl<'a> Checker<'a> {
                     let cmd = self.cap_ty(Cap::Command);
                     let m = self.binary(TyTag::Map, s_bytes, s_bytes);
                     self.sig1(cmd, m)
+                }
+                CoreIoNullaryOp::CommandAllowLoopback => {
+                    let cmd = self.cap_ty(Cap::Command);
+                    let net = self.cap_ty(Cap::Network);
+                    self.sig2(cmd, cmd, net)
+                }
+                CoreIoNullaryOp::CommandSpawnRaw => {
+                    let cmd = self.cap_ty(Cap::Command);
+                    let proc = self.cap_ty(Cap::Process);
+                    let lt = self.unary(TyTag::List, s_text);
+                    let res = self.binary(TyTag::Result, proc, s_text);
+                    self.sig3(res, cmd, s_text, lt)
+                }
+                CoreIoNullaryOp::CommandProcessPid => {
+                    let proc = self.cap_ty(Cap::Process);
+                    self.sig1(s_int, proc)
+                }
+                CoreIoNullaryOp::CommandProcessAlive => {
+                    let proc = self.cap_ty(Cap::Process);
+                    self.sig1(s_bool, proc)
+                }
+                CoreIoNullaryOp::CommandProcessKillRaw => {
+                    let proc = self.cap_ty(Cap::Process);
+                    let res = self.binary(TyTag::Result, s_unit, s_text);
+                    self.sig1(res, proc)
+                }
+                CoreIoNullaryOp::CommandProcessWaitRaw => {
+                    let proc = self.cap_ty(Cap::Process);
+                    let tup = self.intern(
+                        TyTag::Tuple,
+                        vec![s_int, s_bytes, s_bytes],
+                        "",
+                        Cap::Console,
+                    );
+                    let res = self.binary(TyTag::Result, tup, s_text);
+                    self.sig2(res, proc, s_dur)
                 }
                 CoreIoNullaryOp::SecureRandomBytes => {
                     let sr = self.cap_ty(Cap::SecureRandom);

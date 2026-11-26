@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn pin_hostop_and_simop_counts_and_boundaries() {
-        assert_eq!(HOSTOP_COUNT, 63);
+        assert_eq!(HOSTOP_COUNT, 73);
         assert_eq!(HostOpId::ArgsList as u32, 0);
         assert_eq!(HostOpId::ConsoleFakeInput as u32, 10);
         assert_eq!(HostOpId::FilesSync as u32, 58);
@@ -213,7 +213,13 @@ mod tests {
         assert_eq!(HostOpId::FilesLockExclusive as u32, 60);
         assert_eq!(HostOpId::FilesUnlock as u32, 61);
         assert_eq!(HostOpId::ReadfilesOpen as u32, 62);
-        assert_eq!(HostOpId::from_u32(63), None);
+        assert_eq!(HostOpId::NetworkFakeScripted as u32, 63);
+        assert_eq!(HostOpId::NetworkRecordedCalls as u32, 64);
+        assert_eq!(HostOpId::SqliteStatsRaw as u32, 65);
+        assert_eq!(HostOpId::SqliteResetStatsRaw as u32, 66);
+        assert_eq!(HostOpId::CommandAllowLoopback as u32, 67);
+        assert_eq!(HostOpId::CommandProcessWaitRaw as u32, 72);
+        assert_eq!(HostOpId::from_u32(73), None);
 
         let args_list = HostOpId::ArgsList.info();
         assert_eq!(args_list.module, "Args");
@@ -356,7 +362,7 @@ mod tests {
         assert_eq!(CoreListNullaryOp::ALL.len(), 17);
         assert_eq!(CoreMapNullaryOp::ALL.len(), 11);
         assert_eq!(CoreSetOp::ALL.len(), 11);
-        assert_eq!(CoreIoNullaryOp::ALL.len(), 51);
+        assert_eq!(CoreIoNullaryOp::ALL.len(), 61);
 
         // Verify round-trip wire_name <-> from_wire_name on every family.
         for &op in CoreTypedOp::ALL {

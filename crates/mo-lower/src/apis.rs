@@ -33,7 +33,11 @@ fn lib_module(p: &mut Lowering<'_>, mod_name: &str) -> LowerResult<ModuleId> {
     )
 }
 
-fn lib_data_source(p: &mut Lowering<'_>, mod_name: &str, type_name: &str) -> LowerResult<TypeId> {
+pub(crate) fn lib_data_source(
+    p: &mut Lowering<'_>,
+    mod_name: &str,
+    type_name: &str,
+) -> LowerResult<TypeId> {
     let mid = lib_module(p, mod_name)?;
     let Some(sidx) =
         p.program.interfaces.scopes[mid.index()].find_symbol_index(type_name.as_bytes())
@@ -1667,12 +1671,59 @@ fn emit_job_fn(p: &mut Lowering<'_>, api: &CheckedApi) -> LowerResult<()> {
     Ok(())
 }
 
+const fn auth_mode_str(mode: ApiAuthMode) -> &'static str {
+    match mode {
+        ApiAuthMode::None => "none",
+        ApiAuthMode::Optional => "optional",
+        ApiAuthMode::Required => "required",
+    }
+}
+
+fn emit_routes_fn(p: &mut Lowering<'_>, api: &CheckedApi) -> LowerResult<usize> {
+    let text_ty = builtin_ty(p, "Text")?;
+    let rs_src = lib_data_source(p, "Api", "RouteSpec")?;
+    let rs_ty = lower_type(p, rs_src, None)?;
+    let _ = lower_ctors(p, rs_ty)?;
+    let list_rs_src = p.types_overlay.builtin_applied("List", vec![rs_src]);
+    let list_rs_ty = lower_type(p, list_rs_src, None)?;
+    let fn_idx = new_generated_fn(p, api.module, ".%api.routes", Vec::new(), list_rs_ty)?;
+
+    let mut job_items = Vec::with_capacity(api.jobs.len());
+    for job in &api.jobs {
+        job_items.push(p.expr_text(&job.name)?);
+    }
+    let jobs_list = p.expr_lit_list(text_ty, job_items)?;
+    let jobs_var = p.fresh()?;
+
+    let rs_ctor = p.copy_text("RouteSpec")?;
+    let mut route_items = Vec::with_capacity(api.routes.len());
+    for route in &api.routes {
+        let method_e = p.expr_text(method_upper(route.method))?;
+        let path_e = p.expr_text(&route.path)?;
+        let auth_e = p.expr_text(auth_mode_str(route.auth_mode))?;
+        let has_body = route.params.iter().any(|pm| pm.kind == ApiParamKind::Body);
+        let has_body_e = p.expr_bool(has_body)?;
+        let jobs_ref = p.expr_var(jobs_var.clone())?;
+        route_items.push(p.expr_con(
+            rs_ty,
+            rs_ctor.clone(),
+            vec![method_e, path_e, auth_e, has_body_e, jobs_ref],
+        )?);
+    }
+    let routes_list = p.expr_lit_list(rs_ty, route_items)?;
+    let body = p.expr_let(jobs_var, jobs_list, routes_list)?;
+    p.instances[fn_idx].fun.body = body;
+    p.instances[fn_idx].body_set = true;
+    Ok(fn_idx)
+}
+
 /// Lowers every HTTP `api` block in the checked program.
 pub(crate) fn lower_apis(p: &mut Lowering<'_>) -> LowerResult<()> {
     let apis = p.program.apis.clone();
     for api in &apis {
         p.span = p.syntax_node(api.module, api.syntax).span;
         let oa = emit_openapi_fn(p, api)?;
+        let _ = emit_routes_fn(p, api)?;
         emit_dispatch_fns(p, api, oa)?;
         emit_job_fn(p, api)?;
     }
@@ -1952,4 +2003,186 @@ pub(crate) fn lower_apitest_run_job(
     }
     body = p.expr_let(payload_var, args[1], body)?;
     p.expr_let(name_var, args[0], body)
+}
+
+fn alloc_named_closure(
+    p: &mut Lowering<'_>,
+    caller_name: &str,
+    params: Vec<Param>,
+    body: ExprId,
+) -> LowerResult<ExprId> {
+    let lam = p.alloc_expr(Expr::Lam { params, body })?;
+    let serial = p.serial;
+    p.serial += 1;
+    let num = p.number_text(serial)?;
+    let cname = p.concat_text(caller_name, ".fn.", &num)?;
+    p.set_closure(lam, cname);
+    Ok(lam)
+}
+
+pub(crate) fn lower_apitest_start(
+    p: &mut Lowering<'_>,
+    api_index: usize,
+    args: Vec<ExprId>,
+    arg_types: &[TypeId],
+    caller_name: &str,
+) -> LowerResult<ExprId> {
+    let api = p.program.apis[api_index].clone();
+    let supplied = args.len();
+    let mut sup_vars = Vec::with_capacity(supplied);
+    for _ in 0..supplied {
+        sup_vars.push(p.fresh()?);
+    }
+
+    let has_static = !api.statics.is_empty();
+    let mut static_files_var: Option<(String, ExprId)> = None;
+    if has_static {
+        let mut st_files = None;
+        for i in 0..supplied {
+            let st = p.source_type(arg_types[i]);
+            if st.owner == TypeOwner::None && st.name == "ReadFiles" {
+                st_files = Some(p.expr_var(sup_vars[i].clone())?);
+                break;
+            }
+        }
+        if st_files.is_none() {
+            for i in 0..supplied {
+                let st = p.source_type(arg_types[i]);
+                if st.owner == TypeOwner::None && st.name == "Files" {
+                    let fv = p.expr_var(sup_vars[i].clone())?;
+                    st_files = Some(
+                        p.expr_prim(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::ReadOnly)), vec![fv])?,
+                    );
+                    break;
+                }
+            }
+        }
+        let chosen = match st_files {
+            Some(e) => e,
+            None => default_fake_cap(p, "ReadFiles")?,
+        };
+        static_files_var = Some((p.fresh()?, chosen));
+    }
+
+    let mut cap_bindings: Vec<(String, ExprId)> = Vec::with_capacity(api.capabilities.len());
+    for wanted in &api.capabilities {
+        let mut chosen = None;
+        for i in 0..supplied {
+            let st = p.source_type(arg_types[i]);
+            if st.owner == TypeOwner::None && st.name == *wanted {
+                chosen = Some(p.expr_var(sup_vars[i].clone())?);
+                break;
+            }
+        }
+        if chosen.is_none() && wanted == "ReadFiles" {
+            for i in 0..supplied {
+                let st = p.source_type(arg_types[i]);
+                if st.owner == TypeOwner::None && st.name == "Files" {
+                    let fv = p.expr_var(sup_vars[i].clone())?;
+                    chosen = Some(
+                        p.expr_prim(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::ReadOnly)), vec![fv])?,
+                    );
+                    break;
+                }
+            }
+        }
+        let e = match chosen {
+            Some(e) => e,
+            None => default_fake_cap(p, wanted)?,
+        };
+        cap_bindings.push((p.fresh()?, e));
+    }
+
+    let mut actor_bindings: Vec<(String, ExprId)> = Vec::with_capacity(api.actors.len());
+    for act in &api.actors {
+        let wanted_owner = p.source_type(act.ty).owner;
+        let mut chosen = None;
+        for i in 0..supplied {
+            if p.source_type(arg_types[i]).owner == wanted_owner {
+                chosen = Some(p.expr_var(sup_vars[i].clone())?);
+                break;
+            }
+        }
+        let e = match chosen {
+            Some(e) => e,
+            None => default_fake_actor(p, act.service_index.0)?,
+        };
+        actor_bindings.push((p.fresh()?, e));
+    }
+
+    let mod_name = p.module_name(api.module).to_string();
+    let req_src = lib_data_source(p, "Api", "Request")?;
+    let req_ty = lower_type(p, req_src, None)?;
+    let json_src = lib_data_source(p, "Json", "Json")?;
+    let json_ty = lower_type(p, json_src, None)?;
+    let text_ty = builtin_ty(p, "Text")?;
+
+    // 0: send(req) -> Response
+    let req_var = p.fresh()?;
+    let req_param = p.make_param(req_var.clone(), req_ty)?;
+    let dispatch_suffix = if has_static {
+        ".%api.test_dispatch"
+    } else {
+        ".%api.dispatch"
+    };
+    let dispatch_callee = p.concat_text(&mod_name, dispatch_suffix, "")?;
+    let mut dispatch_args =
+        Vec::with_capacity(1 + usize::from(has_static) + cap_bindings.len() + actor_bindings.len());
+    dispatch_args.push(p.expr_var(req_var)?);
+    if let Some((ref sf_var, _)) = static_files_var {
+        dispatch_args.push(p.expr_var(sf_var.clone())?);
+    }
+    for (cv, _) in &cap_bindings {
+        dispatch_args.push(p.expr_var(cv.clone())?);
+    }
+    for (av, _) in &actor_bindings {
+        dispatch_args.push(p.expr_var(av.clone())?);
+    }
+    let send_body = p.expr_call(dispatch_callee, dispatch_args)?;
+    let send_lam = alloc_named_closure(p, caller_name, vec![req_param], send_body)?;
+
+    // 1: run_job(name, payload) -> Result(Unit, Text)
+    let jname_var = p.fresh()?;
+    let jpayload_var = p.fresh()?;
+    let jname_param = p.make_param(jname_var.clone(), text_ty)?;
+    let jpayload_param = p.make_param(jpayload_var.clone(), json_ty)?;
+    let jpv = p.expr_var(jpayload_var)?;
+    let jpayload_text = api_call(p, "encode_job_payload", vec![jpv])?;
+    let job_callee = p.concat_text(&mod_name, ".%api.job", "")?;
+    let mut job_args = Vec::with_capacity(2 + cap_bindings.len() + actor_bindings.len());
+    job_args.push(p.expr_var(jname_var)?);
+    job_args.push(jpayload_text);
+    for (cv, _) in &cap_bindings {
+        job_args.push(p.expr_var(cv.clone())?);
+    }
+    for (av, _) in &actor_bindings {
+        job_args.push(p.expr_var(av.clone())?);
+    }
+    let job_body = p.expr_call(job_callee, job_args)?;
+    let job_lam = alloc_named_closure(p, caller_name, vec![jname_param, jpayload_param], job_body)?;
+
+    // 2: routes() -> List(RouteSpec)
+    let routes_callee = p.concat_text(&mod_name, ".%api.routes", "")?;
+    let routes_body = p.expr_call(routes_callee, Vec::new())?;
+    let routes_lam = alloc_named_closure(p, caller_name, Vec::new(), routes_body)?;
+
+    // 3: openapi_json() -> Text
+    let openapi_callee = p.concat_text(&mod_name, ".%api.openapi", "")?;
+    let openapi_body = p.expr_call(openapi_callee, Vec::new())?;
+    let openapi_lam = alloc_named_closure(p, caller_name, Vec::new(), openapi_body)?;
+
+    let mut out = p.expr_tuple(vec![send_lam, job_lam, routes_lam, openapi_lam])?;
+    for (av, ae) in actor_bindings.into_iter().rev() {
+        out = p.expr_let(av, ae, out)?;
+    }
+    for (cv, ce) in cap_bindings.into_iter().rev() {
+        out = p.expr_let(cv, ce, out)?;
+    }
+    if let Some((sf_var, sf_expr)) = static_files_var {
+        out = p.expr_let(sf_var, sf_expr, out)?;
+    }
+    for i in (0..supplied).rev() {
+        out = p.expr_let(sup_vars[i].clone(), args[i], out)?;
+    }
+    Ok(out)
 }

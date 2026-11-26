@@ -670,6 +670,7 @@ pub fn execute_cli(
                         .as_deref()
                         .and_then(|b| std::str::from_utf8(b).ok());
                     let lib_dir = cli.library.as_deref().map(bytes_to_path);
+                    let ready_file = cli.ready_file.as_deref().map(bytes_to_path);
                     let opts = mo_service::api_server::ApiServeOptions {
                         entry_file: cli.file(0),
                         data_dir: data_dir.as_deref(),
@@ -678,6 +679,7 @@ pub fn execute_cli(
                         workers: cli.has_workers.then_some(cli.workers),
                         watch: cli.watch,
                         library: lib_dir.as_deref(),
+                        ready_file: ready_file.as_deref(),
                         limits: cli.limits,
                     };
                     return mo_service::api_server::run_serve_api(&opts, output, errors);
@@ -706,6 +708,7 @@ pub fn execute_cli(
                     .as_deref()
                     .and_then(|b| std::str::from_utf8(b).ok());
                 let admin_socket = cli.admin_socket.as_deref().map(bytes_to_path);
+                let ready_file = cli.ready_file.as_deref().map(bytes_to_path);
                 let lib_dir = cli.library.as_deref().map(bytes_to_path);
                 let migration = cli
                     .migration
@@ -723,6 +726,7 @@ pub fn execute_cli(
                     bind: None,
                     allow_host,
                     admin_socket: admin_socket.as_deref(),
+                    ready_file: ready_file.as_deref(),
                     library: lib_dir.as_deref(),
                     upgrade: cli.upgrade,
                     adopt: cli.adopt,

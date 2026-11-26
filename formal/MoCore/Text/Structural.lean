@@ -85,7 +85,7 @@ partial def structural (p : Program) (t : Ty) (v : Value) (nested : Bool := fals
         | .clock => "<Clock>" | .random => "<Random>"
         | .network => "<Network>" | .connection => "<Connection>"
         | .sqlite => "<Sqlite>" | .database => "<Sqlite.Database>" | .command => "<Command>"
-        | .secureRandom => "<SecureRandom>" | .file => "<Files.File>"
+        | .secureRandom => "<SecureRandom>" | .file => "<Files.File>" | .process => "<Command.Process>"
         else (valueOut (.cap c root fake)).render)
   | _, _ => throw "value does not match result type"
 where

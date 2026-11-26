@@ -21,7 +21,7 @@ use crate::abilities::{
     lower_compare, lower_from_json, lower_json_decode_call, lower_json_schema,
     lower_sqlite_decode_call, lower_to_json,
 };
-use crate::apis::{lower_apitest_run_job, lower_apitest_send};
+use crate::apis::{lower_apitest_run_job, lower_apitest_send, lower_apitest_start};
 use crate::context::{LowerResult, UNSET_EXPR};
 use crate::cps::{BodyLowerer, ContinuationKind};
 use crate::scalar::{lower_error_text, lower_operator, lower_to_text};
@@ -342,16 +342,39 @@ pub(crate) fn lower_cps_application(
 
     // 2. Native / built-in operations
     if let Some(native) = r.native.as_deref() {
-        // ApiTest.send / ApiTest.run_job
-        if native == "ApiTest.send" || native == "ApiTest.run_job" {
+        // ApiTest.start / ApiTest.send / ApiTest.run_job / ApiTest.App.*
+        if native == "ApiTest.start" || native == "ApiTest.send" || native == "ApiTest.run_job" {
             let arg_types: Vec<mo_check::TypeId> =
                 r.operands.iter().map(|&op| b.row(op).ty).collect();
             let api_idx = r.service.map_or(0, |s| s.0 as usize);
-            return if native == "ApiTest.send" {
+            return if native == "ApiTest.start" {
+                let caller_name = b.meta_name.clone();
+                lower_apitest_start(b.p, api_idx, args, &arg_types, &caller_name)
+            } else if native == "ApiTest.send" {
                 lower_apitest_send(b.p, api_idx, args, &arg_types)
             } else {
                 lower_apitest_run_job(b.p, api_idx, args, &arg_types)
             };
+        }
+        if let Some(app_op) = native.strip_prefix("ApiTest.App.") {
+            let slot = match app_op {
+                "send" => 0,
+                "run_job" => 1,
+                "routes" => 2,
+                "openapi_json" => 3,
+                _ => {
+                    return b
+                        .p
+                        .refuse(ErrorCode::LowerUnfinished, "unknown ApiTest.App operation");
+                }
+            };
+            let func = b.p.expr_proj(args[0], slot)?;
+            let call_args = args[1..].to_vec();
+            b.p.charge_alloc(call_args.len(), 8, 8)?;
+            return b.p.alloc_expr(Expr::App {
+                func,
+                args: call_args,
+            });
         }
 
         // Simulation.*
@@ -808,6 +831,67 @@ pub(crate) fn lower_cps_application(
             );
         }
 
+        if is_lib
+            && mod_name.as_deref() == Some("Network")
+            && matches!(fn_name.as_str(), "fake_scripted" | "recorded_calls")
+        {
+            let helper_name = if fn_name == "fake_scripted" {
+                "encode_scripts"
+            } else {
+                "decode_recorded_calls"
+            };
+            let Some(helper_idx) = b.p.program.interfaces.scopes[sym.module.index()]
+                .find_symbol_index(helper_name.as_bytes())
+            else {
+                return b
+                    .p
+                    .refuse(ErrorCode::LowerUnfinished, "missing Network helper symbol");
+            };
+            let helper_sym = mo_check::SymRef::new(sym.module, helper_idx);
+            let helper_inst = lower_instance(b.p, helper_sym, &[], None, &[], b.owner, b.depth)?;
+            let helper_fn = b.p.instances[helper_inst].fun.name.clone();
+            let io_prim = if fn_name == "fake_scripted" {
+                Prim::Io(IoOp::Nullary(CoreIoNullaryOp::NetworkFakeScripted))
+            } else {
+                Prim::Io(IoOp::Nullary(CoreIoNullaryOp::NetworkRecordedCalls))
+            };
+            if r.operands.is_empty() {
+                let param_ty = match b.p.core_ty(result) {
+                    Ty::Fn { params, .. } if params.len() == 1 => params[0],
+                    _ => {
+                        return b.p.refuse(
+                            ErrorCode::LowerUnfinished,
+                            "expected unary function type for Network spec operation",
+                        );
+                    }
+                };
+                let p_name = b.p.fresh()?;
+                let pv = b.p.expr_var(p_name.clone())?;
+                let body = if fn_name == "fake_scripted" {
+                    let encoded = b.p.expr_call(helper_fn, vec![pv])?;
+                    b.p.expr_prim(io_prim, vec![encoded])?
+                } else {
+                    let raw = b.p.expr_prim(io_prim, vec![pv])?;
+                    b.p.expr_call(helper_fn, vec![raw])?
+                };
+                return b.p.alloc_expr(Expr::Lam {
+                    params: vec![mo_core::Param {
+                        name: p_name,
+                        ty: param_ty,
+                    }],
+                    body,
+                });
+            }
+            let arg_expr = args[args.len() - 1];
+            return if fn_name == "fake_scripted" {
+                let encoded = b.p.expr_call(helper_fn, vec![arg_expr])?;
+                b.p.expr_prim(io_prim, vec![encoded])
+            } else {
+                let raw = b.p.expr_prim(io_prim, vec![arg_expr])?;
+                b.p.expr_call(helper_fn, vec![raw])
+            };
+        }
+
         let next_depth = b.depth + u32::from(!r.arguments.is_empty());
         let inst = lower_instance(
             b.p,
@@ -1044,6 +1128,12 @@ fn match_static_prim(native: &str) -> Option<Prim> {
         "Network.connect_secure" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::ConnectSecure))),
         "Network.allow_hosts" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::AllowHosts))),
         "Network.fake" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::NetworkFake))),
+        "Network.fake_scripted_raw" => Some(Prim::Io(IoOp::Nullary(
+            CoreIoNullaryOp::NetworkFakeScripted,
+        ))),
+        "Network.recorded_calls_raw" => Some(Prim::Io(IoOp::Nullary(
+            CoreIoNullaryOp::NetworkRecordedCalls,
+        ))),
         "Connection.send" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::Send))),
         "Connection.receive" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::Receive))),
         "Sqlite.open" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::SqliteOpen))),
@@ -1051,12 +1141,30 @@ fn match_static_prim(native: &str) -> Option<Prim> {
         "Sqlite.run" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::SqliteRun))),
         "Sqlite.query" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::SqliteQuery))),
         "Sqlite.execute_raw" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::SqliteExecuteRaw))),
+        "Sqlite.stats_raw" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::SqliteStatsRaw))),
+        "Sqlite.reset_stats_raw" => Some(Prim::Io(IoOp::Nullary(
+            CoreIoNullaryOp::SqliteResetStatsRaw,
+        ))),
         "Command.run_raw" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::CommandRunRaw))),
         "Command.within" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::CommandWithin))),
         "Command.allow_programs" => Some(Prim::Io(IoOp::Nullary(
             CoreIoNullaryOp::CommandAllowPrograms,
         ))),
         "Command.fake" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::CommandFake))),
+        "Command.allow_loopback" => Some(Prim::Io(IoOp::Nullary(
+            CoreIoNullaryOp::CommandAllowLoopback,
+        ))),
+        "Command.spawn_raw" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::CommandSpawnRaw))),
+        "Command.pid" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::CommandProcessPid))),
+        "Command.alive?" => Some(Prim::Io(IoOp::Nullary(
+            CoreIoNullaryOp::CommandProcessAlive,
+        ))),
+        "Command.kill_raw" => Some(Prim::Io(IoOp::Nullary(
+            CoreIoNullaryOp::CommandProcessKillRaw,
+        ))),
+        "Command.wait_raw" => Some(Prim::Io(IoOp::Nullary(
+            CoreIoNullaryOp::CommandProcessWaitRaw,
+        ))),
         "SecureRandom.bytes" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::SecureRandomBytes))),
         "SecureRandom.seeded" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::SecureRandomSeeded))),
         "Files.write_bytes" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::WriteBytes))),

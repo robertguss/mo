@@ -17,7 +17,7 @@ namespace MoCore
 
 /-- The capability types of reference section 11.1. -/
 inductive Cap where
-  | console | files | readFiles | clock | random | args | env | network | connection | sqlite | database | command | secureRandom | file
+  | console | files | readFiles | clock | random | args | env | network | connection | sqlite | database | command | secureRandom | file | process
   deriving DecidableEq, Repr, Inhabited
 
 /-- Core types.
@@ -165,7 +165,7 @@ def Cap.name : Cap → String
   | .clock => "Clock" | .random => "Random" | .args => "Args" | .env => "Env"
   | .network => "Network" | .connection => "Connection"
   | .sqlite => "Sqlite" | .database => "Sqlite.Database" | .command => "Command"
-  | .secureRandom => "SecureRandom" | .file => "Files.File"
+  | .secureRandom => "SecureRandom" | .file => "Files.File" | .process => "Command.Process"
 
 mutual
 /-- A type written as Mo writes it, used to name instantiated functions such
@@ -385,14 +385,17 @@ inductive IoOp where
   | list (ro : Bool) | entries (ro : Bool) | «exists» (ro : Bool) | within (ro : Bool) | readOnly
   | now | sleep | randomInt
   | connect | connectSecure | allowHosts | send | receive
-  | sqliteOpen | sqliteRun | sqliteQuery | sqliteExecuteRaw
-  | commandRunRaw | commandWithin | commandAllowPrograms
+  | sqliteOpen | sqliteRun | sqliteQuery | sqliteExecuteRaw | sqliteStatsRaw | sqliteResetStatsRaw
+  | commandRunRaw | commandWithin | commandAllowPrograms | commandAllowLoopback
+  | commandSpawnRaw | commandProcessPid | commandProcessAlive
+  | commandProcessKillRaw | commandProcessWaitRaw
   | secureRandomBytes
   | writeBytes | rename | fileOpen | fileReadAt | fileWriteAt | fileSize | fileTruncate | fileSync
   | fileLockShared | fileLockExclusive | fileUnlock | readFileOpen
   /-- Fake constructors: only spec code may allocate these handles. -/
   | consoleFake | consoleFakeInput | filesInMemory | clockFixed | randomSeeded | argsOf | envOf
-  | networkFake | sqliteFake | commandFake | secureRandomSeeded
+  | networkFake | networkFakeScripted | networkRecordedCalls
+  | sqliteFake | commandFake | secureRandomSeeded
   deriving DecidableEq, Repr, Inhabited
 
 inductive SimOp where
@@ -637,16 +640,30 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .argsOf => ([.list .text], .cap .args)
   | .envOf => ([.map .text .text], .cap .env)
   | .networkFake => ([.map .text (.map .bytes .bytes)], .cap .network)
+  | .networkFakeScripted =>
+    ([.list (.tuple [.text, .text, .list (.tuple [.int, .int, .bytes, .networkError])])],
+     .cap .network)
+  | .networkRecordedCalls =>
+    ([.cap .network], .list (.tuple [.text, .text, .list (.tuple [.text, .text]), .bytes]))
   | .sqliteOpen => ([.cap .sqlite, .text], .result (.cap .database) .sqliteError)
   | .sqliteFake => ([], .cap .sqlite)
   | .sqliteRun => ([.cap .database, .text, .list .sqliteValue], .result .unit .sqliteError)
   | .sqliteQuery => ([.cap .database, .text, .list .sqliteValue], .result .sqliteRows .sqliteError)
   | .sqliteExecuteRaw =>
     ([.cap .database, .text, .list .sqliteValue], .result (.tuple [.int, .int]) .sqliteError)
+  | .sqliteStatsRaw => ([.cap .database], .tuple [.int, .int, .list .text])
+  | .sqliteResetStatsRaw => ([.cap .database], .unit)
   | .commandRunRaw =>
     ([.cap .command, .text, .list .text, .duration], .result (.tuple [.int, .bytes, .bytes]) .text)
   | .commandWithin => ([.cap .command, .text], .cap .command)
   | .commandAllowPrograms => ([.cap .command, .list .text], .cap .command)
+  | .commandAllowLoopback => ([.cap .command, .cap .network], .cap .command)
+  | .commandSpawnRaw => ([.cap .command, .text, .list .text], .result (.cap .process) .text)
+  | .commandProcessPid => ([.cap .process], .int)
+  | .commandProcessAlive => ([.cap .process], .bool)
+  | .commandProcessKillRaw => ([.cap .process], .result .unit .text)
+  | .commandProcessWaitRaw =>
+    ([.cap .process, .duration], .result (.tuple [.int, .bytes, .bytes]) .text)
   | .commandFake => ([.map .bytes .bytes], .cap .command)
   | .secureRandomBytes => ([.cap .secureRandom, .int], .bytes)
   | .secureRandomSeeded => ([.int], .cap .secureRandom)
@@ -861,8 +878,9 @@ def Prim.specOnly : Prim → Bool
   | .sim (.start _) => true
   | .io .printed | .io .printedErrors => true
   | .io .consoleFake | .io .consoleFakeInput | .io .filesInMemory | .io .clockFixed
-  | .io .randomSeeded | .io .argsOf | .io .envOf | .io .networkFake | .io .sqliteFake
-  | .io .commandFake | .io .secureRandomSeeded => true
+  | .io .randomSeeded | .io .argsOf | .io .envOf
+  | .io .networkFake | .io .networkFakeScripted | .io .networkRecordedCalls
+  | .io .sqliteFake | .io .commandFake | .io .secureRandomSeeded => true
   | _ => false
 
 /-! ## Lookups -/

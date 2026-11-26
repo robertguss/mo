@@ -446,6 +446,24 @@ impl<'a> InferState<'a> {
                 }
             }
             let Some(target) = target_mod else {
+                if self.node_text(pref) == b"ApiTest" && self.node_text(name) == b"RouteSpec" {
+                    for i in 0..self.interfaces.len() {
+                        if !self.work() {
+                            return None;
+                        }
+                        let mid = ModuleId(i as u32);
+                        let lib = self.interfaces.scope(mid);
+                        if !lib.library || lib.name.as_deref() != Some("Api") {
+                            continue;
+                        }
+                        if let Some((found_ref, cnt)) = self.find_symbol_in(mid, name)
+                            && self.interfaces.symbol(found_ref).exported
+                        {
+                            return Some((found_ref, cnt));
+                        }
+                    }
+                    return None;
+                }
                 let ty_def = self.definition(pref, None);
                 if self.failed {
                     return None;
@@ -725,6 +743,22 @@ impl<'a> InferState<'a> {
             }
             return InferValue::none();
         }
+        if !self.spec
+            && (qualified == "Sqlite.stats_raw" || qualified == "Sqlite.reset_stats_raw")
+            && self.forbids_sqlite_test_stats()
+        {
+            let _ = self.problem(
+                ErrorCode::FakeOutsideSpec,
+                self.span,
+                "Sqlite.stats and Sqlite.reset_stats are used only in a test, example, promise or test helper",
+                Some(
+                    "Query instrumentation belongs to fake or in-memory test databases, never main, \
+                     services, actors or route handlers (reference 12.4).",
+                ),
+                None,
+            );
+            return InferValue::none();
+        }
         let out = self.function_value(ty_id, requirements);
         if let Some(gid) = out.graph {
             self.emitted[gid.index()].native = Some(qualified);
@@ -765,6 +799,54 @@ impl<'a> InferState<'a> {
         out.symbol = Some(sym_ref);
         let sym = self.interfaces.symbol(sym_ref);
         let fn_scope = self.interfaces.scope(sym.module);
+        if !self.spec
+            && fn_scope.library
+            && fn_scope.name.as_deref() == Some("Network")
+            && (sym.name == "fake_scripted" || sym.name == "recorded_calls")
+        {
+            if sym.name == "recorded_calls" {
+                let _ = self.problem(
+                    ErrorCode::FakeOutsideSpec,
+                    self.span,
+                    "recorded_calls is read only in a test, example or promise",
+                    Some(
+                        "Network.recorded_calls can be used only where a network is a fake: in \
+                         tests, examples and promises (reference 12.4).",
+                    ),
+                    None,
+                );
+            } else {
+                let _ = self.problem(
+                    ErrorCode::FakeOutsideSpec,
+                    self.span,
+                    "a fake capability is made only in a test, example or promise",
+                    Some(
+                        "Fakes are made only in tests, examples and promises, never in a \
+                         module's constants or its functions (reference 12.4).",
+                    ),
+                    None,
+                );
+            }
+            return InferValue::none();
+        }
+        if !self.spec
+            && fn_scope.library
+            && fn_scope.name.as_deref() == Some("Sqlite")
+            && (sym.name == "stats" || sym.name == "reset_stats")
+            && self.forbids_sqlite_test_stats()
+        {
+            let _ = self.problem(
+                ErrorCode::FakeOutsideSpec,
+                self.span,
+                "Sqlite.stats and Sqlite.reset_stats are used only in a test, example, promise or test helper",
+                Some(
+                    "Query instrumentation belongs to fake or in-memory test databases, never main, \
+                     services, actors or route handlers (reference 12.4).",
+                ),
+                None,
+            );
+            return InferValue::none();
+        }
         if let Some(out_ty) = out.ty
             && fn_scope.library
             && fn_scope.name.as_deref() == Some("Json")
@@ -782,6 +864,26 @@ impl<'a> InferState<'a> {
             }
         }
         out
+    }
+
+    fn forbids_sqlite_test_stats(&self) -> bool {
+        let own_scope = self.interfaces.scope(self.enclosing.module);
+        if own_scope.library && own_scope.name.as_deref() == Some("Sqlite") {
+            return false;
+        }
+        if self.enclosing.owner_kind != SyntaxKind::Fn {
+            return true;
+        }
+        if !own_scope.library
+            && self.enclosing.module == ModuleId(0)
+            && self
+                .enclosing
+                .owner_symbol
+                .is_some_and(|s| self.interfaces.symbol(s).name == "main")
+        {
+            return true;
+        }
+        false
     }
 
     pub(crate) fn select_overload(
@@ -871,6 +973,8 @@ impl<'a> InferState<'a> {
         }
         let mod_name = if term.shape.name.starts_with("Sqlite.") {
             "Sqlite".to_string()
+        } else if term.shape.name.starts_with("Command.") {
+            "Command".to_string()
         } else {
             term.shape.name.clone()
         };
@@ -986,7 +1090,7 @@ impl<'a> InferState<'a> {
             if pref_bytes == b"Actor" {
                 return self.actor_call(node, None);
             }
-            if pref_bytes == b"ApiTest" {
+            if pref_bytes == b"ApiTest" && self.node_text(node) != b"RouteSpec" {
                 return self.apitest_call(node, None);
             }
         }

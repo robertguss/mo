@@ -254,3 +254,59 @@ test "api background jobs via ApiTest.run_job"
   assert ApiTest.run_job(Main, "audit.tick", Json.Null, env) == Ok(Unit)
   assert ApiTest.run_job(Main, "unknown.job", Json.Null, env) == Error("unknown job: unknown.job")
 end
+
+fn send_via_helper(app: ApiTest.App, req: Api.Request) : Api.Response
+  app.send(req)
+end
+
+test "first-class ApiTest.App handle supports helpers, routes, openapi_json and jobs"
+  env = Env.of({"API_TOKEN": "topsecret"})
+  files = Files.in_memory({"public/app-a1b2c3d4.js": "console.log(1)\n"})
+  app = ApiTest.start(Main, env, files)
+  assert send_via_helper(app, Api.get("/health")).status == 200
+  assert send_via_helper(app, Api.get("/assets/app-a1b2c3d4.js")).status == 200
+  assert app.send(Api.get("/whoami").with_bearer("topsecret")).text == "{\"viewer\":\"ada\"}"
+
+  good = Json.Object({"token": Json.String("topsecret"), "title": Json.String("sync")})
+  assert app.run_job("sync.notes", good) == Ok(Unit)
+
+  routes = app.routes()
+  assert routes.size == 6
+  assert routes.get(0) == Some(
+    ApiTest.RouteSpec(
+      method: "GET",
+      path_template: "/health",
+      auth_mode: "none",
+      has_json_body?: false,
+      job_names: ["sync.notes", "audit.tick"]
+    )
+  )
+  assert routes.get(1) == Some(
+    ApiTest.RouteSpec(
+      method: "GET",
+      path_template: "/whoami",
+      auth_mode: "optional",
+      has_json_body?: false,
+      job_names: ["sync.notes", "audit.tick"]
+    )
+  )
+  assert routes.get(2) == Some(
+    ApiTest.RouteSpec(
+      method: "POST",
+      path_template: "/notes",
+      auth_mode: "required",
+      has_json_body?: true,
+      job_names: ["sync.notes", "audit.tick"]
+    )
+  )
+  assert routes.get(3) == Some(
+    ApiTest.RouteSpec(
+      method: "GET",
+      path_template: "/notes/:id",
+      auth_mode: "none",
+      has_json_body?: false,
+      job_names: ["sync.notes", "audit.tick"]
+    )
+  )
+  assert app.openapi_json() == ApiTest.send(Main, Api.get("/openapi.json"), env).text
+end

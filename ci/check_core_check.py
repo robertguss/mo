@@ -259,7 +259,8 @@ def signatures():
                "(fn ((int)) (text))", '(data "undeclared")', L(T), m, se,
                O(T), R(T), "(tuple ((text) (float)))"] + [
                    C(k) for k in ["args", "env", "console", "files", "readFiles", "clock", "random",
-                                  "network", "connection", "sqlite", "database", "command"]]:
+                                  "network", "connection", "sqlite", "database", "command",
+                                  "process"]]:
         table.append((f"(structural {ty})", [ty], T, False))
     add("io", "argsList", C("args"), L(T))
     add("io", "envGet", C("env") + "|" + T, O(T))
@@ -297,6 +298,20 @@ def signatures():
     add("io", "send", C("connection") + "|(bytes)", failed(U))
     add("io", "receive", C("connection") + "|" + I, failed("(bytes)"))
     add("io", "networkFake", f"(map {T} (map (bytes) (bytes)))", C("network"), True)
+    add(
+        "io",
+        "networkFakeScripted",
+        L(f"(tuple ({T} {T} " + L(f"(tuple ({I} {I} (bytes) (networkError)))") + "))"),
+        C("network"),
+        True,
+    )
+    add(
+        "io",
+        "networkRecordedCalls",
+        C("network"),
+        L(f"(tuple ({T} {T} " + L(f"(tuple ({T} {T}))") + " (bytes)))"),
+        True,
+    )
     sqlite_err = lambda ok: f"(result {ok} (sqliteError))"
     add("io", "sqliteOpen", C("sqlite") + "|" + T, sqlite_err(C("database")))
     add("io", "sqliteFake", "", C("sqlite"), True)
@@ -305,10 +320,20 @@ def signatures():
         sqlite_err("(sqliteRows)"))
     add("io", "sqliteExecuteRaw", C("database") + "|" + T + "|" + L("(sqliteValue)"),
         sqlite_err(f"(tuple ({I} {I}))"))
+    add("io", "sqliteStatsRaw", C("database"), f"(tuple ({I} {I} " + L(T) + "))")
+    add("io", "sqliteResetStatsRaw", C("database"), U)
     add("io", "commandRunRaw", C("command") + "|" + T + "|" + L(T) + "|(duration)",
         f"(result (tuple ({I} (bytes) (bytes))) {T})")
     add("io", "commandWithin", C("command") + "|" + T, C("command"))
     add("io", "commandAllowPrograms", C("command") + "|" + L(T), C("command"))
+    add("io", "commandAllowLoopback", C("command") + "|" + C("network"), C("command"))
+    add("io", "commandSpawnRaw", C("command") + "|" + T + "|" + L(T),
+        f"(result {C('process')} {T})")
+    add("io", "commandProcessPid", C("process"), I)
+    add("io", "commandProcessAlive", C("process"), "(bool)")
+    add("io", "commandProcessKillRaw", C("process"), f"(result {U} {T})")
+    add("io", "commandProcessWaitRaw", C("process") + "|(duration)",
+        f"(result (tuple ({I} (bytes) (bytes))) {T})")
     add("io", "commandFake", "(map (bytes) (bytes))", C("command"), True)
     return table
 

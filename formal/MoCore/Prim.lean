@@ -834,11 +834,15 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
           | none => outside "Random exhausted its period" w
       else outside "Random.int needs low below high" w
     | none => wrongArgs "Random.int"
-  | .connect, _ | .connectSecure, _ | .allowHosts, _ | .send, _ | .receive, _ | .networkFake, _ =>
+  | .connect, _ | .connectSecure, _ | .allowHosts, _ | .send, _ | .receive, _
+  | .networkFake, _ | .networkFakeScripted, _ | .networkRecordedCalls, _ =>
     outside "Network is not modeled by mocore" w
-  | .sqliteOpen, _ | .sqliteFake, _ | .sqliteRun, _ | .sqliteQuery, _ | .sqliteExecuteRaw, _ =>
+  | .sqliteOpen, _ | .sqliteFake, _ | .sqliteRun, _ | .sqliteQuery, _ | .sqliteExecuteRaw, _
+  | .sqliteStatsRaw, _ | .sqliteResetStatsRaw, _ =>
     outside "Sqlite is not modeled by mocore" w
-  | .commandRunRaw, _ | .commandWithin, _ | .commandAllowPrograms, _ | .commandFake, _ =>
+  | .commandRunRaw, _ | .commandWithin, _ | .commandAllowPrograms, _ | .commandFake, _
+  | .commandAllowLoopback, _ | .commandSpawnRaw, _ | .commandProcessPid, _
+  | .commandProcessAlive, _ | .commandProcessKillRaw, _ | .commandProcessWaitRaw, _ =>
     outside "Command is not modeled by mocore" w
   | .secureRandomBytes, _ | .secureRandomSeeded, _ =>
     outside "SecureRandom is not modeled by mocore" w

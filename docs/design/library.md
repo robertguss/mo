@@ -580,6 +580,10 @@ Both real and fake network capabilities live in `crates/mo-host/` (with TLS 1.2+
 | `connect_secure(host, port, within)` | host | `NETWORK_CONNECT_SECURE` | |
 | `allow_hosts(hosts)` | host | `NETWORK_ALLOW_HOSTS` | |
 | `Network.fake(peers)` | host | `NETWORK_FAKE` | a fake, for spec code only (reference 12.4) |
+| `Network.fake_scripted_raw(scripts)` | host | `NETWORK_FAKE_SCRIPTED` | builds a scripted fake `Network` with per-target `(method, url_prefix)` reply/fault queues |
+| `Network.recorded_calls_raw(net)` | host | `NETWORK_RECORDED_CALLS` | returns recorded `(method, url, headers, body)` tuples for a fake `Network` |
+| `Network.fake_scripted(scripts)` | lowering | `crates/mo-lower/src/applications.rs`, `lib/network.mo` | encodes `Network.FakeReply` scripts and calls `NETWORK_FAKE_SCRIPTED` in spec code |
+| `Network.recorded_calls(net)` | lowering | `crates/mo-lower/src/applications.rs`, `lib/network.mo` | calls `NETWORK_RECORDED_CALLS` in spec code and maps tuples to `Network.RecordedCall` |
 
 ## Connection
 
@@ -612,6 +616,10 @@ starting folder; the fake keeps each database as serialized bytes in memory.
 | `query(statement, values)` | host | `SQLITE_QUERY` | |
 | `execute_raw(statement, values)` | host | `SQLITE_EXECUTE_RAW` | returns `(changes, last_insert_rowid)` from `sqlite3_total_changes64` delta and `sqlite3_last_insert_rowid` |
 | `execute(statement, values)` | Mo | `lib/sqlite.mo` | wraps `SQLITE_EXECUTE_RAW` in `Sqlite.ExecResult` |
+| `stats_raw` | host | `SQLITE_STATS_RAW` | returns `(query_count, exec_count, statements)` recorded on a fake or in-memory test database |
+| `reset_stats_raw` | host | `SQLITE_RESET_STATS_RAW` | clears the statement counts and templates recorded on a fake or in-memory test database |
+| `stats()` | Mo | `lib/sqlite.mo` | wraps `SQLITE_STATS_RAW` into `Sqlite.QueryStats` for N+1 query budget assertions |
+| `reset_stats()` | Mo | `lib/sqlite.mo` | clears fake `Sqlite.QueryStats` counters and statements |
 | `Sqlite.transaction(db, ctx, work, on_sql)` | Mo | `lib/sqlite.mo` | runs `BEGIN IMMEDIATE`, commits on `Ok`, rolls back on `Error` |
 | `Sqlite.decode(rows)` | lowering | `crates/mo-lower/src/abilities.rs`, `lib/sqlite.mo` | compiler-derived struct row decoder with column-name matching and cell validation |
 | `Sqlite.decode_one(rows)` | lowering | `crates/mo-lower/src/abilities.rs`, `lib/sqlite.mo` | single-row variant returning `ExpectedOneRow` when `rows.rows.size != 1` |
@@ -629,8 +637,17 @@ results in `lib/command.mo`.
 | `run_raw(program, args, within)` | host | `COMMAND_RUN_RAW` | spawns `program` inside the capability's folder with monotonic deadline and 4 MiB pipe cap, or looks up a `Command.fake` exchange |
 | `within(folder)` | host | `COMMAND_WITHIN` | narrows the working folder with `mo_host_resolve` (`RESOLVE_BENEATH`), poisoning escapes |
 | `allow_programs(programs)` | host | `COMMAND_ALLOW_PROGRAMS` | intersects allowed program basenames so authority only narrows |
+| `allow_loopback(net)` | host | `COMMAND_ALLOW_LOOPBACK` | opts child confinement into loopback TCP using `net` (requires loopback-permitting `Network`; blocks `socket(AF_UNIX)`, UDP, and non-loopback-listening ports; `NetPort` rules filter by port rather than IP) |
+| `spawn_raw(program, args)` | host | `COMMAND_SPAWN_RAW` | spawns a supervised `Command.Process` child inside the capability's folder, or looks up a `Command.fake` exchange |
+| `pid` | host | `COMMAND_PROCESS_PID` | returns the OS PID (or deterministic fake PID) of a `Command.Process` |
+| `alive?` | host | `COMMAND_PROCESS_ALIVE` | checks whether a `Command.Process` is still running without losing its exit status |
+| `kill_raw` | host | `COMMAND_PROCESS_KILL_RAW` | terminates a `Command.Process` process group and reaps the child |
+| `wait_raw(within)` | host | `COMMAND_PROCESS_WAIT_RAW` | waits up to `within` for a `Command.Process` to exit and returns `(status, stdout, stderr)` |
 | `Command.fake(replies)` | host | `COMMAND_FAKE` | a fake, for spec code only (reference 12.4) |
 | `run(program, args, within)` | Mo | `lib/command.mo` | decodes UTF-8 `stdout`/`stderr` into `Output` and maps error tags into `CommandError` |
+| `spawn(program, args)` | Mo | `lib/command.mo` | spawns a supervised `Command.Process` and maps error tags into `CommandError` |
+| `kill()` | Mo | `lib/command.mo` | terminates a `Command.Process` and maps error tags into `CommandError` |
+| `wait(within)` | Mo | `lib/command.mo` | waits for a `Command.Process` and decodes UTF-8 `stdout`/`stderr` into `Output` |
 | `Command.spec(program, args)` | Mo | `lib/command.mo` | starts a `Spec` at the capability's root folder |
 | `in_folder(folder)` | Mo | `lib/command.mo` | narrows a `Spec` to a relative subfolder |
 | `Command.output(status, stdout, stderr)` | Mo | `lib/command.mo` | builds an `Output` |

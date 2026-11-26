@@ -2241,6 +2241,111 @@ pub(crate) fn verify_module_with_site(file: &BytecodeFile) -> Result<(), (LoadEr
             .map_err(|e| (e, Some(i)))?;
     }
 
+    // 6. Reject `Sqlite.stats_raw` / `Sqlite.reset_stats_raw` transitively reachable from
+    // non-spec entry functions (`init`, services, or module-0 `main`).
+    verify_sqlite_stats_not_in_prod(file)?;
+
+    Ok(())
+}
+
+fn verify_sqlite_stats_not_in_prod(file: &BytecodeFile) -> Result<(), (LoadError, Option<u32>)> {
+    let n = file.functions.len();
+    let mut reaches = vec![false; n];
+    let mut callers = vec![Vec::new(); n];
+
+    for (i, fn_def) in file.functions.iter().enumerate() {
+        let mut pc = 0u32;
+        while (pc as usize) < fn_def.code.len() {
+            let head = fn_def.code[pc as usize];
+            let op_num = (head & OPCODE_MASK) as u16;
+            let a = &fn_def.code[pc as usize + 1..];
+            if op_num == Opcode::Host.number() {
+                if let Some(host_op) = HostOpId::from_u32(a[1])
+                    && matches!(
+                        host_op,
+                        HostOpId::SqliteStatsRaw | HostOpId::SqliteResetStatsRaw
+                    )
+                {
+                    reaches[i] = true;
+                }
+            } else if op_num == Opcode::Call.number() {
+                callers[a[1] as usize].push(i);
+            } else if op_num == Opcode::TailCall.number() {
+                callers[a[0] as usize].push(i);
+            } else if op_num == Opcode::MakeClosure.number() {
+                callers[a[1] as usize].push(i);
+            } else if op_num == Opcode::Const.number() {
+                let c_idx = a[1] as usize;
+                if let Some(c) = file.constants.get(c_idx)
+                    && file.types.get(c.ty).kind == TypeKind::Function
+                    && let ConstantValue::Closure(callee) = c.value
+                {
+                    callers[callee as usize].push(i);
+                }
+            }
+            pc = next_pc(fn_def, pc).map_err(|e| (e, Some(i as u32)))?;
+        }
+    }
+
+    let mut pending: Vec<_> = reaches
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &direct)| direct.then_some(i))
+        .collect();
+    while let Some(callee) = pending.pop() {
+        for &caller in &callers[callee] {
+            if !reaches[caller] {
+                reaches[caller] = true;
+                pending.push(caller);
+            }
+        }
+    }
+
+    for &init_fn in &file.init {
+        if reaches[init_fn as usize] {
+            return Err((
+                LoadError::invalid(PAYLOAD_OFFSET, "Sqlite.stats reachable from init"),
+                Some(init_fn),
+            ));
+        }
+    }
+    for svc in &file.services {
+        if reaches[svc.start as usize] {
+            return Err((
+                LoadError::invalid(PAYLOAD_OFFSET, "Sqlite.stats reachable from service start"),
+                Some(svc.start),
+            ));
+        }
+        for tool in &svc.tools {
+            if reaches[tool.function as usize] {
+                return Err((
+                    LoadError::invalid(PAYLOAD_OFFSET, "Sqlite.stats reachable from service tool"),
+                    Some(tool.function),
+                ));
+            }
+        }
+        for timer in &svc.timers {
+            if reaches[timer.function as usize] {
+                return Err((
+                    LoadError::invalid(PAYLOAD_OFFSET, "Sqlite.stats reachable from service timer"),
+                    Some(timer.function),
+                ));
+            }
+        }
+    }
+    for (i, fn_def) in file.functions.iter().enumerate() {
+        if !fn_def.spec_code && reaches[i] {
+            let name = file.function_name(i as u32);
+            let reason = if fn_def.module == 0 && name == "main" {
+                "Sqlite.stats reachable from main"
+            } else if name.ends_with(".%api.wire") || name.ends_with(".%api.job") {
+                "Sqlite.stats reachable from api dispatcher"
+            } else {
+                continue;
+            };
+            return Err((LoadError::invalid(PAYLOAD_OFFSET, reason), Some(i as u32)));
+        }
+    }
     Ok(())
 }
 

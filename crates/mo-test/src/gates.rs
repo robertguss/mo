@@ -1,12 +1,15 @@
 //! Mutation testing gate runner (`src/tools/gates.{h,c}`).
 
 use std::io::Write;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use mo_base::{DiagBag, Diagnostic, RenderWriter, SourceMap, Span, TerminalEncoding};
 use mo_check::{CheckedProgram, check_program, load_program_sources};
 use mo_def::ErrorCode;
 use mo_def::limits::{
     MO_CLI_DIAGNOSTIC_SIZE, MO_LIMIT_GATE_STEP_FLOOR, MO_LIMIT_GATE_STEP_MULTIPLE,
+    MO_SOURCE_STACK_SIZE,
 };
 use mo_syntax::SyntaxKind;
 
@@ -173,6 +176,133 @@ fn write_mutant(
     }
 }
 
+fn write_mutant_event(
+    output: &mut dyn Write,
+    program: &CheckedProgram,
+    sources: &SourceMap,
+    m: &Mutant,
+    verdict: Verdict,
+    by: Option<&str>,
+    check: Option<&str>,
+) -> bool {
+    if !matches!(
+        verdict,
+        Verdict::Killed | Verdict::Survived | Verdict::Unrun
+    ) {
+        return true;
+    }
+    let path_bytes = sources
+        .get(m.span.file)
+        .map_or(&b""[..], |s| s.path_bytes());
+    let func = &program.functions[m.function];
+    let sym = program.interfaces.symbol(func.symbol);
+    let mod_name = &program.modules.module(sym.module).name;
+    let short_fn = sym.name.as_str();
+    let mut fname = String::new();
+    append_function_name(
+        &mut fname,
+        program,
+        mo_check::CheckedFuncId(m.function as u32),
+    );
+
+    let mut out = RenderWriter::new(
+        MO_CLI_DIAGNOSTIC_SIZE as usize,
+        TerminalEncoding::Utf8,
+        UNICODE16_METRICS,
+    );
+    let ev_name = if verdict == Verdict::Killed {
+        "mutant_killed"
+    } else {
+        "mutant_survived"
+    };
+    out.text("{\"record\":");
+    out.json_str(ev_name);
+    out.text(",\"event\":");
+    out.json_str(ev_name);
+    out.text(",\"module\":");
+    out.json_str(mod_name);
+    out.text(",\"function\":");
+    out.json_str(&fname);
+    out.text(",\"fn\":");
+    out.json_str(short_fn);
+    out.text(",\"file\":");
+    out.json_bytes(path_bytes);
+    out.text(",\"line\":");
+    out.u64_dec(u64::from(m.position.line));
+    out.text(",\"column\":");
+    out.u64_dec(u64::from(m.position.column));
+    out.text(",\"kind\":");
+    out.json_str(m.kind);
+    out.text(",\"original\":");
+    out.json_str(&m.original);
+    out.text(",\"replacement\":");
+    out.json_str(&m.replacement);
+    if verdict == Verdict::Killed {
+        let killer = check.or(by).unwrap_or("start");
+        out.text(",\"by\":");
+        json_opt_str(&mut out, by);
+        out.text(",\"check\":");
+        json_opt_str(&mut out, check);
+        out.text(",\"killed_by\":");
+        out.json_str(killer);
+    } else {
+        out.text(",\"unrun\":");
+        out.text(if verdict == Verdict::Unrun {
+            "true"
+        } else {
+            "false"
+        });
+    }
+    out.text("}\n");
+    match out.finish() {
+        Ok(buf) => write_all_and_flush(output, &buf),
+        Err(_) => false,
+    }
+}
+
+fn write_mutant_summary(output: &mut dyn Write, mutants: &MutantTotals) -> bool {
+    let killed: u64 = mutants.killed.iter().map(|&k| u64::from(k)).sum();
+    let tried = u64::from(mutants.tried);
+    let survived = u64::from(mutants.survived);
+    let dropped = u64::from(mutants.dropped);
+    let total = tried + dropped;
+    let kill_rate = if tried == 0 {
+        "null".to_string()
+    } else {
+        format!("{:.4}", (killed as f64) / (tried as f64))
+    };
+
+    let mut out = RenderWriter::new(
+        MO_CLI_DIAGNOSTIC_SIZE as usize,
+        TerminalEncoding::Utf8,
+        UNICODE16_METRICS,
+    );
+    out.text("{\"record\":\"mutant_summary\",\"event\":\"mutant_summary\",\"total\":");
+    out.u64_dec(total);
+    out.text(",\"tried\":");
+    out.u64_dec(tried);
+    out.text(",\"killed\":");
+    out.u64_dec(killed);
+    out.text(",\"killed_by_kind\":{");
+    for (i, &name) in GATE_KILL_NAMES.iter().enumerate() {
+        out.text(if i == 0 { "\"" } else { ",\"" });
+        out.text(name);
+        out.text("\":");
+        out.u64_dec(u64::from(mutants.killed[i]));
+    }
+    out.text("},\"survived\":");
+    out.u64_dec(survived);
+    out.text(",\"dropped\":");
+    out.u64_dec(dropped);
+    out.text(",\"kill_rate\":");
+    out.text(&kill_rate);
+    out.text("}\n");
+    match out.finish() {
+        Ok(buf) => write_all_and_flush(output, &buf),
+        Err(_) => false,
+    }
+}
+
 fn count_kill(totals: &mut MutantTotals, kind: &str) {
     for (i, &name) in GATE_KILL_NAMES.iter().enumerate() {
         if kind == name {
@@ -228,53 +358,95 @@ fn report_survived(diags: &mut DiagBag, program: &CheckedProgram, m: &Mutant, un
     );
 }
 
-fn try_mutant(
-    config: &TestConfig,
-    program: &CheckedProgram,
-    sources: &SourceMap,
-    first: &GatedRun,
-    sorted: &[GatedCheck],
-    m: &Mutant,
-    diags: &mut DiagBag,
-) -> (Verdict, Option<&'static str>, Option<String>) {
-    let plan = build_plan(first, sorted, m.function);
+struct MutantContext<'a> {
+    config: &'a TestConfig,
+    program: &'a CheckedProgram,
+    sources: &'a SourceMap,
+    lib_flags: &'a [bool],
+    first: &'a GatedRun,
+    sorted: &'a [GatedCheck],
+}
+
+struct MutantTrial {
+    verdict: Verdict,
+    by: Option<&'static str>,
+    check: Option<String>,
+    broken_diags: DiagBag,
+    broken_fallback: &'static str,
+}
+
+fn try_mutant_isolated(ctx: &MutantContext<'_>, m: &Mutant) -> MutantTrial {
+    let plan = build_plan(ctx.first, ctx.sorted, m.function);
     let mut sub_diags = DiagBag::new();
-    let Some(mut mutated_sources) = mutant_sources(program, sources, m) else {
-        report_broken(diags, m, &sub_diags, "its sources could not be built");
-        return (Verdict::Broken, None, None);
+    let Some(mut mutated_sources) = mutant_sources(ctx.program, ctx.sources, m) else {
+        return MutantTrial {
+            verdict: Verdict::Broken,
+            by: None,
+            check: None,
+            broken_diags: sub_diags,
+            broken_fallback: "its sources could not be built",
+        };
     };
-    let lib_flags: Vec<bool> = program
-        .modules
-        .modules
-        .iter()
-        .map(|md| md.library)
-        .collect();
-    let Some(set) = load_program_sources(&mut mutated_sources, Some(&lib_flags), &mut sub_diags)
+    let Some(set) = load_program_sources(&mut mutated_sources, Some(ctx.lib_flags), &mut sub_diags)
     else {
-        report_broken(diags, m, &sub_diags, "it could not be loaded");
-        return (Verdict::Broken, None, None);
+        return MutantTrial {
+            verdict: Verdict::Broken,
+            by: None,
+            check: None,
+            broken_diags: sub_diags,
+            broken_fallback: "it could not be loaded",
+        };
     };
     if sub_diags.has_any() {
-        report_broken(diags, m, &sub_diags, "it could not be loaded");
-        return (Verdict::Broken, None, None);
+        return MutantTrial {
+            verdict: Verdict::Broken,
+            by: None,
+            check: None,
+            broken_diags: sub_diags,
+            broken_fallback: "it could not be loaded",
+        };
     }
     let Some(checked) = check_program(Some(&mutated_sources), set, &mut sub_diags) else {
-        return (Verdict::Dropped, None, None);
+        return MutantTrial {
+            verdict: Verdict::Dropped,
+            by: None,
+            check: None,
+            broken_diags: DiagBag::new(),
+            broken_fallback: "",
+        };
     };
     if sub_diags.has_any() {
-        return (Verdict::Dropped, None, None);
+        return MutantTrial {
+            verdict: Verdict::Dropped,
+            by: None,
+            check: None,
+            broken_diags: DiagBag::new(),
+            broken_fallback: "",
+        };
     }
-    let start_hit = first
+    let start_hit = ctx
+        .first
         .start_entered
         .get(m.function)
         .copied()
         .unwrap_or(false);
     if plan.is_empty() && !start_hit {
-        return (Verdict::Unrun, None, None);
+        return MutantTrial {
+            verdict: Verdict::Unrun,
+            by: None,
+            check: None,
+            broken_diags: DiagBag::new(),
+            broken_fallback: "",
+        };
     }
-    let Some(selection) = select_tests(&checked, config, &mut sub_diags) else {
-        report_broken(diags, m, &sub_diags, "its checks could not be selected");
-        return (Verdict::Broken, None, None);
+    let Some(selection) = select_tests(&checked, ctx.config, &mut sub_diags) else {
+        return MutantTrial {
+            verdict: Verdict::Broken,
+            by: None,
+            check: None,
+            broken_diags: sub_diags,
+            broken_fallback: "its checks could not be selected",
+        };
     };
     let mut run = GatedRun {
         checks: plan,
@@ -283,7 +455,7 @@ fn try_mutant(
         shrink: false,
         stop: true,
         limit: 0,
-        start_limit: gate_limit(first.start_steps),
+        start_limit: gate_limit(ctx.first.start_steps),
         started: false,
         start_steps: 0,
         start_entered: Vec::new(),
@@ -292,7 +464,7 @@ fn try_mutant(
     let mut totals = TestTotals::default();
     let mut sink = std::io::sink();
     run_gated(
-        config,
+        ctx.config,
         &checked,
         &mutated_sources,
         &selection,
@@ -302,21 +474,101 @@ fn try_mutant(
         &mut run,
     );
     if !run.started && gate_start_failed(&sub_diags) {
-        (Verdict::Killed, Some("start"), None)
+        MutantTrial {
+            verdict: Verdict::Killed,
+            by: Some("start"),
+            check: None,
+            broken_diags: DiagBag::new(),
+            broken_fallback: "",
+        }
     } else if run.started && run.ran != 0 && run.checks[run.ran - 1].outcome != CheckOutcome::Passed
     {
         let killer = &run.checks[run.ran - 1];
-        (
-            Verdict::Killed,
-            Some(killer.kind),
-            Some(killer.name.clone()),
-        )
+        MutantTrial {
+            verdict: Verdict::Killed,
+            by: Some(killer.kind),
+            check: Some(killer.name.clone()),
+            broken_diags: DiagBag::new(),
+            broken_fallback: "",
+        }
     } else if run.started && !sub_diags.has_any() && run.ran == run.checks.len() {
-        (Verdict::Survived, None, None)
+        MutantTrial {
+            verdict: Verdict::Survived,
+            by: None,
+            check: None,
+            broken_diags: DiagBag::new(),
+            broken_fallback: "",
+        }
     } else {
-        report_broken(diags, m, &sub_diags, "its checks did not finish");
-        (Verdict::Broken, None, None)
+        MutantTrial {
+            verdict: Verdict::Broken,
+            by: None,
+            check: None,
+            broken_diags: sub_diags,
+            broken_fallback: "its checks did not finish",
+        }
     }
+}
+
+fn apply_mutant_trial(
+    ctx: &MutantContext<'_>,
+    json: bool,
+    m: &Mutant,
+    trial: &MutantTrial,
+    output: &mut dyn Write,
+    diags: &mut DiagBag,
+    totals: &mut TestTotals,
+) -> bool {
+    match trial.verdict {
+        Verdict::Dropped => totals.mutants.dropped += 1,
+        Verdict::Killed => {
+            totals.mutants.tried += 1;
+            if let Some(k) = trial.by {
+                count_kill(&mut totals.mutants, k);
+            }
+        }
+        Verdict::Survived | Verdict::Unrun => {
+            totals.mutants.tried += 1;
+            totals.mutants.survived += 1;
+            report_survived(diags, ctx.program, m, trial.verdict == Verdict::Unrun);
+        }
+        Verdict::Broken => {
+            report_broken(diags, m, &trial.broken_diags, trial.broken_fallback);
+            return false;
+        }
+    }
+    if json {
+        let wrote_base = write_mutant(
+            output,
+            true,
+            ctx.program,
+            ctx.sources,
+            m,
+            Some(trial.verdict.outcome_str()),
+            trial.by,
+            trial.check.as_deref(),
+        );
+        let wrote_event = wrote_base
+            && write_mutant_event(
+                output,
+                ctx.program,
+                ctx.sources,
+                m,
+                trial.verdict,
+                trial.by,
+                trial.check.as_deref(),
+            );
+        if !wrote_event {
+            test_report_error(
+                diags,
+                "a mutant's record could not be written",
+                m.span,
+                None,
+            );
+            return false;
+        }
+    }
+    true
 }
 
 /// Runs all selected checks with tracing and then tries every source mutant
@@ -369,52 +621,93 @@ pub fn run_gates(
     let mut sorted = first.checks.clone();
     sorted.sort_by(|a, b| a.steps.cmp(&b.steps).then_with(|| a.name.cmp(&b.name)));
 
+    let lib_flags: Vec<bool> = program
+        .modules
+        .modules
+        .iter()
+        .map(|md| md.library)
+        .collect();
+    let mut serial_cfg = config.clone();
+    serial_cfg.jobs = 1;
+    let ctx = MutantContext {
+        config: &serial_cfg,
+        program,
+        sources,
+        lib_flags: &lib_flags,
+        first: &first,
+        sorted: &sorted,
+    };
+
+    let workers = config.jobs.max(1).min(mutants.len().max(1));
     let mut finished = true;
-    for m in &mutants {
-        let (verdict, kind, check) =
-            try_mutant(config, program, sources, &first, &sorted, m, diags);
-        match verdict {
-            Verdict::Dropped => totals.mutants.dropped += 1,
-            Verdict::Killed => {
-                totals.mutants.tried += 1;
-                if let Some(k) = kind {
-                    count_kill(&mut totals.mutants, k);
-                }
-            }
-            Verdict::Survived | Verdict::Unrun => {
-                totals.mutants.tried += 1;
-                totals.mutants.survived += 1;
-                report_survived(diags, program, m, verdict == Verdict::Unrun);
-            }
-            Verdict::Broken => {
+    if workers <= 1 || mutants.len() <= 1 {
+        for m in &mutants {
+            let trial = try_mutant_isolated(&ctx, m);
+            if !apply_mutant_trial(&ctx, config.json, m, &trial, output, diags, totals) {
                 finished = false;
                 break;
             }
         }
-        if config.json
-            && !write_mutant(
-                output,
-                true,
-                program,
-                sources,
-                m,
-                Some(verdict.outcome_str()),
-                kind,
-                check.as_deref(),
-            )
-        {
+    } else {
+        let next_idx = AtomicUsize::new(0);
+        let broken_at = AtomicUsize::new(mutants.len());
+        let slots: Mutex<Vec<Option<MutantTrial>>> =
+            Mutex::new((0..mutants.len()).map(|_| None).collect());
+
+        let work_loop = || {
+            loop {
+                let idx = next_idx.fetch_add(1, Ordering::Relaxed);
+                if idx >= broken_at.load(Ordering::Relaxed) || idx >= mutants.len() {
+                    break;
+                }
+                let trial = try_mutant_isolated(&ctx, &mutants[idx]);
+                if trial.verdict == Verdict::Broken {
+                    broken_at.fetch_min(idx, Ordering::Relaxed);
+                }
+                if let Ok(mut guard) = slots.lock() {
+                    guard[idx] = Some(trial);
+                }
+            }
+        };
+
+        std::thread::scope(|s| {
+            for _ in 1..workers {
+                let _ = std::thread::Builder::new()
+                    .name("mo-mutant-worker".to_string())
+                    .stack_size(MO_SOURCE_STACK_SIZE as usize)
+                    .spawn_scoped(s, work_loop);
+            }
+            work_loop();
+        });
+
+        let collected = match slots.into_inner() {
+            Ok(v) => v,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        for (m, slot) in mutants.iter().zip(collected.iter()) {
+            let Some(trial) = slot else {
+                test_report_error(diags, "a mutant could not be tried", m.span, None);
+                finished = false;
+                break;
+            };
+            if !apply_mutant_trial(&ctx, config.json, m, trial, output, diags, totals) {
+                finished = false;
+                break;
+            }
+        }
+    }
+
+    if finished {
+        totals.mutants.ran = true;
+        if config.json && !write_mutant_summary(output, &totals.mutants) {
             test_report_error(
                 diags,
                 "a mutant's record could not be written",
-                m.span,
+                Span::NONE,
                 None,
             );
-            finished = false;
-            break;
+            totals.mutants.ran = false;
         }
-    }
-    if finished {
-        totals.mutants.ran = true;
     }
 }
 

@@ -186,6 +186,138 @@ end
     }
 
     #[test]
+    fn allow_loopback_blocks_non_tcp_protocols_and_narrows_ports() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        if !mo_host::confine::can_confine() || !Path::new("/usr/bin/python3").exists() {
+            return;
+        }
+
+        let dir = unique_temp_dir("loopback-narrow").expect("temp dir");
+        let listener_a = TcpListener::bind("127.0.0.1:0").expect("bind port A");
+        let port_a = listener_a.local_addr().expect("addr A").port();
+        let listener_b = TcpListener::bind("127.0.0.1:0").expect("bind port B");
+        let port_b = listener_b.local_addr().expect("addr B").port();
+
+        let stop_srv = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_srv_bg = std::sync::Arc::clone(&stop_srv);
+        listener_a
+            .set_nonblocking(true)
+            .expect("nonblocking listener_a");
+        let srv_a = std::thread::spawn(move || -> std::io::Result<()> {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let mut stream = loop {
+                match listener_a.accept() {
+                    Ok((s, _)) => break s,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if stop_srv_bg.load(std::sync::atomic::Ordering::Relaxed)
+                            || std::time::Instant::now() >= deadline
+                        {
+                            return Ok(());
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(e) => return Err(e),
+                }
+            };
+            stream.set_nonblocking(false)?;
+            let mut buf = [0u8; 32];
+            let n = stream.read(&mut buf)?;
+            stream.write_all(&buf[..n])?;
+            stream.flush()
+        });
+
+        let py_script = format!(
+            r#"import socket
+for proto, label in [(132, 'SCTP'), (262, 'MPTCP')]:
+  try:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM, proto)
+    print(label + '_OPEN')
+    s.close()
+  except OSError as e:
+    print(label + '_BLOCKED', e.errno)
+sa = socket.create_connection(('127.0.0.1', {port_a}), timeout=2.0)
+sa.sendall(b'ping-a')
+print('PORT_A_OK:' + sa.recv(32).decode())
+sa.close()
+try:
+  sb = socket.create_connection(('127.0.0.1', {port_b}), timeout=1.0)
+  print('PORT_B_OPEN')
+  sb.close()
+except OSError as e:
+  print('PORT_B_BLOCKED', e.errno)
+try:
+  bl = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+  bl.bind(('127.0.0.1', 0))
+  print('BIND_OPEN')
+  bl.close()
+except OSError as e:
+  print('BIND_BLOCKED', e.errno)
+"#
+        );
+        let mo_src = format!(
+            r#"module Main
+use Command
+
+fn main(console: Console, cmd: Command, net: Network) : Unit
+  narrow = cmd.allow_programs(["python3"]).allow_loopback(net.allow_hosts(["127.0.0.1:{port_a}"]))
+  r = narrow.run("python3", ["-c", {script_lit:?}], 5.seconds)
+  case r
+    Ok(o):
+      console.print("STATUS:#{{o.status}}")
+      console.print(o.stdout.trim)
+      if not o.stderr.trim.empty?
+        console.print("STDERR:\n#{{o.stderr.trim}}")
+      end
+    Error(e): console.print("RUN_ERR:#{{e}}")
+  end
+end
+"#,
+            port_a = port_a,
+            script_lit = py_script,
+        );
+
+        let out = run_mo_with_root(&dir, &mo_src).expect("run mo");
+        stop_srv.store(true, std::sync::atomic::Ordering::Relaxed);
+        let _ = srv_a.join();
+        drop(listener_b);
+
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.success(),
+            "mo run failed:\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+        assert!(
+            stdout.contains("STATUS:0"),
+            "expected python3 status 0, got:\n{stdout}"
+        );
+        assert!(
+            stdout.contains("SCTP_BLOCKED 1"),
+            "expected seccomp EPERM (1) for SCTP protocol 132, got:\n{stdout}"
+        );
+        assert!(
+            stdout.contains("MPTCP_BLOCKED 1"),
+            "expected seccomp EPERM (1) for MPTCP protocol 262, got:\n{stdout}"
+        );
+        assert!(
+            stdout.contains("PORT_A_OK:ping-a"),
+            "expected allowed loopback port {port_a} to succeed, got:\n{stdout}"
+        );
+        assert!(
+            stdout.contains("PORT_B_BLOCKED 13"),
+            "expected disallowed loopback port {port_b} to fail with EACCES(13), got:\n{stdout}"
+        );
+        assert!(
+            stdout.contains("BIND_BLOCKED 13"),
+            "expected bind to fail with EACCES(13) when port-narrowed, got:\n{stdout}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn compile_job_runs_both_emit_and_test_stages_confined_with_rlimits_and_timeout() {
         let service_src = br#"module Main
 

@@ -58,7 +58,7 @@ monomorphization, each once. A type is one of:
 | `choice` | name; cases, each with a name and its fields' names and types, and whether its one field is unnamed | see 2.3 |
 | `function` | parameter types, result type | reference to a closure |
 | `env` | the closure code's function index | the closure seen from inside (section 5.3) |
-| `capability` | which: `Args`, `Env`, `Console`, `Files`, `ReadFiles`, `Clock`, `Random`, `Simulation`, `Network`, `Connection`, `Sqlite`, `Sqlite.Database`, `Command`, `SecureRandom` or `Files.File` | reference |
+| `capability` | which: `Args`, `Env`, `Console`, `Files`, `ReadFiles`, `Clock`, `Random`, `Simulation`, `Network`, `Connection`, `Sqlite`, `Sqlite.Database`, `Command`, `SecureRandom`, `Files.File` or `Command.Process` | reference |
 
 Structural types (tuples, lists, sets, maps and functions) are interned, so
 two types are equal exactly when their indices are. Records and choice types

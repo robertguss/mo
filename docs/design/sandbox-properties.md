@@ -94,11 +94,11 @@ The compiler front end (`mo-syntax`, `mo-check`, `mo-lower`, `mo-core`, `mo-code
 - **Enforced by:**
   - All host effects dispatch exclusively through `HOST` instructions (`crates/mo-def/defs/hostops.def`) on capability handles instantiated by `mo-cli`/`mo-service` for `main` or `api` declarations.
   - `crates/mo-bytecode/src/verify.rs` forbids non-spec functions from calling, tail-calling, or capturing spec functions, fake capability constructors, `printed`/`printed_errors`, or `fail`.
-  - Narrowing operations (`Files.within`, `ReadFiles.within`, `Files.read_only`, `Network.allow_hosts`, `Command.within`, `Command.allow_programs`) are strictly monotonic.
-  - `Connection`, `Sqlite.Database`, and `Files.File` handles can only be minted by `Network`, `Sqlite`, and `Files`; durable `service` blocks receive no capabilities at all.
+  - Narrowing operations (`Files.within`, `ReadFiles.within`, `Files.read_only`, `Network.allow_hosts`, `Command.within`, `Command.allow_programs`) are strictly monotonic; confined `Command` blocks all network sockets by default, while `Command.allow_loopback(net)` requires a `Network` capability whose allowlist permits loopback (`127.0.0.1`, `localhost`, or `::1`), denies `socket(AF_UNIX, ...)` filesystem/abstract Unix sockets, datagram socketpairs, UDP/raw/`AF_NETLINK`/`AF_PACKET` sockets, and TCP connects to ports not listening on loopback at child start (Unix stream socketpairs remain permitted). Supervised processes and commands with loopback enabled fail closed if confinement is unavailable.
+  - `Connection`, `Sqlite.Database`, `Files.File`, and `Command.Process` handles can only be minted by `Network`, `Sqlite`, `Files`/`ReadFiles`, and `Command` (and live `Command.Process` handles kill and reap their child tree when dropped); durable `service` blocks receive no capabilities at all.
   - `Sqlite.Database` installs a per-connection SQLite authorizer blocking `ATTACH`, `DETACH`, `VACUUM INTO`, `PRAGMA temp_store*`, and extension loading, keeping temporary storage in memory.
 - **Evidence:** `crates/mo-host`, `crates/mo-bytecode`, and `crates/mo-vm` tests; `ci/check_network.py`, `ci/check_golden.py`, `ci/check_programs.py`.
-- **Not covered:** SQL statements inside an already-granted `Sqlite.Database` can still call SQLite built-ins such as `datetime('now')` or `random()` without `Clock` or `Random`.
+- **Not covered:** SQL statements inside an already-granted `Sqlite.Database` can still call SQLite built-ins such as `datetime('now')` or `random()` without `Clock` or `Random`. Under `Command.allow_loopback(net)`, Linux Landlock `NetPort` rules filter TCP destinations and binds by port number rather than IP address: a port already listening on loopback at child start can be connected on non-loopback interfaces on that same port, and ephemeral `bind(0)` is permitted without IP filtering.
 
 ### P8. File, SQLite, and Command capabilities cannot escape their granted directory
 

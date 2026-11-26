@@ -5,8 +5,9 @@ use std::collections::HashMap;
 
 use crate::ids::{ModuleId, NativeSigId, SymRef, TypeId};
 
-/// Built-in capability type names in `MO_CAP_*` order (`src/base/capabilities.c`).
-pub const CAPABILITY_NAMES: [&str; 15] = [
+/// Built-in capability type names in `MO_CAP_*` order (`src/base/capabilities.c`),
+/// followed by compiler-synthesized test capability handles.
+pub const CAPABILITY_NAMES: [&str; 17] = [
     "Args",
     "Env",
     "Console",
@@ -22,9 +23,11 @@ pub const CAPABILITY_NAMES: [&str; 15] = [
     "Command",
     "SecureRandom",
     "Files.File",
+    "Command.Process",
+    "ApiTest.App",
 ];
 
-/// Returns whether `name` is one of Mo's 15 built-in capability type names.
+/// Returns whether `name` is one of Mo's built-in capability type names.
 #[must_use]
 pub fn is_capability_name(name: &str) -> bool {
     CAPABILITY_NAMES.contains(&name)

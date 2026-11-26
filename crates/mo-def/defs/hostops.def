@@ -116,6 +116,16 @@ HOSTOP(FILES_LOCK_SHARED,      "Files",     "lock_shared",    "fn(Files.File) : 
 HOSTOP(FILES_LOCK_EXCLUSIVE,   "Files",     "lock_exclusive", "fn(Files.File) : Result(Unit, FileError)",                "b",   "",                                   false)
 HOSTOP(FILES_UNLOCK,           "Files",     "unlock",         "fn(Files.File) : Result(Unit, FileError)",                "b",   "",                                   false)
 HOSTOP(READFILES_OPEN,         "ReadFiles", "open",           "fn(ReadFiles, Text) : Result(Files.File, FileError)",     "bb",  "too many files open at once",        false)
+HOSTOP(NETWORK_FAKE_SCRIPTED,  "Network",   "fake_scripted_raw",  "fn(List((Text, Text, List((Int, Int, Bytes, NetworkError))))) : Network", "o", "",                 true)
+HOSTOP(NETWORK_RECORDED_CALLS, "Network",   "recorded_calls_raw", "fn(Network) : List((Text, Text, List((Text, Text)), Bytes))",             "b", "network observation needs a fake", true)
+HOSTOP(SQLITE_STATS_RAW,       "Sqlite",    "stats_raw",          "fn(Sqlite.Database) : (Int, Int, List(Text))",                            "b", "Sqlite.Database.stats is only available on fake or in-memory test databases", false)
+HOSTOP(SQLITE_RESET_STATS_RAW, "Sqlite",    "reset_stats_raw",    "fn(Sqlite.Database)",                                                     "b", "Sqlite.Database.reset_stats is only available on fake or in-memory test databases", false)
+HOSTOP(COMMAND_ALLOW_LOOPBACK, "Command",   "allow_loopback",     "fn(Command, Network) : Command",                                          "bb", "too many folders open at once", false)
+HOSTOP(COMMAND_SPAWN_RAW,      "Command",   "spawn_raw",          "fn(Command, Text, List(Text)) : Result(Command.Process, Text)",           "bbb", "too many command arguments; too many processes open at once", false)
+HOSTOP(COMMAND_PROCESS_PID,    "Command",   "pid",                "fn(Command.Process) : Int",                                               "b", "", false)
+HOSTOP(COMMAND_PROCESS_ALIVE,  "Command",   "alive?",             "fn(Command.Process) : Bool",                                              "b", "", false)
+HOSTOP(COMMAND_PROCESS_KILL_RAW, "Command", "kill_raw",           "fn(Command.Process) : Result(Unit, Text)",                                "b", "", false)
+HOSTOP(COMMAND_PROCESS_WAIT_RAW, "Command", "wait_raw",           "fn(Command.Process, Duration) : Result((Int, Bytes, Bytes), Text)",       "bb", "timeout below 1ms or above 1 hour", false)
 
 #undef HOSTOP
 

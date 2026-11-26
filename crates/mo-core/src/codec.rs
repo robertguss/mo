@@ -4525,9 +4525,8 @@ pub fn detect_kind(bytes: &[u8]) -> Option<CoreTextKind> {
         "lit" | "var" | "global" | "let_" | "lam" | "app" | "call" | "proj" | "case_" | "if_"
         | "prim" | "fail" | "join" | "jump" => Some(CoreTextKind::Expr),
         "console" | "files" | "readFiles" | "clock" | "random" | "args" | "env" | "network"
-        | "connection" | "sqlite" | "database" | "command" | "secureRandom" | "file" => {
-            Some(CoreTextKind::Cap)
-        }
+        | "connection" | "sqlite" | "database" | "command" | "secureRandom" | "file"
+        | "process" => Some(CoreTextKind::Cap),
         "closure" => Some(CoreTextKind::Value),
         "ordering" | "fileError" | "entryKind" | "simulation" | "simulationError"
         | "networkError" | "sqliteValue" | "sqliteRows" | "sqliteError" | "data" | "option"
