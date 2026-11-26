@@ -2251,7 +2251,7 @@ pub(crate) fn verify_module_with_site(file: &BytecodeFile) -> Result<(), (LoadEr
 fn verify_sqlite_stats_not_in_prod(file: &BytecodeFile) -> Result<(), (LoadError, Option<u32>)> {
     let n = file.functions.len();
     let mut reaches = vec![false; n];
-    let mut edges: Vec<Vec<u32>> = vec![Vec::new(); n];
+    let mut callers = vec![Vec::new(); n];
 
     for (i, fn_def) in file.functions.iter().enumerate() {
         let mut pc = 0u32;
@@ -2269,37 +2269,35 @@ fn verify_sqlite_stats_not_in_prod(file: &BytecodeFile) -> Result<(), (LoadError
                     reaches[i] = true;
                 }
             } else if op_num == Opcode::Call.number() {
-                edges[i].push(a[1]);
+                callers[a[1] as usize].push(i);
             } else if op_num == Opcode::TailCall.number() {
-                edges[i].push(a[0]);
+                callers[a[0] as usize].push(i);
             } else if op_num == Opcode::MakeClosure.number() {
-                edges[i].push(a[1]);
+                callers[a[1] as usize].push(i);
             } else if op_num == Opcode::Const.number() {
                 let c_idx = a[1] as usize;
                 if let Some(c) = file.constants.get(c_idx)
                     && file.types.get(c.ty).kind == TypeKind::Function
                     && let ConstantValue::Closure(callee) = c.value
                 {
-                    edges[i].push(callee);
+                    callers[callee as usize].push(i);
                 }
             }
             pc = next_pc(fn_def, pc).map_err(|e| (e, Some(i as u32)))?;
         }
     }
 
-    loop {
-        let mut changed = false;
-        for i in 0..n {
-            if reaches[i] {
-                continue;
+    let mut pending: Vec<_> = reaches
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &direct)| direct.then_some(i))
+        .collect();
+    while let Some(callee) = pending.pop() {
+        for &caller in &callers[callee] {
+            if !reaches[caller] {
+                reaches[caller] = true;
+                pending.push(caller);
             }
-            if edges[i].iter().any(|&callee| reaches[callee as usize]) {
-                reaches[i] = true;
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
         }
     }
 
@@ -2336,15 +2334,16 @@ fn verify_sqlite_stats_not_in_prod(file: &BytecodeFile) -> Result<(), (LoadError
         }
     }
     for (i, fn_def) in file.functions.iter().enumerate() {
-        if !fn_def.spec_code
-            && fn_def.module == 0
-            && file.function_name(i as u32) == "main"
-            && reaches[i]
-        {
-            return Err((
-                LoadError::invalid(PAYLOAD_OFFSET, "Sqlite.stats reachable from main"),
-                Some(i as u32),
-            ));
+        if !fn_def.spec_code && reaches[i] {
+            let name = file.function_name(i as u32);
+            let reason = if fn_def.module == 0 && name == "main" {
+                "Sqlite.stats reachable from main"
+            } else if name.ends_with(".%api.wire") || name.ends_with(".%api.job") {
+                "Sqlite.stats reachable from api dispatcher"
+            } else {
+                continue;
+            };
+            return Err((LoadError::invalid(PAYLOAD_OFFSET, reason), Some(i as u32)));
         }
     }
     Ok(())

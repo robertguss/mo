@@ -863,16 +863,22 @@ mod linux {
             rules.insert(libc::SYS_socket, socket_deny);
         }
 
-        // Allow `socketpair(AF_UNIX, ...)` and `sendto(..., dest_addr == NULL)`, deny others.
-        rules.insert(
-            libc::SYS_socketpair,
-            vec![rule(vec![cond(
-                0,
-                SeccompCmpArgLen::Qword,
-                SeccompCmpOp::Ne,
-                libc::AF_UNIX as u64,
-            )?])?],
-        );
+        // Datagram socketpairs can change their peer when connect is permitted.
+        let mut socketpair_deny = vec![rule(vec![cond(
+            0,
+            SeccompCmpArgLen::Dword,
+            SeccompCmpOp::Ne,
+            libc::AF_UNIX as u64,
+        )?])?];
+        if allow_loopback {
+            socketpair_deny.push(rule(vec![cond(
+                1,
+                SeccompCmpArgLen::Dword,
+                SeccompCmpOp::MaskedEq(0xf),
+                libc::SOCK_DGRAM as u64,
+            )?])?);
+        }
+        rules.insert(libc::SYS_socketpair, socketpair_deny);
         rules.insert(
             libc::SYS_sendto,
             vec![rule(vec![cond(

@@ -22,6 +22,8 @@ mod unix_tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{Duration, Instant};
 
+    use mo_def::limits::MO_LIMIT_OPEN_PROCESSES;
+
     static SEQ: AtomicU64 = AtomicU64::new(1);
 
     fn mo_bin() -> PathBuf {
@@ -121,6 +123,12 @@ fn main(console: Console, cmd: Command, net: Network) : Unit
       end
     Error(e): console.print("LOOP_RUN_ERR:#{{e}}")
   end
+
+  socketpairs = "import socket\na, b = socket.socketpair()\na.sendall(b'ok')\nprint('STREAM_PAIR:' + b.recv(2).decode())\ntry:\n socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)\nexcept OSError as e:\n print('DATAGRAM_PAIR_BLOCKED', e.errno)\n"
+  case py_loop.run("python3", ["-c", socketpairs], 5.seconds)
+    Ok(o): console.print(o.stdout.trim)
+    Error(_): console.print("SOCKETPAIR_PROBE_FAILED")
+  end
 end
 "##,
             loop_port = loop_port,
@@ -171,6 +179,8 @@ end
             stdout.contains("UNIX_BLOCKED 1"),
             "expected AF_UNIX socket() to be blocked with EPERM(1), got:\n{stdout}"
         );
+        assert!(stdout.contains("STREAM_PAIR:ok"), "{stdout}");
+        assert!(stdout.contains("DATAGRAM_PAIR_BLOCKED 1"), "{stdout}");
 
         let _ = fs::remove_dir_all(&dir);
         Ok(())
@@ -178,6 +188,9 @@ end
 
     #[test]
     fn command_spawn_supervises_waits_kills_and_reaps_on_drop() -> Result<(), Box<dyn Error>> {
+        if !mo_host::confine::can_confine() {
+            return Ok(());
+        }
         let dir = temp_dir("spawn")?;
         let dropped_pid_file = dir.join("dropped.pid");
         let main_mo = dir.join("main.mo");
@@ -271,6 +284,9 @@ end
     #[test]
     fn mo_serve_ephemeral_port_zero_and_ready_file_live_orchestration() -> Result<(), Box<dyn Error>>
     {
+        if !mo_host::confine::can_confine() {
+            return Ok(());
+        }
         let dir = temp_dir("serve-ready")?;
         let data_dir = dir.join("data");
         fs::create_dir_all(&data_dir)?;
@@ -448,6 +464,9 @@ end
 
     #[test]
     fn command_process_wait_bounds_and_kills_grandchildren() -> Result<(), Box<dyn Error>> {
+        if !mo_host::confine::can_confine() {
+            return Ok(());
+        }
         let dir = temp_dir("grandchild")?;
         let pid_file = dir.join("gc.pid");
         let main_mo = dir.join("main.mo");
@@ -475,6 +494,9 @@ fn main(console: Console, cmd: Command) : Unit
   res1 = p1.wait(500.milliseconds)
   assert res1 == Error(Command.TimedOut)
   console.print("WAIT_BOUNDED_OK")
+
+  res2 = sh.run("sh", ["-c", "sleep 7 & echo leader-done"], 500.milliseconds)
+  assert res2 == Error(Command.TimedOut)
 
   # 2. Background grandchild with redirected stdio MUST be killed before leader reaps!
   spawn_null_bg(sh)
@@ -563,6 +585,49 @@ end
         );
 
         let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn command_fake_enforces_open_process_limit() -> Result<(), Box<dyn Error>> {
+        let dir = temp_dir("fake-process-limit")?;
+        let main = dir.join("main.mo");
+        let limit = MO_LIMIT_OPEN_PROCESSES;
+        fs::write(
+            &main,
+            format!(
+                r#"module Main
+use Command
+
+fn spawn_one(cmd: Command) : Command.Process
+  case cmd.spawn("echo", [])
+    Ok(p): p
+    Error(_): stop "could not spawn"
+  end
+end
+
+test "only {limit} process handles may remain open"
+  cmd = Command.fake(Command.replies([(Command.spec("echo", []), Command.ok_output("ok"))]))
+  var handles = []
+  for _ in 0..{limit}
+    handles = handles.append(spawn_one(cmd))
+  end
+  other = spawn_one(cmd)
+  assert handles.size == {limit}
+  assert other.alive?
+end
+"#
+            ),
+        )?;
+        let out = Command::new(mo_bin()).arg("test").arg(&main).output()?;
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(out.status.code(), Some(1), "{stdout}\n{stderr}");
+        assert!(
+            stdout.contains("bug: too many processes open at once"),
+            "{stdout}\n{stderr}"
+        );
         Ok(())
     }
 

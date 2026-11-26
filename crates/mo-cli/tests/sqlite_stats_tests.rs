@@ -17,6 +17,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use mo_def::limits::MO_LIMIT_SQL_STATS_STATEMENTS;
+
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 fn temp_dir(tag: &str) -> Result<PathBuf, Box<dyn Error>> {
@@ -231,8 +233,80 @@ end
         String::from_utf8_lossy(&check_api.stderr)
     );
 
+    fs::write(
+        &api_main,
+        r#"module Main
+use Json
+
+fn job_handler(_payload: Json, db: Sqlite.Database) : Result(Unit, Text)
+  db.reset_stats()
+  Ok(Unit)
+end
+
+api
+  sqlite db from "app.db"
+  job "reset.stats" job_handler
+end
+"#,
+    )?;
+    let check_job = Command::new(mo).arg("check").arg(&api_main).output()?;
+    assert_eq!(
+        check_job.status.code(),
+        Some(1),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&check_job.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&check_job.stderr).contains("E0098"),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&check_job.stderr)
+    );
+
     let _ = fs::remove_dir_all(&dir);
     let _ = fs::remove_dir_all(&indirect_main_dir);
     let _ = fs::remove_dir_all(&api_dir);
+    Ok(())
+}
+
+#[test]
+fn sqlite_stats_caps_history_without_losing_counts() -> Result<(), Box<dyn Error>> {
+    let dir = temp_dir("bounded-history")?;
+    let main = dir.join("main.mo");
+    let limit = MO_LIMIT_SQL_STATS_STATEMENTS;
+    fs::write(
+        &main,
+        format!(
+            r#"module Main
+
+test "statement history is bounded, and reset drops the history"
+  db = case Sqlite.in_memory().open(":memory:")
+    Ok(db): db
+    Error(_): stop "open failed"
+  end
+  for _i in 0..{limit}
+    assert db.query("SELECT 1", []) is Ok(_)
+  end
+  assert db.query("SELECT 2", []) is Ok(_)
+  assert db.stats().query_count == {limit} + 1
+  assert db.stats().statements.size == {limit}
+  assert db.stats().statements.get({limit} - 1) == Some("SELECT 1")
+  db.reset_stats()
+  assert db.stats().query_count == 0
+  assert db.stats().statements.empty?
+end
+"#
+        ),
+    )?;
+    let out = Command::new(env!("CARGO_BIN_EXE_mo"))
+        .arg("test")
+        .arg(&main)
+        .output()?;
+    assert!(
+        out.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = fs::remove_dir_all(&dir);
     Ok(())
 }

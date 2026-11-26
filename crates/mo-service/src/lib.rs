@@ -24,25 +24,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use mo_heap::Value;
 use mo_vm::{Defect, Outcome, Process};
 
-fn push_json_escaped(out: &mut String, s: &str) {
-    out.push('"');
-    for ch in s.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => {
-                use std::fmt::Write as _;
-                let _ = write!(out, "\\u{:04x}", c as u32);
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-}
-
 fn format_utc_rfc3339_now() -> String {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -84,11 +65,11 @@ pub fn write_ready_file(
 
     let mut json = String::with_capacity(256);
     json.push_str("{\"url\":");
-    push_json_escaped(&mut json, url);
+    binary::push_json_string(&mut json, url);
     json.push_str(&format!(",\"port\":{port},\"pid\":{pid},\"data_dir\":"));
-    push_json_escaped(&mut json, &data_str);
+    binary::push_json_string(&mut json, &data_str);
     json.push_str(",\"started_at\":");
-    push_json_escaped(&mut json, &started_at);
+    binary::push_json_string(&mut json, &started_at);
     json.push_str("}\n");
 
     let parent = match ready_path.parent() {
@@ -100,18 +81,23 @@ pub fn write_ready_file(
         .duration_since(UNIX_EPOCH)
         .map_or(0u128, |d| d.as_nanos());
     let tmp_path = parent.join(format!(".mo-ready-{pid}-{nanos}.tmp"));
+    publish_ready_file(ready_path, &tmp_path, json.as_bytes())
+}
+
+fn publish_ready_file(ready_path: &Path, tmp_path: &Path, json: &[u8]) -> Result<(), String> {
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(tmp_path)
+        .map_err(|e| format!("{}: {e}", tmp_path.display()))?;
     let write_res = (|| -> std::io::Result<()> {
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)?;
-        f.write_all(json.as_bytes())?;
+        f.write_all(json)?;
         f.sync_all()?;
         drop(f);
-        fs::rename(&tmp_path, ready_path)
+        fs::rename(tmp_path, ready_path)
     })();
     if let Err(e) = write_res {
-        let _ = fs::remove_file(&tmp_path);
+        let _ = fs::remove_file(tmp_path);
         return Err(format!("{}: {e}", ready_path.display()));
     }
     Ok(())
@@ -130,6 +116,28 @@ impl Drop for ReadyFileGuard<'_> {
         if let Some(p) = self.0 {
             let _ = fs::remove_file(p);
         }
+    }
+}
+
+#[cfg(test)]
+mod ready_file_tests {
+    use super::*;
+
+    #[test]
+    fn temporary_file_collision_preserves_the_existing_file() -> std::io::Result<()> {
+        let dir = std::env::temp_dir().join(format!("mo-ready-collision-{}", std::process::id()));
+        fs::create_dir_all(&dir)?;
+        let ready = dir.join("ready.json");
+        let tmp = dir.join("ready.tmp");
+        fs::write(&tmp, b"other publisher")?;
+
+        let publish = publish_ready_file(&ready, &tmp, b"{}");
+        let contents = fs::read(&tmp);
+        fs::remove_dir_all(&dir)?;
+
+        assert!(publish.is_err());
+        assert_eq!(contents?, b"other publisher");
+        Ok(())
     }
 }
 

@@ -8,7 +8,7 @@ use std::path::Path;
 use mo_def::limits::{
     MO_CLI_ARGUMENT_BYTES, MO_CLI_ARGUMENT_SIZE, MO_CLI_ARGUMENTS, MO_DOOR_PLAN_INPUTS,
     MO_DOOR_PLAN_SEQUENCES, MO_LIMIT_API_WORKERS, MO_LIMIT_API_WORKERS_MAX, MO_LIMIT_CHECK_WALL_US,
-    MO_LIMIT_INSTALL_NAME, MO_LIMIT_QUERY_WORK,
+    MO_LIMIT_INSTALL_NAME, MO_LIMIT_QUERY_WORK, MO_LIMIT_TEST_JOBS,
 };
 use mo_vm::Limits;
 use thiserror::Error;
@@ -924,7 +924,7 @@ const FLAGS_TABLE: &[FlagSpec] = &[
         prefix: false,
         repeated: false,
         value: FlagValue::Count,
-        maximum: 256,
+        maximum: MO_LIMIT_TEST_JOBS,
         commands: cmd_mask(&[Command::Test]),
     },
     FlagSpec {

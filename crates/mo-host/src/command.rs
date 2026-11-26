@@ -4,7 +4,7 @@ use std::io::{ErrorKind, Read};
 #[cfg(unix)]
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 #[cfg(unix)]
-use std::os::unix::process::ExitStatusExt;
+use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::rc::Rc;
@@ -25,7 +25,7 @@ use mo_heap::{Heap, ScratchGuard, Value};
 use rustix::fs::{Access, AtFlags, CWD, FileType, OFlags, access, fcntl_setfl, fstat, statat};
 #[cfg(unix)]
 use rustix::io::fcntl_dupfd_cloexec;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
 
 use crate::HostError;
@@ -108,7 +108,7 @@ struct RealProcessCap {
     open_processes: Rc<Cell<u32>>,
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn child_exited_nowait(child: &Child) -> bool {
     if let Ok(raw) = i32::try_from(child.id())
         && let Some(pid) = Pid::from_raw(raw)
@@ -121,6 +121,11 @@ fn child_exited_nowait(child: &Child) -> bool {
             Ok(Some(_))
         );
     }
+    false
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn child_exited_nowait(_child: &Child) -> bool {
     false
 }
 
@@ -191,6 +196,13 @@ struct FakeProcessCap {
     status: i64,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
+    open_processes: Rc<Cell<u32>>,
+}
+
+impl Drop for FakeProcessCap {
+    fn drop(&mut self) {
+        self.open_processes.set(self.open_processes.get() - 1);
+    }
 }
 
 enum ProcessCap {
@@ -594,6 +606,7 @@ fn spawn_confined_child(
     prog: &str,
     cmd_args_val: &Value,
     cpu_seconds: u64,
+    require_confinement: bool,
 ) -> Result<(Child, TempDirGuard), (&'static str, String)> {
     if root.forbidden {
         let esc = root.prefix.as_deref().unwrap_or("");
@@ -662,8 +675,14 @@ fn spawn_confined_child(
         None => "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin".to_string(),
     };
     let can_confine = crate::confine::can_confine();
+    let trampoline = crate::confine::trampoline_exe();
+    if (require_confinement || root.loopback != crate::network::LoopbackAccess::Denied)
+        && (!can_confine || trampoline.is_none())
+    {
+        return Err(("spawn_failed:confinement unavailable", String::new()));
+    }
 
-    let mut cmd = if let Some(trampoline) = crate::confine::trampoline_exe() {
+    let mut cmd = if let Some(trampoline) = trampoline {
         let mut c = Command::new(trampoline);
         c.arg(crate::confine::INTERNAL_COMMAND_TRAMPOLINE_ARG)
             .arg("--dev")
@@ -709,6 +728,7 @@ fn spawn_confined_child(
     };
 
     let child = cmd
+        .process_group(0)
         .current_dir(&workdir_path)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -721,7 +741,6 @@ fn spawn_confined_child(
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .spawn()
         .map_err(|_| ("spawn_failed:fork failed", String::new()))?;
-    crate::confine::set_child_process_group(child.id());
     Ok((child, tmp_guard))
 }
 
@@ -781,7 +800,7 @@ pub(crate) fn command_fake(
 
 fn command_allow_loopback(
     heap: &Heap,
-    open_folders: &Rc<Cell<u32>>,
+    _open_folders: &Rc<Cell<u32>>,
     result_ty: u32,
     args: &[Value],
 ) -> Result<Value, HostError> {
@@ -807,6 +826,7 @@ fn command_allow_loopback(
         }
         #[cfg(unix)]
         CommandCap::Real(r) => {
+            let open_folders = _open_folders;
             if u64::from(open_folders.get()) >= MO_LIMIT_OPEN_FOLDERS {
                 return Err(HostError::Bug {
                     reason: "too many folders open at once",
@@ -1042,6 +1062,7 @@ fn command_spawn_fake(
     heap: &Heap,
     types: &TypeTable,
     fake: &FakeCommandCap,
+    open_processes: &Rc<Cell<u32>>,
     result_ty: u32,
     args: &[Value],
 ) -> Result<Value, HostError> {
@@ -1055,6 +1076,7 @@ fn command_spawn_fake(
             fake.next_pid.set(pid + 1);
             let ok_tag = find_case_tag(types, result_ty, "Ok");
             let proc_ty = types.get(result_ty).cases[ok_tag as usize].fields[0].ty;
+            open_processes.set(open_processes.get() + 1);
             let proc_cap = ProcessCap::Fake(FakeProcessCap {
                 pid,
                 alive: Cell::new(true),
@@ -1062,6 +1084,7 @@ fn command_spawn_fake(
                 status,
                 stdout,
                 stderr,
+                open_processes: Rc::clone(open_processes),
             });
             let proc_val =
                 heap.alloc_capability(Capability::Process, proc_ty, Rc::new(proc_cap))?;
@@ -1080,16 +1103,10 @@ fn command_spawn_real(
     result_ty: u32,
     args: &[Value],
 ) -> Result<Value, HostError> {
-    if u64::from(open_processes.get()) >= MO_LIMIT_OPEN_PROCESSES {
-        return Err(HostError::Bug {
-            reason: "too many processes open at once",
-            detail: None,
-        });
-    }
     let prog = args[1].as_text();
     let cpu_seconds = ((MO_LIMIT_COMMAND_DURATION_US as u64) / 1_000_000).saturating_add(1);
     let (mut child, tmp_guard) =
-        match spawn_confined_child(resolver, root, prog, &args[2], cpu_seconds) {
+        match spawn_confined_child(resolver, root, prog, &args[2], cpu_seconds, true) {
             Ok(pair) => pair,
             Err((prefix, detail)) => {
                 return command_error_tag(heap, types, result_ty, prefix, &detail);
@@ -1160,7 +1177,7 @@ fn command_run_real(
     let cpu_seconds = ((timeout_us as u64).saturating_add(999_999) / 1_000_000).saturating_add(1);
 
     let (mut child, tmp_guard) =
-        match spawn_confined_child(resolver, root, prog, &args[2], cpu_seconds) {
+        match spawn_confined_child(resolver, root, prog, &args[2], cpu_seconds, false) {
             Ok(pair) => pair,
             Err((prefix, detail)) => {
                 return command_error_tag(heap, types, result_ty, prefix, &detail);
@@ -1185,27 +1202,17 @@ fn command_run_real(
     let mut oom = false;
     let max_out = MO_LIMIT_COMMAND_OUTPUT_BYTES as usize;
 
-    while out_pipe.is_some() || err_pipe.is_some() || exit_status.is_none() {
+    let mut leader_exited = false;
+    while out_pipe.is_some() || err_pipe.is_some() || !leader_exited {
         let now = Instant::now();
         if now >= deadline {
-            if exit_status.is_none()
-                && let Ok(Some(st)) = child.try_wait()
-            {
-                exit_status = Some(st);
-            }
-            if exit_status.is_none() {
-                timed_out = true;
-                break;
-            }
+            timed_out = true;
+            break;
         }
 
         if out_pipe.is_some() || err_pipe.is_some() {
             let rem = deadline.saturating_duration_since(now);
-            let wait = if exit_status.is_some() {
-                Duration::ZERO
-            } else {
-                rem.min(Duration::from_millis(20))
-            };
+            let wait = rem.min(Duration::from_millis(20));
             let ts = rustix::event::Timespec {
                 tv_sec: i64::try_from(wait.as_secs()).unwrap_or(i64::MAX),
                 tv_nsec: i64::from(wait.subsec_nanos()),
@@ -1299,13 +1306,18 @@ fn command_run_real(
             }
         }
 
-        if exit_status.is_none() {
-            match child.try_wait() {
-                Ok(Some(st)) => exit_status = Some(st),
-                Ok(None) if out_pipe.is_none() && err_pipe.is_none() => {
-                    std::thread::sleep(Duration::from_millis(2));
-                }
-                _ => {}
+        if !leader_exited {
+            #[cfg(target_os = "linux")]
+            {
+                leader_exited = child_exited_nowait(&child);
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                exit_status = child.try_wait().ok().flatten();
+                leader_exited = exit_status.is_some();
+            }
+            if !leader_exited && out_pipe.is_none() && err_pipe.is_none() {
+                std::thread::sleep(Duration::from_millis(2));
             }
         }
     }
@@ -1525,6 +1537,12 @@ pub(crate) fn call_command(
             }
         }
         HostOpId::CommandSpawnRaw => {
+            if u64::from(open_processes.get()) >= MO_LIMIT_OPEN_PROCESSES {
+                return Err(HostError::Bug {
+                    reason: "too many processes open at once",
+                    detail: None,
+                });
+            }
             if args[2].as_list().len() as u64 > MO_LIMIT_COMMAND_ARGS {
                 return Err(HostError::Bug {
                     reason: "too many command arguments",
@@ -1533,7 +1551,9 @@ pub(crate) fn call_command(
             }
             let cap = crate::downcast_cap::<CommandCap>(&args[0], "Command capability");
             match cap {
-                CommandCap::Fake(f) => command_spawn_fake(heap, types, f, result_ty, args),
+                CommandCap::Fake(f) => {
+                    command_spawn_fake(heap, types, f, open_processes, result_ty, args)
+                }
                 #[cfg(unix)]
                 CommandCap::Real(r) => {
                     command_spawn_real(heap, types, resolver, open_processes, r, result_ty, args)

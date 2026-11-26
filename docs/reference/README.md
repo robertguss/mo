@@ -2371,7 +2371,7 @@ in-memory SQLite capability that touches
 no file. Opening the same path twice on one fake shares the same database, while
 distinct fakes share nothing, and escaping paths give
 `Error(Sqlite.OutsideFolder(path: path))` as on a real `Sqlite`. The `Sqlite`
-that `mo test` makes for a promise starts empty. In tests, examples and promises, `db.stats() : Sqlite.QueryStats` returns `Sqlite.QueryStats(query_count: Int, exec_count: Int, statements: List(Text))` counting `query` and `run`/`execute` calls on a fake `Sqlite.Database` and recording parameterized SQL statement templates without bound parameter values, and `db.reset_stats() : Unit` clears those counters.
+that `mo test` makes for a promise starts empty. In tests, examples and promises, `db.stats() : Sqlite.QueryStats` returns `Sqlite.QueryStats(query_count: Int, exec_count: Int, statements: List(Text))` counting `query` and `run`/`execute` calls on a fake `Sqlite.Database` that reach execution. It retains the first 4,096 parameterized SQL statement templates without bound parameter values. `db.reset_stats() : Unit` clears the counters and history.
 
 <!-- mo-example: fragment -->
 ```mo
@@ -2432,7 +2432,8 @@ with `Error(Command.NotPermitted(program: program))`,
 promises, `Command.fake(Command.replies(exchanges)) : Command` answers `(Spec, Output)`
 pairs built with `Command.spec(program: Text, args: List(Text)) : Spec` and
 `spec.in_folder(folder: Text) : Spec` without spawning a process (for both `run` and `spawn`); the `Command`
-that `mo test` makes for a promise starts with no replies.
+that `mo test` makes for a promise starts with no replies. Real `spawn` and commands with enabled loopback access require Linux confinement and return
+`Command.SpawnFailed` when it is unavailable.
 
 <!-- mo-example: fragment -->
 ```mo

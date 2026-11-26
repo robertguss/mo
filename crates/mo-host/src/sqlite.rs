@@ -12,7 +12,7 @@ use mo_bytecode::{Capability, TypeKind};
 use mo_def::HostOpId;
 use mo_def::limits::{
     MO_LIMIT_HOST_PATH_SIZE, MO_LIMIT_OPEN_DATABASES, MO_LIMIT_OPEN_FOLDERS, MO_LIMIT_SQL_BYTES,
-    MO_LIMIT_SQL_PARAMETERS, MO_LIMIT_VALUE_BYTES,
+    MO_LIMIT_SQL_PARAMETERS, MO_LIMIT_SQL_STATS_STATEMENTS, MO_LIMIT_VALUE_BYTES,
 };
 use mo_heap::{Heap, Value};
 use rusqlite::config::DbConfig;
@@ -55,7 +55,7 @@ impl Drop for RealSqliteRoot {
 struct FakeQueryStats {
     query_count: i64,
     exec_count: i64,
-    statements: Vec<String>,
+    statements: VecDeque<Value>,
 }
 
 struct FakeSqliteEntry {
@@ -1242,7 +1242,9 @@ fn exec_sql(
             } else {
                 st.exec_count = st.exec_count.saturating_add(1);
             }
-            st.statements.push(sql.to_string());
+            if st.statements.len() < MO_LIMIT_SQL_STATS_STATEMENTS as usize {
+                st.statements.push_back(args[1].clone());
+            }
         }
 
         auth.in_step.store(true, Ordering::Relaxed);
@@ -1469,11 +1471,7 @@ pub(crate) fn call_sqlite(
                 });
             };
             let st = stats.borrow();
-            let mut stmts = VecDeque::with_capacity(st.statements.len());
-            for s in &st.statements {
-                stmts.push_back(heap.alloc_text(s.clone())?);
-            }
-            let stmts_val = heap.alloc_list(stmts)?;
+            let stmts_val = heap.alloc_list(st.statements.clone())?;
             #[expect(
                 clippy::expect_used,
                 reason = "verified bytecode guarantees tuple layout for Sqlite.stats_raw"

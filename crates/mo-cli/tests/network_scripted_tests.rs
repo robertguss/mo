@@ -145,6 +145,18 @@ test "ordered faults, truncation, allow_hosts narrowing, and recorded_calls"
   )
   assert Http.get("http://legacy.example.org/ping").send(static_net) == Ok(Http.reply(200, "pong"))
   assert Network.recorded_calls(static_net).size == 1
+
+  ipv6_net = Network.fake_scripted([
+    ("GET", "http://[::1]:8080/status", [Network.Respond(response: Http.reply(200, "ipv6"))])
+  ])
+  ipv6_conn = case ipv6_net.connect("::1", 8080, 5.seconds)
+    Ok(c): c
+    Error(_): stop "ipv6 connect"
+  end
+  assert ipv6_conn.send("GET /status HTTP/1.1\r\n\r\n".bytes) == Ok(Unit)
+  assert ipv6_conn.receive(4096) is Ok(ipv6_reply)
+  assert ipv6_reply.decode_utf8 is Some(ipv6_text) and ipv6_text.contains?("ipv6")
+  assert ipv6_net.recorded_calls().get(0) is Some(call) and call.url == "http://[::1]:8080/status"
 end
 "##,
     )?;

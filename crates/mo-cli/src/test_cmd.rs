@@ -9,6 +9,7 @@ use mo_check::{CheckedProgram, LibraryMode, LoadOptions, check_program, load_bun
 use mo_def::ErrorCode;
 use mo_def::limits::{
     MO_CLI_CHECK_SIZE, MO_LIMIT_BUNDLE_BYTES, MO_LIMIT_BUNDLE_FILES, MO_LIMIT_BUNDLE_PATH_BYTES,
+    MO_LIMIT_TEST_JOBS,
 };
 use mo_test::{TestConfig, TestSelection, TestTotals};
 
@@ -20,7 +21,9 @@ use crate::identity::MO_VERSION;
 #[must_use]
 pub fn test_config_from_cli(cli: &Cli) -> TestConfig {
     let jobs = if cli.jobs == 0 {
-        std::thread::available_parallelism().map_or(1, usize::from)
+        std::thread::available_parallelism()
+            .map_or(1, usize::from)
+            .min(MO_LIMIT_TEST_JOBS as usize)
     } else {
         cli.jobs as usize
     };

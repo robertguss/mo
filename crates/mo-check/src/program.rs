@@ -2,6 +2,8 @@
 //! `main` entry contract (`E0079`/`E0080`), and unused-import audit (`E0093`)
 //! (`src/check/program.c` parity).
 
+use std::collections::HashMap;
+
 use mo_base::{DiagBag, Diagnostic, SourceMap, Span};
 use mo_def::ErrorCode;
 use mo_def::limits::{MO_LIMIT_DIAGNOSTICS, MO_LIMIT_PROGRAM_CHECK_WORK};
@@ -55,8 +57,6 @@ fn check_sqlite_stats_reachability(
     entry_func: Option<CheckedFuncId>,
     diags: &mut DiagBag,
 ) -> bool {
-    use std::collections::HashMap;
-
     let sym_to_func: HashMap<SymRef, usize> = functions
         .iter()
         .enumerate()
@@ -139,56 +139,38 @@ fn check_sqlite_stats_reachability(
         );
     }
 
-    loop {
-        let mut changed = false;
-        for i in 0..fn_count {
-            if fn_reaches[i].is_some() {
-                continue;
-            }
-            for &(callee, span) in &fn_edges[i] {
-                if fn_reaches[callee].is_some() {
-                    fn_reaches[i] = Some(span);
-                    changed = true;
-                    break;
-                }
-            }
-            if fn_reaches[i].is_some() {
-                continue;
-            }
-            for &(c_idx, span) in &fn_const_edges[i] {
-                if const_reaches[c_idx].is_some() {
-                    fn_reaches[i] = Some(span);
-                    changed = true;
-                    break;
-                }
-            }
+    let mut callers = vec![Vec::new(); fn_count + const_count];
+    for (caller, (fn_refs, const_refs)) in fn_edges
+        .into_iter()
+        .chain(const_fn_edges)
+        .zip(fn_const_edges.into_iter().chain(const_const_edges))
+        .enumerate()
+    {
+        for (callee, span) in fn_refs {
+            callers[callee].push((caller, span));
         }
-        for i in 0..const_count {
-            if const_reaches[i].is_some() {
-                continue;
-            }
-            for &(callee, span) in &const_fn_edges[i] {
-                if fn_reaches[callee].is_some() {
-                    const_reaches[i] = Some(span);
-                    changed = true;
-                    break;
-                }
-            }
-            if const_reaches[i].is_some() {
-                continue;
-            }
-            for &(c_idx, span) in &const_const_edges[i] {
-                if const_reaches[c_idx].is_some() {
-                    const_reaches[i] = Some(span);
-                    changed = true;
-                    break;
-                }
-            }
-        }
-        if !changed {
-            break;
+        for (callee, span) in const_refs {
+            callers[fn_count + callee].push((caller, span));
         }
     }
+    let mut reaches = fn_reaches;
+    reaches.extend(const_reaches);
+    let mut pending: Vec<_> = reaches
+        .iter()
+        .enumerate()
+        .filter_map(|(i, span)| span.map(|_| i))
+        .collect();
+    let mut next = 0;
+    while let Some(&callee) = pending.get(next) {
+        next += 1;
+        for &(caller, span) in &callers[callee] {
+            if reaches[caller].is_none() {
+                reaches[caller] = Some(span);
+                pending.push(caller);
+            }
+        }
+    }
+    let (fn_reaches, const_reaches) = reaches.split_at(fn_count);
 
     let report_violation = |diags: &mut DiagBag, span: Span| -> bool {
         let _ = report(
@@ -217,6 +199,11 @@ fn check_sqlite_stats_reachability(
         }
         for route in &api.routes {
             if let Some(span) = fn_reaches[route.function.index()] {
+                return report_violation(diags, span);
+            }
+        }
+        for job in &api.jobs {
+            if let Some(span) = fn_reaches[job.function.index()] {
                 return report_violation(diags, span);
             }
         }

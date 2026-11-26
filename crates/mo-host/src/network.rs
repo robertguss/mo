@@ -29,7 +29,6 @@ struct TargetRule {
     port: u16, // 0 = any port 1..=65535
 }
 
-#[derive(Clone, Debug)]
 struct RecordedCallEntry {
     method: String,
     url: String,
@@ -37,8 +36,16 @@ struct RecordedCallEntry {
     body: Vec<u8>,
 }
 
+#[derive(Clone)]
+struct RecordedCall {
+    method: Value,
+    url: Value,
+    headers: Vec<(Value, Value)>,
+    body: Value,
+}
+
 enum ScriptedReply {
-    Respond(Vec<u8>),
+    Respond(Value),
     Fail(Value),
     TruncateAfter(i64),
 }
@@ -52,7 +59,7 @@ struct ScriptEntry {
 
 struct FakeScriptedState {
     scripts: Vec<ScriptEntry>,
-    recorded: Vec<RecordedCallEntry>,
+    recorded: Vec<RecordedCall>,
 }
 
 enum NetworkCap {
@@ -61,7 +68,7 @@ enum NetworkCap {
     },
     Fake {
         peers: Value, // Map(Text, Map(Bytes, Bytes))
-        recorded: Rc<RefCell<Vec<RecordedCallEntry>>>,
+        recorded: Rc<RefCell<Vec<RecordedCall>>>,
         allowed: Option<Vec<TargetRule>>,
     },
     FakeScripted {
@@ -103,7 +110,7 @@ impl Drop for RealConnection {
 
 struct FakeConnection {
     replies: Value, // Map(Bytes, Bytes)
-    recorded: Rc<RefCell<Vec<RecordedCallEntry>>>,
+    recorded: Rc<RefCell<Vec<RecordedCall>>>,
     secure: bool,
     host: String,
     port: u16,
@@ -114,7 +121,8 @@ struct FakeConnection {
 
 enum ActiveScriptedReply {
     Pending,
-    Bytes { wire: Vec<u8>, pos: usize },
+    Closed,
+    Bytes { wire: Value, pos: usize },
 }
 
 struct ScriptedConnection {
@@ -1097,10 +1105,15 @@ fn parse_sent_http_request(
     port: u16,
 ) -> (RecordedCallEntry, String) {
     let scheme = if secure { "https" } else { "http" };
-    let default_auth = if (secure && port == 443) || (!secure && port == 80) {
-        default_host.to_string()
+    let host = if default_host.parse::<std::net::Ipv6Addr>().is_ok() {
+        format!("[{default_host}]")
     } else {
-        format!("{default_host}:{port}")
+        default_host.to_string()
+    };
+    let default_auth = if (secure && port == 443) || (!secure && port == 80) {
+        host
+    } else {
+        format!("{host}:{port}")
     };
     let Some(cut) = sent.windows(4).position(|w| w == b"\r\n\r\n") else {
         let url = format!("{scheme}://{default_auth}/");
@@ -1185,10 +1198,9 @@ pub(crate) fn network_fake_scripted(
         for reply_tup in replies_val.as_list().iter() {
             let kind = heap.extract_field(reply_tup, 0).as_int();
             let count = heap.extract_field(reply_tup, 1).as_int();
-            let bytes = heap.extract_field(reply_tup, 2).as_bytes().to_vec();
             let err_val = heap.extract_field(reply_tup, 3);
             let item = match kind {
-                0 => ScriptedReply::Respond(bytes),
+                0 => ScriptedReply::Respond(heap.extract_field(reply_tup, 2)),
                 1 => ScriptedReply::Fail(err_val),
                 _ => ScriptedReply::TruncateAfter(count),
             };
@@ -1215,10 +1227,24 @@ pub(crate) fn network_fake_scripted(
     )?)
 }
 
-fn push_recorded_call(recorded: &mut Vec<RecordedCallEntry>, entry: RecordedCallEntry) {
+fn push_recorded_call(
+    heap: &Heap,
+    recorded: &mut Vec<RecordedCall>,
+    entry: RecordedCallEntry,
+) -> Result<(), HostError> {
     if recorded.len() < MO_LIMIT_RECORDED_CALLS as usize {
-        recorded.push(entry);
+        let mut headers = Vec::with_capacity(entry.headers.len());
+        for (key, value) in entry.headers {
+            headers.push((heap.alloc_text(key)?, heap.alloc_text(value)?));
+        }
+        recorded.push(RecordedCall {
+            method: heap.alloc_text(entry.method)?,
+            url: heap.alloc_text(entry.url)?,
+            headers,
+            body: heap.alloc_bytes(entry.body)?,
+        });
     }
+    Ok(())
 }
 
 fn scripted_url_matches(entry_url: &str, entry_path: &str, url_prefix: &str) -> bool {
@@ -1253,7 +1279,7 @@ pub(crate) fn call_network(
     match op {
         HostOpId::NetworkRecordedCalls => {
             let net = crate::downcast_cap::<NetworkCap>(&args[0], "Network capability");
-            let entries: Vec<RecordedCallEntry> = match net {
+            let entries = match net {
                 NetworkCap::Real { .. } => {
                     return Err(HostError::Bug {
                         reason: "network observation needs a fake",
@@ -1283,20 +1309,15 @@ pub(crate) fn call_network(
 
             let mut out = VecDeque::with_capacity(entries.len());
             for entry in entries {
-                let method_val = heap.alloc_text(entry.method)?;
-                let url_val = heap.alloc_text(entry.url)?;
                 let mut hdr_items = VecDeque::with_capacity(entry.headers.len());
                 for (k, v) in entry.headers {
-                    let kv = heap.alloc_text(k)?;
-                    let vv = heap.alloc_text(v)?;
-                    hdr_items.push_back(heap.construct(types, pair_tup_layout, vec![kv, vv])?);
+                    hdr_items.push_back(heap.construct(types, pair_tup_layout, vec![k, v])?);
                 }
                 let hdrs_val = heap.alloc_list(hdr_items)?;
-                let body_val = heap.alloc_bytes(entry.body)?;
                 let tup = heap.construct(
                     types,
                     outer_tup_layout,
-                    vec![method_val, url_val, hdrs_val, body_val],
+                    vec![entry.method, entry.url, hdrs_val, entry.body],
                 )?;
                 out.push_back(tup);
             }
@@ -1602,7 +1623,7 @@ pub(crate) fn call_network(
                         fake.recorded_yet = true;
                         let (entry, _) =
                             parse_sent_http_request(&fake.sent, fake.secure, &fake.host, fake.port);
-                        push_recorded_call(&mut fake.recorded.borrow_mut(), entry);
+                        push_recorded_call(heap, &mut fake.recorded.borrow_mut(), entry)?;
                     }
                     let pos = if fake.position < 0 { 0 } else { fake.position };
                     let sent_val = heap.alloc_bytes(fake.sent.clone())?;
@@ -1644,17 +1665,14 @@ pub(crate) fn call_network(
                             scripted.port,
                         );
                         let mut state_mut = scripted.state.borrow_mut();
-                        push_recorded_call(&mut state_mut.recorded, entry.clone());
                         let matched_idx = state_mut.scripts.iter().position(|s| {
                             (s.method == "*" || s.method.eq_ignore_ascii_case(&entry.method))
                                 && scripted_url_matches(&entry.url, &path, &s.url_prefix)
                         });
+                        push_recorded_call(heap, &mut state_mut.recorded, entry)?;
                         let Some(sidx) = matched_idx else {
                             drop(state_mut);
-                            scripted.active = ActiveScriptedReply::Bytes {
-                                wire: Vec::new(),
-                                pos: 0,
-                            };
+                            scripted.active = ActiveScriptedReply::Closed;
                             let host_val = scripted.host_val.clone();
                             let port = i64::from(scripted.port);
                             return make_network_error(
@@ -1668,10 +1686,7 @@ pub(crate) fn call_network(
                         };
                         if state_mut.scripts[sidx].replies.is_empty() {
                             drop(state_mut);
-                            scripted.active = ActiveScriptedReply::Bytes {
-                                wire: Vec::new(),
-                                pos: 0,
-                            };
+                            scripted.active = ActiveScriptedReply::Closed;
                             let host_val = scripted.host_val.clone();
                             let port = i64::from(scripted.port);
                             return make_network_error(
@@ -1695,10 +1710,7 @@ pub(crate) fn call_network(
                             ScriptedReply::Fail(err_val) => {
                                 let cloned_err = err_val.clone();
                                 drop(state_mut);
-                                scripted.active = ActiveScriptedReply::Bytes {
-                                    wire: Vec::new(),
-                                    pos: 0,
-                                };
+                                scripted.active = ActiveScriptedReply::Closed;
                                 let err_tag = find_case_tag(types, result_ty, "Error");
                                 return Ok(heap.make_case(
                                     types,
@@ -1722,16 +1734,26 @@ pub(crate) fn call_network(
                                 .into_bytes();
                                 wire.resize(wire.len() + prefix_len, b'x');
                                 drop(state_mut);
-                                scripted.active = ActiveScriptedReply::Bytes { wire, pos: 0 };
+                                scripted.active = ActiveScriptedReply::Bytes {
+                                    wire: heap.alloc_bytes(wire)?,
+                                    pos: 0,
+                                };
                             }
                         }
                     }
-                    let ActiveScriptedReply::Bytes { wire, pos } = &mut scripted.active else {
-                        unreachable!("scripted reply resolved above");
+                    let chunk = match &mut scripted.active {
+                        ActiveScriptedReply::Bytes { wire, pos } => {
+                            let wire = wire.as_bytes();
+                            let left = wire.len().saturating_sub(*pos).min(most_usize);
+                            let chunk = wire[*pos..*pos + left].to_vec();
+                            *pos += left;
+                            chunk
+                        }
+                        ActiveScriptedReply::Closed => Vec::new(),
+                        ActiveScriptedReply::Pending => {
+                            unreachable!("scripted reply resolved above")
+                        }
                     };
-                    let left = wire.len().saturating_sub(*pos).min(most_usize);
-                    let chunk = wire[*pos..*pos + left].to_vec();
-                    *pos += left;
                     let val = heap.alloc_bytes(chunk)?;
                     make_network_ok(heap, types, result_ty, val)
                 }
