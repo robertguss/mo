@@ -16,6 +16,7 @@ use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use mo_bytecode::types::TypeTable;
 use mo_bytecode::{BigIntSign, Capability, CaseShape, LayoutKind, NO_INDEX};
@@ -33,84 +34,86 @@ pub enum HeapError {
     OutOfMemory,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct BudgetInner {
-    used: Cell<usize>,
-    peak: Cell<usize>,
-    limit: Cell<usize>,
-    scratch_used: Cell<usize>,
-    scratch_peak: Cell<usize>,
+    used: usize,
+    peak: usize,
+    limit: usize,
+    scratch_used: usize,
+    scratch_peak: usize,
 }
 
 #[derive(Clone, Debug)]
 pub struct HeapBudget {
-    inner: Rc<BudgetInner>,
+    inner: Arc<Mutex<BudgetInner>>,
 }
 
 impl HeapBudget {
     pub fn new(limit: usize) -> Self {
         Self {
-            inner: Rc::new(BudgetInner {
-                used: Cell::new(0),
-                peak: Cell::new(0),
-                limit: Cell::new(limit),
-                scratch_used: Cell::new(0),
-                scratch_peak: Cell::new(0),
-            }),
+            inner: Arc::new(Mutex::new(BudgetInner {
+                limit,
+                ..BudgetInner::default()
+            })),
         }
     }
 
+    fn lock(&self) -> MutexGuard<'_, BudgetInner> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     pub fn used(&self) -> usize {
-        self.inner.used.get()
+        self.lock().used
     }
 
     pub fn peak(&self) -> usize {
-        self.inner.peak.get()
+        self.lock().peak
     }
 
     pub fn limit(&self) -> usize {
-        self.inner.limit.get()
+        self.lock().limit
     }
 
     /// Updates the heap byte limit in place (used to temporarily scope decode/request budgets).
     pub fn set_limit(&self, limit: usize) {
-        self.inner.limit.set(limit);
+        self.lock().limit = limit;
     }
 
     /// Returns currently charged temporary scratch bytes.
     pub fn scratch_used(&self) -> usize {
-        self.inner.scratch_used.get()
+        self.lock().scratch_used
     }
 
     /// Returns peak temporary scratch bytes charged against this budget.
     pub fn scratch_peak(&self) -> usize {
-        self.inner.scratch_peak.get()
+        self.lock().scratch_peak
     }
 
     pub fn charge(&self, bytes: usize) -> Result<(), HeapError> {
-        let cur = self.inner.used.get();
-        let next = cur.checked_add(bytes).ok_or(HeapError::OutOfMemory)?;
-        if next > self.inner.limit.get() {
+        let mut budget = self.lock();
+        let next = budget
+            .used
+            .checked_add(bytes)
+            .ok_or(HeapError::OutOfMemory)?;
+        if next > budget.limit {
             return Err(HeapError::OutOfMemory);
         }
-        self.inner.used.set(next);
-        if next > self.inner.peak.get() {
-            self.inner.peak.set(next);
-        }
+        budget.used = next;
+        budget.peak = budget.peak.max(next);
         Ok(())
     }
 
     pub fn release(&self, bytes: usize) {
-        let cur = self.inner.used.get();
-        self.inner.used.set(cur.saturating_sub(bytes));
+        let mut budget = self.lock();
+        budget.used = budget.used.saturating_sub(bytes);
     }
 
     pub fn can_charge(&self, bytes: usize) -> bool {
-        self.inner
+        let budget = self.lock();
+        budget
             .used
-            .get()
             .checked_add(bytes)
-            .is_some_and(|next| next <= self.inner.limit.get())
+            .is_some_and(|next| next <= budget.limit)
     }
 }
 
@@ -132,11 +135,9 @@ impl<'a> ScratchGuard<'a> {
         }
         self.budget.charge(bytes)?;
         self.charged = self.charged.saturating_add(bytes);
-        let next_scratch = self.budget.inner.scratch_used.get().saturating_add(bytes);
-        self.budget.inner.scratch_used.set(next_scratch);
-        if next_scratch > self.budget.inner.scratch_peak.get() {
-            self.budget.inner.scratch_peak.set(next_scratch);
-        }
+        let mut budget = self.budget.lock();
+        budget.scratch_used = budget.scratch_used.saturating_add(bytes);
+        budget.scratch_peak = budget.scratch_peak.max(budget.scratch_used);
         Ok(())
     }
 
@@ -144,11 +145,8 @@ impl<'a> ScratchGuard<'a> {
         let n = bytes.min(self.charged);
         if n != 0 {
             self.budget.release(n);
-            let cur_scratch = self.budget.inner.scratch_used.get();
-            self.budget
-                .inner
-                .scratch_used
-                .set(cur_scratch.saturating_sub(n));
+            let mut budget = self.budget.lock();
+            budget.scratch_used = budget.scratch_used.saturating_sub(n);
             self.charged -= n;
         }
     }
@@ -160,15 +158,48 @@ impl<'a> ScratchGuard<'a> {
 
 impl Drop for ScratchGuard<'_> {
     fn drop(&mut self) {
-        if self.charged != 0 {
-            let n = self.charged;
-            self.budget.release(n);
-            let cur_scratch = self.budget.inner.scratch_used.get();
-            self.budget
-                .inner
-                .scratch_used
-                .set(cur_scratch.saturating_sub(n));
-            self.charged = 0;
+        self.release(self.charged);
+    }
+}
+
+/// Bytes charged as they arrive, transferable to a heap value without copying or double charging.
+pub struct ChargedBytes {
+    budget: HeapBudget,
+    bytes: Vec<u8>,
+}
+
+impl ChargedBytes {
+    pub fn new(budget: HeapBudget) -> Self {
+        Self {
+            budget,
+            bytes: Vec::new(),
+        }
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn extend(&mut self, bytes: &[u8]) -> Result<(), HeapError> {
+        self.budget.charge(bytes.len())?;
+        self.bytes.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    pub fn into_value(mut self) -> Result<Value, HeapError> {
+        let total = OBJECT_OVERHEAD
+            .checked_add(self.bytes.len())
+            .ok_or(HeapError::OutOfMemory)?;
+        self.budget.charge(OBJECT_OVERHEAD)?;
+        let obj = HeapObj::Bytes(std::mem::take(&mut self.bytes));
+        Ok(Value::Ref(heap_node(&self.budget, total, obj)))
+    }
+}
+
+impl Drop for ChargedBytes {
+    fn drop(&mut self) {
+        if !self.bytes.is_empty() {
+            self.budget.release(self.bytes.len());
         }
     }
 }
@@ -215,8 +246,18 @@ pub struct HeapNode {
     immortal: Cell<bool>,
     hash_cache: Cell<Option<u64>>,
     charged_bytes: Cell<usize>,
-    budget: Rc<BudgetInner>,
+    budget: HeapBudget,
     obj: HeapObj,
+}
+
+fn heap_node(budget: &HeapBudget, total: usize, obj: HeapObj) -> HeapRef {
+    HeapRef(Rc::new(HeapNode {
+        immortal: Cell::new(false),
+        hash_cache: Cell::new(None),
+        charged_bytes: Cell::new(total),
+        budget: budget.clone(),
+        obj,
+    }))
 }
 
 // Iterative drop guard prevents stack overflow when dropping deeply nested linked lists/trees.
@@ -227,9 +268,7 @@ thread_local! {
 impl Drop for HeapNode {
     fn drop(&mut self) {
         if !self.immortal.get() {
-            let b = self.charged_bytes.get();
-            let cur = self.budget.used.get();
-            self.budget.used.set(cur.saturating_sub(b));
+            self.budget.release(self.charged_bytes.get());
         }
 
         let mut children = Vec::new();
@@ -337,20 +376,9 @@ impl HeapRef {
     pub fn update_charge(&self, new_bytes: usize) -> Result<(), HeapError> {
         let old = self.0.charged_bytes.get();
         if new_bytes > old {
-            let diff = new_bytes - old;
-            let cur = self.0.budget.used.get();
-            let next = cur.checked_add(diff).ok_or(HeapError::OutOfMemory)?;
-            if next > self.0.budget.limit.get() {
-                return Err(HeapError::OutOfMemory);
-            }
-            self.0.budget.used.set(next);
-            if next > self.0.budget.peak.get() {
-                self.0.budget.peak.set(next);
-            }
+            self.0.budget.charge(new_bytes - old)?;
         } else {
-            let diff = old - new_bytes;
-            let cur = self.0.budget.used.get();
-            self.0.budget.used.set(cur.saturating_sub(diff));
+            self.0.budget.release(old - new_bytes);
         }
         self.0.charged_bytes.set(new_bytes);
         Ok(())
@@ -583,13 +611,7 @@ impl Heap {
             .checked_add(payload_bytes)
             .ok_or(HeapError::OutOfMemory)?;
         self.budget.charge(total)?;
-        Ok(HeapRef(Rc::new(HeapNode {
-            immortal: Cell::new(false),
-            hash_cache: Cell::new(None),
-            charged_bytes: Cell::new(total),
-            budget: Rc::clone(&self.budget.inner),
-            obj,
-        })))
+        Ok(heap_node(&self.budget, total, obj))
     }
 
     pub fn alloc_text(&self, s: String) -> Result<Value, HeapError> {

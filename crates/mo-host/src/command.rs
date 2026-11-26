@@ -20,6 +20,8 @@ use mo_def::limits::{
     MO_LIMIT_COMMAND_MEMORY, MO_LIMIT_COMMAND_OUTPUT_BYTES, MO_LIMIT_HOST_PATH_SIZE,
     MO_LIMIT_OPEN_FOLDERS, MO_LIMIT_OPEN_PROCESSES, MO_LIMIT_VALUE_BYTES,
 };
+#[cfg(unix)]
+use mo_heap::{ChargedBytes, HeapBudget, HeapError};
 use mo_heap::{Heap, ScratchGuard, Value};
 #[cfg(unix)]
 use rustix::fs::{Access, AtFlags, CWD, FileType, OFlags, access, fcntl_setfl, fstat, statat};
@@ -69,7 +71,7 @@ enum CommandCap {
 }
 
 #[cfg(unix)]
-type CapturedProcessOutput = Result<(i64, Vec<u8>, Vec<u8>), &'static str>;
+type CapturedProcessOutput = Result<Value, &'static str>;
 
 pub(crate) struct CommandCounters<'a> {
     pub open_folders: &'a Rc<Cell<u32>>,
@@ -78,9 +80,14 @@ pub(crate) struct CommandCounters<'a> {
 
 #[cfg(unix)]
 struct PipeDrainInner {
-    buf: Vec<u8>,
-    too_large: bool,
-    done: bool,
+    output: Option<Result<ChargedBytes, PipeError>>,
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+enum PipeError {
+    TooLarge,
+    Heap,
 }
 
 #[cfg(unix)]
@@ -143,16 +150,16 @@ fn reap_and_kill_tree(st: &mut RealProcessState) {
 fn take_drainer_bounded(
     drainer_opt: &mut Option<PipeDrainer>,
     budget: Duration,
-) -> (Vec<u8>, bool) {
+) -> Result<Option<ChargedBytes>, PipeError> {
     let Some(mut d) = drainer_opt.take() else {
-        return (Vec::new(), false);
+        return Ok(None);
     };
     let (lock, cv) = &*d.shared;
     let deadline = Instant::now() + budget;
     let mut inner = lock
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    while !inner.done {
+    while inner.output.is_none() {
         let now = Instant::now();
         if now >= deadline {
             break;
@@ -162,18 +169,18 @@ fn take_drainer_bounded(
             .wait_timeout(inner, rem)
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         inner = guard;
-        if !inner.done && wait_res.timed_out() {
+        if inner.output.is_none() && wait_res.timed_out() {
             break;
         }
     }
-    let buf = std::mem::take(&mut inner.buf);
-    let too_large = inner.too_large;
-    let is_done = inner.done;
+    let output = inner.output.take();
     drop(inner);
-    if is_done && let Some(h) = d.handle.take() {
+    if output.is_some()
+        && let Some(h) = d.handle.take()
+    {
         let _ = h.join();
     }
-    (buf, too_large)
+    output.transpose()
 }
 
 #[cfg(unix)]
@@ -274,10 +281,21 @@ fn command_ok_tuple(
     stdout_bytes: Vec<u8>,
     stderr_bytes: Vec<u8>,
 ) -> Result<Value, HostError> {
+    let stdout = heap.alloc_bytes(stdout_bytes)?;
+    let stderr = heap.alloc_bytes(stderr_bytes)?;
+    command_ok_output(heap, types, result_ty, status, stdout, stderr)
+}
+
+fn command_ok_output(
+    heap: &Heap,
+    types: &TypeTable,
+    result_ty: u32,
+    status: i64,
+    stdout: Value,
+    stderr: Value,
+) -> Result<Value, HostError> {
     let ok_tag = find_case_tag(types, result_ty, "Ok");
     let tup_ty = types.get(result_ty).cases[ok_tag as usize].fields[0].ty;
-    let out_val = heap.alloc_bytes(stdout_bytes)?;
-    let err_val = heap.alloc_bytes(stderr_bytes)?;
     #[expect(
         clippy::expect_used,
         reason = "verified bytecode guarantees tuple layout exists"
@@ -285,7 +303,7 @@ fn command_ok_tuple(
     let layout = types
         .find_tuple_layout(tup_ty)
         .expect("tuple layout for Command output");
-    let tup = heap.construct(types, layout, vec![Value::Int(status), out_val, err_val])?;
+    let tup = heap.construct(types, layout, vec![Value::Int(status), stdout, stderr])?;
     Ok(heap.make_case(types, result_ty, ok_tag, vec![tup])?)
 }
 
@@ -545,35 +563,30 @@ fn make_temp_dir() -> Option<TempDirGuard> {
 }
 
 #[cfg(unix)]
-fn spawn_pipe_drainer<R: Read + Send + 'static>(pipe: R) -> Result<PipeDrainer, &'static str> {
+fn spawn_pipe_drainer<R: Read + Send + 'static>(
+    pipe: R,
+    budget: HeapBudget,
+) -> Result<PipeDrainer, &'static str> {
     let mut pipe = pipe;
     let max_out = MO_LIMIT_COMMAND_OUTPUT_BYTES as usize;
-    let shared = Arc::new((
-        Mutex::new(PipeDrainInner {
-            buf: Vec::new(),
-            too_large: false,
-            done: false,
-        }),
-        Condvar::new(),
-    ));
+    let shared = Arc::new((Mutex::new(PipeDrainInner { output: None }), Condvar::new()));
     let worker_shared = Arc::clone(&shared);
     let builder = std::thread::Builder::new()
         .name("mo-cmd-pipe".to_string())
         .stack_size(256 * 1024);
     let task = move || {
-        let mut buf = Vec::new();
-        let mut too_large = false;
+        let mut output = Ok(ChargedBytes::new(budget));
         let mut chunk = [0u8; 8192];
         loop {
             match pipe.read(&mut chunk) {
                 Ok(0) => break,
                 Ok(n) => {
-                    if !too_large {
-                        if n > max_out - buf.len() {
-                            too_large = true;
-                            buf.clear();
-                        } else {
-                            buf.extend_from_slice(&chunk[..n]);
+                    if let Ok(buf) = &mut output {
+                        if n > max_out - buf.as_slice().len() {
+                            output = Err(PipeError::TooLarge);
+                        } else if buf.extend(&chunk[..n]).is_err() {
+                            output = Err(PipeError::Heap);
+                            break;
                         }
                     }
                 }
@@ -585,9 +598,7 @@ fn spawn_pipe_drainer<R: Read + Send + 'static>(pipe: R) -> Result<PipeDrainer, 
         let mut inner = lock
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        inner.buf = buf;
-        inner.too_large = too_large;
-        inner.done = true;
+        inner.output = Some(output);
         cv.notify_all();
     };
     let handle = builder
@@ -1116,7 +1127,7 @@ fn command_spawn_real(
     let raw_pid = child.id();
     let pid = i64::from(raw_pid);
     let out_reader = match child.stdout.take() {
-        Some(p) => match spawn_pipe_drainer(p) {
+        Some(p) => match spawn_pipe_drainer(p, heap.budget().clone()) {
             Ok(d) => Some(d),
             Err(tag) => {
                 crate::confine::kill_child_tree(raw_pid);
@@ -1128,7 +1139,7 @@ fn command_spawn_real(
         None => None,
     };
     let err_reader = match child.stderr.take() {
-        Some(p) => match spawn_pipe_drainer(p) {
+        Some(p) => match spawn_pipe_drainer(p, heap.budget().clone()) {
             Ok(d) => Some(d),
             Err(tag) => {
                 crate::confine::kill_child_tree(raw_pid);
@@ -1369,15 +1380,19 @@ fn command_run_real(
 }
 
 #[cfg(unix)]
-fn drainer_done(drainer: &Option<PipeDrainer>) -> bool {
+fn drainer_status(drainer: &Option<PipeDrainer>) -> (bool, bool) {
     let Some(d) = drainer else {
-        return true;
+        return (true, false);
     };
-    d.shared
+    let inner = d
+        .shared
         .0
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .done
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    (
+        inner.output.is_some(),
+        matches!(inner.output, Some(Err(PipeError::Heap))),
+    )
 }
 
 #[cfg(unix)]
@@ -1389,7 +1404,7 @@ fn wait_drainer_briefly(drainer: &Option<PipeDrainer>, step: Duration) {
     let guard = lock
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if !guard.done {
+    if guard.output.is_none() {
         let _ = cv.wait_timeout(guard, step);
     }
 }
@@ -1405,9 +1420,7 @@ fn process_wait_real(
     let mut st = proc_cap.state.borrow_mut();
     if let Some(ref cached) = st.captured {
         return match cached {
-            Ok((code, out_b, err_b)) => {
-                command_ok_tuple(heap, types, result_ty, *code, out_b.clone(), err_b.clone())
-            }
+            Ok(value) => Ok(value.clone()),
             Err(tag) => command_error_tag(heap, types, result_ty, tag, ""),
         };
     }
@@ -1416,9 +1429,9 @@ fn process_wait_real(
     let mut timed_out = false;
     loop {
         let exited = st.reaped || child_exited_nowait(&st.child);
-        let out_done = drainer_done(&st.out_reader);
-        let err_done = drainer_done(&st.err_reader);
-        if exited && out_done && err_done {
+        let (out_done, out_oom) = drainer_status(&st.out_reader);
+        let (err_done, err_oom) = drainer_status(&st.err_reader);
+        if out_oom || err_oom || (exited && out_done && err_done) {
             break;
         }
         let now = Instant::now();
@@ -1438,17 +1451,20 @@ fn process_wait_real(
 
     reap_and_kill_tree(&mut st);
 
-    let (out_buf, out_large) = take_drainer_bounded(&mut st.out_reader, Duration::from_millis(250));
-    let (err_buf, err_large) = take_drainer_bounded(&mut st.err_reader, Duration::from_millis(250));
+    let stdout = take_drainer_bounded(&mut st.out_reader, Duration::from_millis(250));
+    let stderr = take_drainer_bounded(&mut st.err_reader, Duration::from_millis(250));
+    if matches!(stdout, Err(PipeError::Heap)) || matches!(stderr, Err(PipeError::Heap)) {
+        return Err(HeapError::OutOfMemory.into());
+    }
 
     if timed_out {
         st.captured = Some(Err("timed_out"));
         return command_error_tag(heap, types, result_ty, "timed_out", "");
     }
-    if out_large || err_large {
+    let (Ok(stdout), Ok(stderr)) = (stdout, stderr) else {
         st.captured = Some(Err("output_too_large"));
         return command_error_tag(heap, types, result_ty, "output_too_large", "");
-    }
+    };
     let Some(es) = st.exit_status else {
         st.captured = Some(Err("spawn_failed:child wait failed"));
         return command_error_tag(heap, types, result_ty, "spawn_failed:child wait failed", "");
@@ -1468,16 +1484,24 @@ fn process_wait_real(
         );
     }
 
-    let mut io_scratch = ScratchGuard::new(heap.budget());
-    io_scratch.charge(out_buf.len().saturating_add(err_buf.len()))?;
-    drop(io_scratch);
-
     let exit_code = match es.code() {
         Some(c) => i64::from(c),
         None => 128 + i64::from(es.signal().unwrap_or(0)),
     };
-    st.captured = Some(Ok((exit_code, out_buf.clone(), err_buf.clone())));
-    command_ok_tuple(heap, types, result_ty, exit_code, out_buf, err_buf)
+    let into_value = |bytes: Option<ChargedBytes>| match bytes {
+        Some(bytes) => bytes.into_value(),
+        None => heap.alloc_bytes(Vec::new()),
+    };
+    let value = command_ok_output(
+        heap,
+        types,
+        result_ty,
+        exit_code,
+        into_value(stdout)?,
+        into_value(stderr)?,
+    )?;
+    st.captured = Some(Ok(value.clone()));
+    Ok(value)
 }
 
 // ---------------------------------------------------------------------------

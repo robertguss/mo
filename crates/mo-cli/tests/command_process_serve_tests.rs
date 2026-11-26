@@ -319,6 +319,58 @@ end
     }
 
     #[test]
+    fn command_process_capture_and_wait_cache_share_the_vm_heap_limit() -> Result<(), Box<dyn Error>>
+    {
+        if !mo_host::confine::can_confine() {
+            return Ok(());
+        }
+        let dir = temp_dir("process-heap")?;
+        let main = dir.join("main.mo");
+        fs::write(
+            &main,
+            r#"module Main
+use Command
+
+fn check_output(proc: Command.Process) : Unit
+  assert proc.wait(5.seconds) is Ok(out)
+  assert out.stdout.bytes.size == 1000000
+end
+
+fn spawn_many(cmd: Command, args: List(Text), remaining: Int) : Unit
+  if remaining == 0
+    Unit
+  else
+    assert cmd.spawn("python3", args) is Ok(proc)
+    spawn_many(cmd, args, remaining - 1)
+    check_output(proc)
+  end
+end
+
+fn main(_console: Console, cmd: Command) : Unit
+  args = ["-c", "import sys; sys.stdout.write('x' * 1000000)"]
+  spawn_many(cmd, args, 5)
+end
+"#,
+        )?;
+        let out = Command::new(mo_bin())
+            .current_dir(&dir)
+            .args(["run", "--max-heap", "4MiB", "main.mo"])
+            .output()?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !stdout.contains("first capture succeeded"),
+            "{stdout}\n{stderr}"
+        );
+        assert!(
+            !out.status.success() && stderr.contains("running out of memory"),
+            "{stdout}\n{stderr}"
+        );
+        fs::remove_dir_all(dir)?;
+        Ok(())
+    }
+
+    #[test]
     fn command_spawn_supervises_waits_kills_and_reaps_on_drop() -> Result<(), Box<dyn Error>> {
         if !mo_host::confine::can_confine() {
             return Ok(());
