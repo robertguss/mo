@@ -123,6 +123,57 @@ end
     }
 
     #[test]
+    fn failed_bind_does_not_remove_running_servers_ready_file() -> Result<(), Box<dyn Error>> {
+        let api_source = r#"module App
+
+api
+  port 8080
+  get "/health" health
+end
+
+fn health() : Text
+  "ready-ok"
+end
+"#;
+        for (kind, source) in [("api", api_source), ("mcp", MCP_SOURCE)] {
+            let dir = temp_dir(kind)?;
+            fs::write(dir.join("app.mo"), source)?;
+            fs::create_dir(dir.join("first"))?;
+            fs::create_dir(dir.join("second"))?;
+            let ready = dir.join("ready.json");
+            let command = |port: &str, data: &str| {
+                let mut command = Command::new(mo_bin());
+                command
+                    .current_dir(&dir)
+                    .env("MO_READY_TEST_TOKEN", "readiness-canary")
+                    .args([
+                        "serve",
+                        "app.mo",
+                        "--port",
+                        port,
+                        "--data",
+                        data,
+                        "--ready-file",
+                        "ready.json",
+                    ]);
+                command
+            };
+            let (server, json) = wait_for_ready(&mut command("0", "first"), &ready)?;
+            let port = ready_port(&json)?;
+            let output = command(&port.to_string(), "second").output()?;
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                !output.status.success() && stderr.contains("could not listen"),
+                "{kind}: {stderr}"
+            );
+            assert_eq!(fs::read_to_string(&ready)?, json, "{kind}");
+            drop(server);
+            fs::remove_dir_all(dir)?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn command_allow_loopback_permits_loopback_and_blocks_non_loopback()
     -> Result<(), Box<dyn Error>> {
         if !mo_host::confine::can_confine() {

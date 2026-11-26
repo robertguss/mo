@@ -473,9 +473,6 @@ pub fn run_serve_service(
         .file()
         .string(cand_img.image.file().services[cand_img.service as usize].token_env)
         .to_string();
-    if let Some(ready_path) = opts.ready_file {
-        crate::clear_ready_file(ready_path);
-    }
     let listener = match Listener::open_tcp(
         &ListenerConfig {
             address: opts.bind.map(str::to_string),
@@ -509,6 +506,9 @@ pub fn run_serve_service(
         }
     };
 
+    if let Some(ready_path) = opts.ready_file {
+        crate::clear_ready_file(ready_path);
+    }
     let admin_cfg = match opts.admin_socket {
         Some(sock_path) => match Listener::open_unix(sock_path) {
             Ok(adm_listener) => Some(AdminConfig {

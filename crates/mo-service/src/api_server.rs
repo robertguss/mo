@@ -1610,9 +1610,6 @@ pub fn run_serve_api(
         }
     };
     let requested_port = opts.port.unwrap_or(initial_gen.default_port);
-    if let Some(ready_path) = opts.ready_file {
-        crate::clear_ready_file(ready_path);
-    }
     let listener = match TcpListener::bind(SocketAddr::new(ip, requested_port)) {
         Ok(l) => l,
         Err(e) => {
@@ -1622,6 +1619,9 @@ pub fn run_serve_api(
             );
         }
     };
+    if let Some(ready_path) = opts.ready_file {
+        crate::clear_ready_file(ready_path);
+    }
     let actual_port = match listener.local_addr() {
         Ok(a) => a.port(),
         Err(e) => {
