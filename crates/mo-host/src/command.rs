@@ -35,6 +35,8 @@ use rustix::pipe::{PipeFlags, pipe_with};
 use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
 
 use crate::HostError;
+#[cfg(unix)]
+use crate::confine::ExecDeadline;
 use crate::files_common::{FileStatus, find_case_tag, join_path, normalize_path};
 #[cfg(unix)]
 use crate::real_files::{PathMode, ResolverState, dir_fd_path, resolve};
@@ -622,6 +624,7 @@ fn spawn_confined_child(
     cmd_args_val: &Value,
     cpu_seconds: u64,
     require_confinement: bool,
+    deadline: Option<ExecDeadline>,
 ) -> Result<(Child, TempDirGuard), (&'static str, String)> {
     if root.forbidden {
         let esc = root.prefix.as_deref().unwrap_or("");
@@ -724,6 +727,9 @@ fn spawn_confined_child(
             } else {
                 "--no-confine"
             });
+        if let Some(deadline) = deadline {
+            c.arg("--exec-deadline").arg(deadline.argument());
+        }
         match &root.loopback {
             crate::network::LoopbackAccess::Denied => {}
             crate::network::LoopbackAccess::AllPorts => {
@@ -760,17 +766,56 @@ fn spawn_confined_child(
     if exec_status.is_some() {
         cmd.env(crate::confine::EXEC_STATUS_STDIN, "1");
     }
-    let mut child = cmd
+    let child = launch_command(cmd, exec_status, deadline)?;
+    Ok((child, tmp_guard))
+}
+
+#[cfg(unix)]
+fn launch_command(
+    mut cmd: Command,
+    exec_status: Option<OwnedFd>,
+    deadline: Option<ExecDeadline>,
+) -> Result<Child, (&'static str, String)> {
+    if deadline.is_some_and(|deadline| deadline.remaining().is_none()) {
+        return Err(("timed_out", String::new()));
+    }
+    let child = cmd
         .spawn()
         .map_err(|_| ("spawn_failed:fork failed", String::new()))?;
     drop(cmd);
-    if let Some(read) = exec_status {
+    confirm_command_exec(child, exec_status, deadline)
+}
+
+#[cfg(unix)]
+fn confirm_command_exec(
+    mut child: Child,
+    exec_status: Option<OwnedFd>,
+    deadline: Option<ExecDeadline>,
+) -> Result<Child, (&'static str, String)> {
+    let timed_out = || ("timed_out", String::new());
+    let confirm_exec = || {
+        let Some(read) = exec_status else {
+            return Ok(());
+        };
         let mut status = [0u8; crate::confine::EXEC_STATUS_BYTES];
         loop {
+            if let Some(deadline) = deadline {
+                let timeout = deadline.remaining().ok_or_else(timed_out)?;
+                let mut fds = [rustix::event::PollFd::new(
+                    &read,
+                    rustix::event::PollFlags::IN,
+                )];
+                match rustix::event::poll(&mut fds, Some(&timeout)) {
+                    Ok(0) | Err(rustix::io::Errno::INTR) => continue,
+                    Ok(_) => {}
+                    Err(err) => {
+                        return Err(("spawn_failed:exec status poll failed: ", err.to_string()));
+                    }
+                }
+            }
             match read_fd(&read, &mut status) {
-                Ok(0) => break,
+                Ok(0) => return Ok(()),
                 Ok(n) => {
-                    let _ = child.wait();
                     return Err((
                         "spawn_failed:",
                         String::from_utf8_lossy(&status[..n]).into_owned(),
@@ -778,14 +823,25 @@ fn spawn_confined_child(
                 }
                 Err(rustix::io::Errno::INTR) => continue,
                 Err(err) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
                     return Err(("spawn_failed:exec status pipe failed: ", err.to_string()));
                 }
             }
         }
+    };
+    let result = confirm_exec();
+    let result = if deadline.is_some_and(|deadline| deadline.remaining().is_none()) {
+        Err(timed_out())
+    } else {
+        result
+    };
+    match result {
+        Ok(()) => Ok(child),
+        Err(err) => {
+            crate::confine::kill_child_tree(child.id());
+            let _ = child.wait();
+            Err(err)
+        }
     }
-    Ok((child, tmp_guard))
 }
 
 // ---------------------------------------------------------------------------
@@ -1150,7 +1206,7 @@ fn command_spawn_real(
     let prog = args[1].as_text();
     let cpu_seconds = ((MO_LIMIT_COMMAND_DURATION_US as u64) / 1_000_000).saturating_add(1);
     let (mut child, tmp_guard) =
-        match spawn_confined_child(resolver, root, prog, &args[2], cpu_seconds, true) {
+        match spawn_confined_child(resolver, root, prog, &args[2], cpu_seconds, true, None) {
             Ok(pair) => pair,
             Err((prefix, detail)) => {
                 return command_error_tag(heap, types, result_ty, prefix, &detail);
@@ -1217,16 +1273,27 @@ fn command_run_real(
     timeout_us: i64,
 ) -> Result<Value, HostError> {
     let prog = args[1].as_text();
-    let deadline = Instant::now() + Duration::from_micros(timeout_us as u64);
+    let deadline = ExecDeadline::after(Duration::from_micros(timeout_us as u64)).ok_or(
+        HostError::Internal {
+            reason: "command deadline overflowed",
+        },
+    )?;
     let cpu_seconds = ((timeout_us as u64).saturating_add(999_999) / 1_000_000).saturating_add(1);
 
-    let (mut child, tmp_guard) =
-        match spawn_confined_child(resolver, root, prog, &args[2], cpu_seconds, false) {
-            Ok(pair) => pair,
-            Err((prefix, detail)) => {
-                return command_error_tag(heap, types, result_ty, prefix, &detail);
-            }
-        };
+    let (mut child, tmp_guard) = match spawn_confined_child(
+        resolver,
+        root,
+        prog,
+        &args[2],
+        cpu_seconds,
+        false,
+        Some(deadline),
+    ) {
+        Ok(pair) => pair,
+        Err((prefix, detail)) => {
+            return command_error_tag(heap, types, result_ty, prefix, &detail);
+        }
+    };
 
     let mut out_pipe = child.stdout.take();
     let mut err_pipe = child.stderr.take();
@@ -1248,19 +1315,16 @@ fn command_run_real(
 
     let mut leader_exited = false;
     while out_pipe.is_some() || err_pipe.is_some() || !leader_exited {
-        let now = Instant::now();
-        if now >= deadline {
+        let Some(rem) = deadline.remaining() else {
             timed_out = true;
             break;
-        }
+        };
 
         if out_pipe.is_some() || err_pipe.is_some() {
-            let rem = deadline.saturating_duration_since(now);
-            let wait = rem.min(Duration::from_millis(20));
-            let ts = rustix::event::Timespec {
-                tv_sec: i64::try_from(wait.as_secs()).unwrap_or(i64::MAX),
-                tv_nsec: i64::from(wait.subsec_nanos()),
-            };
+            let ts = rem.min(rustix::event::Timespec {
+                tv_sec: 0,
+                tv_nsec: 20_000_000,
+            });
 
             let mut poll_ready = [false; 2];
             {
@@ -1672,5 +1736,45 @@ pub(crate) fn call_command(
             }
         }
         _ => unreachable!("non-command hostop routed to command module"),
+    }
+}
+
+#[cfg(all(unix, test))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_run_times_out_while_launcher_still_holds_exec_status_pipe() {
+        let (read, write) = pipe_with(PipeFlags::CLOEXEC).unwrap();
+        let mut child = Command::new("/bin/sh")
+            .args([
+                "-c",
+                "printf x; sleep 5; printf y; exec /bin/true </dev/null",
+            ])
+            .stdin(Stdio::from(write))
+            .stdout(Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let mut ready = [0];
+        child
+            .stdout
+            .as_mut()
+            .unwrap()
+            .read_exact(&mut ready)
+            .unwrap();
+        assert_eq!(ready, *b"x");
+        let stdout = fcntl_dupfd_cloexec(child.stdout.as_ref().unwrap(), 0).unwrap();
+
+        let deadline = ExecDeadline::after(Duration::from_millis(50)).unwrap();
+        assert_eq!(
+            confirm_command_exec(child, Some(read), Some(deadline)).unwrap_err(),
+            ("timed_out", String::new())
+        );
+        assert_eq!(
+            read_fd(stdout, &mut ready).unwrap(),
+            0,
+            "launcher ran past the deadline"
+        );
     }
 }

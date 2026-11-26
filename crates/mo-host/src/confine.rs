@@ -9,6 +9,11 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::OnceLock;
+#[cfg(unix)]
+use std::time::Duration;
+
+#[cfg(unix)]
+use rustix::time::{ClockId, Timespec, clock_gettime};
 
 /// Hidden `argv[1]` sentinel triggering the safe self-exec confinement trampoline for `Command`.
 pub const INTERNAL_COMMAND_TRAMPOLINE_ARG: &str = "--mo-internal-confine-command";
@@ -16,6 +21,36 @@ pub const INTERNAL_COMMAND_TRAMPOLINE_ARG: &str = "--mo-internal-confine-command
 pub(crate) const EXEC_STATUS_STDIN: &str = "MO_EXEC_STATUS_STDIN";
 #[cfg(unix)]
 pub(crate) const EXEC_STATUS_BYTES: usize = 256;
+
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+pub(crate) struct ExecDeadline(Timespec);
+
+#[cfg(unix)]
+impl ExecDeadline {
+    pub(crate) fn after(timeout: Duration) -> Option<Self> {
+        clock_gettime(ClockId::Monotonic)
+            .checked_add(Timespec::try_from(timeout).ok()?)
+            .map(Self)
+    }
+
+    pub(crate) fn remaining(self) -> Option<Timespec> {
+        let now = clock_gettime(ClockId::Monotonic);
+        (now < self.0).then(|| self.0 - now)
+    }
+
+    pub(crate) fn argument(self) -> String {
+        format!("{}:{}", self.0.tv_sec, self.0.tv_nsec)
+    }
+
+    fn parse(arg: &OsString) -> Option<Self> {
+        let (seconds, nanoseconds) = arg.to_str()?.split_once(':')?;
+        let tv_sec = seconds.parse().ok()?;
+        let tv_nsec = nanoseconds.parse().ok()?;
+        (tv_sec >= 0 && (0..1_000_000_000).contains(&tv_nsec))
+            .then_some(Self(Timespec { tv_sec, tv_nsec }))
+    }
+}
 
 static TRAMPOLINE_EXE: OnceLock<PathBuf> = OnceLock::new();
 
@@ -275,6 +310,7 @@ fn run_trampoline_inner(args: Vec<OsString>) -> u8 {
     let mut cpu_seconds: Option<u64> = None;
     let mut mem_bytes: Option<u64> = None;
     let mut parent_pid: Option<u32> = None;
+    let mut deadline = None;
     let mut confine = false;
     let mut allow_loopback = false;
     let mut loopback_ports_filter: Option<Vec<u16>> = None;
@@ -317,6 +353,13 @@ fn run_trampoline_inner(args: Vec<OsString>) -> u8 {
             "--ppid" => {
                 i += 1;
                 parent_pid = args.get(i).and_then(|v| v.to_string_lossy().parse().ok());
+            }
+            "--exec-deadline" => {
+                i += 1;
+                let Some(value) = args.get(i).and_then(ExecDeadline::parse) else {
+                    return fail("invalid exec deadline");
+                };
+                deadline = Some(value);
             }
             "--confine" => confine = true,
             "--no-confine" => confine = false,
@@ -388,11 +431,15 @@ fn run_trampoline_inner(args: Vec<OsString>) -> u8 {
         return fail(&step);
     }
 
-    let err = Command::new(&exe)
+    let mut target = Command::new(&exe);
+    target
         .args(&cmd_args)
         .stdin(Stdio::null())
-        .env_remove(EXEC_STATUS_STDIN)
-        .exec();
+        .env_remove(EXEC_STATUS_STDIN);
+    if deadline.is_some_and(|deadline| deadline.remaining().is_none()) {
+        return fail("exec deadline expired");
+    }
+    let err = target.exec();
     fail(&format!("exec failed: {err}"))
 }
 
