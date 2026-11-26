@@ -1088,6 +1088,8 @@ fn emit_single_route_fn(
     Ok(p.instances[fn_idx].fun.name.clone())
 }
 
+const ROUTE_CHUNK_SIZE: usize = 24;
+
 fn make_jump1(p: &mut Lowering<'_>, label: String, arg: ExprId) -> LowerResult<ExprId> {
     p.alloc_expr(Expr::Jump {
         name: label,
@@ -1095,32 +1097,51 @@ fn make_jump1(p: &mut Lowering<'_>, label: String, arg: ExprId) -> LowerResult<E
     })
 }
 
-/// Iteratively constructs the route-matching join chain (zero recursion).
-fn build_route_chain(
+/// Iteratively constructs the route-matching join chain for `route_range` (zero recursion),
+/// tail-calling `next_chunk_fn_name` when falling through or `builtin_openapi_fallback` at the end.
+fn build_route_chunk_chain(
     p: &mut Lowering<'_>,
     api: &CheckedApi,
     env: &DispatchEnv,
+    route_range: std::ops::Range<usize>,
     route_fn_names: &[String],
     init_matched: &str,
+    next_chunk_fn_name: Option<&str>,
 ) -> LowerResult<ExprId> {
-    let count = api.routes.len();
-    let mut matched_vars = Vec::with_capacity(count + 1);
+    let chunk_len = route_range.len();
+    let mut matched_vars = Vec::with_capacity(chunk_len + 1);
     matched_vars.push(init_matched.to_string());
-    let mut join_labels = Vec::with_capacity(count);
-    for _ in 0..count {
+    let mut join_labels = Vec::with_capacity(chunk_len);
+    for _ in 0..chunk_len {
         join_labels.push(p.fresh()?);
         matched_vars.push(p.fresh()?);
     }
 
-    let mut chain = builtin_openapi_fallback(p, api, env, &matched_vars[count])?;
+    let mut chain = if let Some(next_fn) = next_chunk_fn_name {
+        let mut next_args = Vec::with_capacity(5 + env.cap_vars.len() + env.actor_vars.len());
+        next_args.push(p.expr_var(env.req_var.clone())?);
+        next_args.push(p.expr_var(env.req_method.clone())?);
+        next_args.push(p.expr_var(env.req_path.clone())?);
+        next_args.push(p.expr_var(env.req_body.clone())?);
+        next_args.push(p.expr_var(matched_vars[chunk_len].clone())?);
+        for cv in &env.cap_vars {
+            next_args.push(p.expr_var(cv.clone())?);
+        }
+        for av in &env.actor_vars {
+            next_args.push(p.expr_var(av.clone())?);
+        }
+        p.expr_call(next_fn.to_string(), next_args)?
+    } else {
+        builtin_openapi_fallback(p, api, env, &matched_vars[chunk_len])?
+    };
     let bool_ty = builtin_ty(p, "Bool")?;
 
-    for idx in (0..count).rev() {
+    for (local_idx, idx) in route_range.enumerate().rev() {
         let route = &api.routes[idx];
         p.span = p.syntax_node(api.module, route.syntax).span;
-        let join_label = join_labels[idx].clone();
-        let joined_matched = matched_vars[idx + 1].clone();
-        let prev_matched = &matched_vars[idx];
+        let join_label = join_labels[local_idx].clone();
+        let joined_matched = matched_vars[local_idx + 1].clone();
+        let prev_matched = &matched_vars[local_idx];
 
         let pat_e = p.expr_text(&route.path)?;
         let rp = p.expr_var(env.req_path.clone())?;
@@ -1176,6 +1197,90 @@ fn build_route_chain(
     }
 
     Ok(chain)
+}
+
+fn emit_route_chunks(
+    p: &mut Lowering<'_>,
+    api: &CheckedApi,
+    base_env: &DispatchEnv,
+    route_fn_names: &[String],
+) -> LowerResult<Option<String>> {
+    let total = api.routes.len();
+    if total <= ROUTE_CHUNK_SIZE {
+        return Ok(None);
+    }
+    let bool_ty = builtin_ty(p, "Bool")?;
+    let sim_ty = builtin_ty(p, "Simulation")?;
+    let mut cap_tys = Vec::with_capacity(api.capabilities.len());
+    for cname in &api.capabilities {
+        cap_tys.push(builtin_ty(p, cname)?);
+    }
+
+    let num_chunks = total.div_ceil(ROUTE_CHUNK_SIZE);
+    let mut next_chunk_name: Option<String> = None;
+
+    for chunk_idx in (1..num_chunks).rev() {
+        let start = chunk_idx * ROUTE_CHUNK_SIZE;
+        let end = (start + ROUTE_CHUNK_SIZE).min(total);
+
+        let c_req = p.fresh()?;
+        let c_method = p.fresh()?;
+        let c_path = p.fresh()?;
+        let c_body = p.fresh()?;
+        let c_matched = p.fresh()?;
+        let mut params = vec![
+            p.make_param(c_req.clone(), base_env.req_ty)?,
+            p.make_param(c_method.clone(), base_env.text_ty)?,
+            p.make_param(c_path.clone(), base_env.text_ty)?,
+            p.make_param(c_body.clone(), base_env.bytes_ty)?,
+            p.make_param(c_matched.clone(), bool_ty)?,
+        ];
+        let mut c_caps = Vec::with_capacity(cap_tys.len());
+        for &cty in &cap_tys {
+            let cv = p.fresh()?;
+            params.push(p.make_param(cv.clone(), cty)?);
+            c_caps.push(cv);
+        }
+        let mut c_actors = Vec::with_capacity(api.actors.len());
+        for _ in 0..api.actors.len() {
+            let av = p.fresh()?;
+            params.push(p.make_param(av.clone(), sim_ty)?);
+            c_actors.push(av);
+        }
+
+        let suffix = format!(".%api.route.chunk.{chunk_idx}");
+        let fn_idx = new_generated_fn(p, api.module, &suffix, params, base_env.res_ty)?;
+        let fn_name = p.instances[fn_idx].fun.name.clone();
+
+        let chunk_env = DispatchEnv {
+            openapi_fn_name: base_env.openapi_fn_name.clone(),
+            req_ty: base_env.req_ty,
+            res_ty: base_env.res_ty,
+            text_ty: base_env.text_ty,
+            bytes_ty: base_env.bytes_ty,
+            req_var: c_req,
+            req_method: c_method,
+            req_path: c_path,
+            req_body: c_body,
+            cap_vars: c_caps,
+            actor_vars: c_actors,
+        };
+
+        let body = build_route_chunk_chain(
+            p,
+            api,
+            &chunk_env,
+            start..end,
+            route_fn_names,
+            &c_matched,
+            next_chunk_name.as_deref(),
+        )?;
+        p.instances[fn_idx].fun.body = body;
+        p.instances[fn_idx].body_set = true;
+        next_chunk_name = Some(fn_name);
+    }
+
+    Ok(next_chunk_name)
 }
 
 fn emit_wire_fn(p: &mut Lowering<'_>, api: &CheckedApi, disp_fn_name: &str) -> LowerResult<()> {
@@ -1347,8 +1452,18 @@ fn emit_dispatch_fns(
         route_fn_names.push(emit_single_route_fn(p, api, &env, r)?);
     }
 
+    let first_next = emit_route_chunks(p, api, &env, &route_fn_names)?;
+    let chunk0_end = api.routes.len().min(ROUTE_CHUNK_SIZE);
     let init_matched = p.fresh()?;
-    let chain = build_route_chain(p, api, &env, &route_fn_names, &init_matched)?;
+    let chain = build_route_chunk_chain(
+        p,
+        api,
+        &env,
+        0..chunk0_end,
+        &route_fn_names,
+        &init_matched,
+        first_next.as_deref(),
+    )?;
     let f_lit = p.expr_bool(false)?;
     let chain_let = p.expr_let(init_matched, f_lit, chain)?;
     let req_v = p.expr_var(env.req_var.clone())?;

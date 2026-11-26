@@ -335,3 +335,88 @@ end
     );
     Ok(())
 }
+
+#[test]
+fn apitest_large_route_table_scales_past_250_routes() -> TestResult {
+    let dir = unique_temp_dir("many-routes")?;
+    let mut routes = String::new();
+    let mut handlers = String::new();
+    let total_routes = 260;
+
+    for i in 0..total_routes {
+        let (method, suffix, has_id) = match i % 3 {
+            0 => ("get", "", false),
+            1 => ("post", "/:id", true),
+            _ => ("delete", "/:id", true),
+        };
+        routes.push_str(&format!("  {method} \"/r/{i}{suffix}\" h_{i}\n"));
+        if has_id {
+            handlers.push_str(&format!(
+                "fn h_{i}(_env: Env, _clock: Clock, _files: Files, id: Text) : Text\n  \"route:{i}:#{{id}}\"\nend\n"
+            ));
+        } else {
+            handlers.push_str(&format!(
+                "fn h_{i}(_env: Env, _clock: Clock, _files: Files) : Text\n  \"route:{i}\"\nend\n"
+            ));
+        }
+    }
+
+    let src = format!(
+        r##"module Main
+use Api
+
+api
+  port 8099
+{routes}end
+
+{handlers}
+test "dispatches cleanly across 260 routes without E1203"
+  files = Files.in_memory({{}})
+  clock = Clock.fixed(Time.parse("2026-11-26T00:00:00Z") or stop "clock")
+  env = Env.of({{}})
+
+  r0 = ApiTest.send(Main, Api.get("/r/0"), files, clock, env)
+  assert r0.status == 200 and r0.text == "\"route:0\""
+
+  r_mid = ApiTest.send(Main, Api.post("/r/130/item-130"), files, clock, env)
+  assert r_mid.status == 200 and r_mid.text == "\"route:130:item-130\""
+
+  r_del = ApiTest.send(Main, Api.delete("/r/257/item-257"), files, clock, env)
+  assert r_del.status == 200 and r_del.text == "\"route:257:item-257\""
+
+  r_last = ApiTest.send(Main, Api.post("/r/259/item-259"), files, clock, env)
+  assert r_last.status == 200 and r_last.text == "\"route:259:item-259\""
+
+  r_405 = ApiTest.send(Main, Api.request("PUT", "/r/0"), files, clock, env)
+  assert r_405.status == 405
+
+  r_404 = ApiTest.send(Main, Api.get("/missing"), files, clock, env)
+  assert r_404.status == 404
+
+  r_oa = ApiTest.send(Main, Api.get("/openapi.json"), files, clock, env)
+  assert r_oa.status == 200 and r_oa.text.contains?("\"/r/259/")
+
+  r_docs = ApiTest.send(Main, Api.get("/docs"), files, clock, env)
+  assert r_docs.status == 200
+end
+"##
+    );
+
+    fs::write(dir.join("main.mo"), src)?;
+    let out = run_mo(&["test", "main.mo"], &dir)?;
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = fs::remove_dir_all(&dir);
+    assert!(
+        out.status.success(),
+        "260-route ApiTest failed:\n{combined}"
+    );
+    assert!(
+        combined.contains("1 passed, 0 failed, 0 stopped"),
+        "unexpected test output:\n{combined}"
+    );
+    Ok(())
+}
