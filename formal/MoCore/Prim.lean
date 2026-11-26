@@ -355,6 +355,10 @@ def evalBytesOp (op : BytesOp) (vs : List Value) (w : World) : Outcome :=
   | .isEmpty, [.bytes bs] => .ok (.bool bs.isEmpty) w
   | .compareSliceAt, [.bytes bs, .int off, .int len, .bytes other] =>
     .ok (optOrdering (bytesCompareSliceAt bs off len other)) w
+  | .dotU16BeBiased, [.bytes a, .int aOff, .bytes b, .int bOff, .int count, .int bias] =>
+    .ok (optIntOf (bytesDotU16BeBiased a aOff b bOff count bias)) w
+  | .dotU8Biased, [.bytes a, .int aOff, .bytes b, .int bOff, .int count, .int bias] =>
+    .ok (optIntOf (bytesDotU8Biased a aOff b bOff count bias)) w
   | _, _ => wrongArgs "Bytes primitive"
 
 /-! ## Ranges -/

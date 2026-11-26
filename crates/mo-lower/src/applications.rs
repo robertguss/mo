@@ -1016,6 +1016,8 @@ fn match_static_prim(native: &str) -> Option<Prim> {
         "Bytes.i64_be_at" => Some(Prim::Bytes(CoreBytesOp::I64BeAt)),
         "Bytes.empty?" => Some(Prim::Bytes(CoreBytesOp::IsEmpty)),
         "Bytes.compare_slice_at" => Some(Prim::Bytes(CoreBytesOp::CompareSliceAt)),
+        "Bytes.dot_u16_be_biased" => Some(Prim::Bytes(CoreBytesOp::DotU16BeBiased)),
+        "Bytes.dot_u8_biased" => Some(Prim::Bytes(CoreBytesOp::DotU8Biased)),
         // Range
         "Range.to_list" => Some(Prim::Range(CoreRangeOp::ToList)),
         "Range.contains?" => Some(Prim::Range(CoreRangeOp::Contains)),

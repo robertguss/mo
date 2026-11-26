@@ -171,7 +171,9 @@ pub fn call(
         | PrimId::BytesU32BeAt
         | PrimId::BytesI64BeAt
         | PrimId::BytesIsEmpty
-        | PrimId::BytesCompareSliceAt => text::call(heap, types, prim, params, result_ty, args),
+        | PrimId::BytesCompareSliceAt
+        | PrimId::BytesDotU16BeBiased
+        | PrimId::BytesDotU8Biased => text::call(heap, types, prim, params, result_ty, args),
 
         // List, Map, Set, Range
         PrimId::ListEmpty

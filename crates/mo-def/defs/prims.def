@@ -257,5 +257,7 @@ PRIM(BYTES_COMPARE_SLICE_AT,    "Bytes",     "compare_slice_at",   "fn(Bytes, In
 
 PRIM(JSON_QUOTE_RAW,            "Json",      "quote_raw",          "fn(Text) : Text",                            "b",   "")
 PRIM(JSON_PARSE_RAW,            "Json",      "parse_raw",          "fn(Text) : Result((List(Int), List(Text)), (Int, Int, Int, Text))", "b", "")
+PRIM(BYTES_DOT_U16_BE_BIASED,   "Bytes",     "dot_u16_be_biased",  "fn(Bytes, Int, Bytes, Int, Int, Int) : Option(Int)", "bbbbbb", "")
+PRIM(BYTES_DOT_U8_BIASED,       "Bytes",     "dot_u8_biased",      "fn(Bytes, Int, Bytes, Int, Int, Int) : Option(Int)", "bbbbbb", "")
 
 #undef PRIM

@@ -1921,7 +1921,13 @@ starting at `offset`, giving `None` when `offset < 0` or fewer than the needed
 bytes remain. `compare_slice_at(offset: Int, len: Int, other: Bytes) : Option(Ordering)`
 compares the `len` bytes starting at `offset` against `other` in unsigned byte
 order without allocating a slice, giving `None` when `offset < 0`, `len < 0`,
-or `offset + len` exceeds `size`.
+or `offset + len` exceeds `size`. `dot_u16_be_biased(a_offset: Int, other: Bytes, b_offset: Int, count: Int, bias: Int) : Option(Int)`
+and `dot_u8_biased(a_offset: Int, other: Bytes, b_offset: Int, count: Int, bias: Int) : Option(Int)`
+read `count` unsigned big-endian 16-bit (or 8-bit) values from `self` starting at
+`a_offset` and from `other` starting at `b_offset`, subtract `bias` from each
+element, and sum their pairwise products as an `Int`, giving `None` when any
+offset or `count` is negative, a slice exceeds `size`, or the final sum falls
+outside `Int`.
 
 **List(T)**: `size : Int`, `empty? : Bool`. `get(i: Int)`, `first` and
 `last : Option(T)`; `get` gives `None` for a position below 0 or past the end.

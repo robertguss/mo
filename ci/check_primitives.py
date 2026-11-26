@@ -161,6 +161,49 @@ def text_cases(rng, rows):
                     for n in [0, 1, 2, 3, 4]
                     for other in cmp_others
                 ]
+            elif name == "dot_u16_be_biased":
+                dot16_samples = [
+                    b"",
+                    b"\x00",
+                    b"\x00\x01",
+                    b"\x80\x00\x7f\xff",
+                    b"\x7f\xff\x80\x00",
+                    b"\x09\x80\x00\x7f\xff\x11",
+                    b"\xff\xff\xff\xff",
+                ] + byte_sequences[:4]
+                values = [
+                    [enc(a), f"(int {ao})", enc(b), f"(int {bo})", f"(int {cnt})", f"(int {bias})"]
+                    for a in dot16_samples[:5]
+                    for b in dot16_samples[:4]
+                    for ao in [-1, 0, 1, len(a)]
+                    for bo in [-1, 0, 2]
+                    for cnt in [-1, 0, 1, 2, (1 << 63) - 1]
+                    for bias in [0, 32767, -1, 65536]
+                ] + [
+                    [enc(b"\x00\x01\xff\xff"), "(int 0)", enc(b"\x00\x02\x7f\xff"), "(int 0)", "(int 2)", f"(int {bias})"]
+                    for bias in [-(1 << 63), -1, 0, 1, 32767, 65535, 65536, (1 << 63) - 1]
+                ]
+            elif name == "dot_u8_biased":
+                dot8_samples = [
+                    b"",
+                    b"\x00",
+                    b"\x82\x7d",
+                    b"\x09\x82\x7d\x11",
+                    b"\x81\x7e",
+                    b"\xff\xff\x00",
+                ] + byte_sequences[:4]
+                values = [
+                    [enc(a), f"(int {ao})", enc(b), f"(int {bo})", f"(int {cnt})", f"(int {bias})"]
+                    for a in dot8_samples[:5]
+                    for b in dot8_samples[:4]
+                    for ao in [-1, 0, 1, len(a)]
+                    for bo in [-1, 0, 1]
+                    for cnt in [-1, 0, 1, 2, (1 << 63) - 1]
+                    for bias in [0, 127, -1, 256]
+                ] + [
+                    [enc(b"\x01\xff"), "(int 0)", enc(b"\x02\x7f"), "(int 0)", "(int 2)", f"(int {bias})"]
+                    for bias in [-(1 << 63), -1, 0, 1, 127, 255, 256, (1 << 63) - 1]
+                ]
             else:
                 values = [[enc(b)] for b in byte_sequences]
         for i, args in enumerate(values):

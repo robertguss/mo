@@ -728,13 +728,93 @@ pub fn call(
             let ord = ordering_value(slice.cmp(other));
             Ok(heap.make_option(types, result_ty, Some(ord))?)
         }
+        PrimId::BytesDotU16BeBiased | PrimId::BytesDotU8Biased => {
+            let a = args[0].as_bytes();
+            let a_off = args[1].as_int();
+            let b = args[2].as_bytes();
+            let b_off = args[3].as_int();
+            let count = args[4].as_int();
+            let bias = args[5].as_int();
+            let width = if prim == PrimId::BytesDotU16BeBiased {
+                2
+            } else {
+                1
+            };
+            let dot = bytes_dot_biased(a, a_off, b, b_off, count, bias, width).map(Value::Int);
+            Ok(heap.make_option(types, result_ty, dot)?)
+        }
         _ => unreachable!("unexpected text/char/bytes primitive {prim:?}"),
     }
 }
 
+/// Computes `sum_{i=0}^{count-1} (elem(a, i) - bias) * (elem(b, i) - bias)` for
+/// big-endian `u16` (`width == 2`) or `u8` (`width == 1`) elements starting at `a_off`
+/// and `b_off`, returning `None` when bounds are invalid or the sum overflows `i64`.
+fn bytes_dot_biased(
+    a: &[u8],
+    a_off: i64,
+    b: &[u8],
+    b_off: i64,
+    count: i64,
+    bias: i64,
+    width: usize,
+) -> Option<i64> {
+    let a_off = usize::try_from(a_off).ok()?;
+    let b_off = usize::try_from(b_off).ok()?;
+    let count_u = usize::try_from(count).ok()?;
+    let byte_len = count_u.checked_mul(width)?;
+    let a_end = a_off.checked_add(byte_len)?;
+    let b_end = b_off.checked_add(byte_len)?;
+    let a_slice = a.get(a_off..a_end)?;
+    let b_slice = b.get(b_off..b_end)?;
+    if count_u == 0 {
+        return Some(0);
+    }
+
+    let max_elem = if width == 2 { 65_535 } else { 255 };
+    // When bias stays within [0, max_elem] and count_u <= 1_000_000, every term has
+    // |term| <= 65_535^2, so intermediate and final sums cannot overflow i64.
+    if (0..=max_elem).contains(&bias) && count_u <= 1_000_000 {
+        let mut acc: i64 = 0;
+        if width == 2 {
+            for (ca, cb) in a_slice.chunks_exact(2).zip(b_slice.chunks_exact(2)) {
+                let va = i64::from(u16::from_be_bytes([ca[0], ca[1]]));
+                let vb = i64::from(u16::from_be_bytes([cb[0], cb[1]]));
+                acc += (va - bias) * (vb - bias);
+            }
+        } else {
+            for (&va, &vb) in a_slice.iter().zip(b_slice.iter()) {
+                acc += (i64::from(va) - bias) * (i64::from(vb) - bias);
+            }
+        }
+        return Some(acc);
+    }
+
+    bytes_dot_biased_exact(a_slice, b_slice, bias, width)
+}
+
+/// Exact i128 fallback for `bytes_dot_biased`; outside `[0, max_elem]`, every product
+/// shares positive sign so any i128 overflow stays permanently above `i64::MAX`.
+fn bytes_dot_biased_exact(a_slice: &[u8], b_slice: &[u8], bias: i64, width: usize) -> Option<i64> {
+    let bias128 = i128::from(bias);
+    let mut acc: i128 = 0;
+    if width == 2 {
+        for (ca, cb) in a_slice.chunks_exact(2).zip(b_slice.chunks_exact(2)) {
+            let va = i128::from(u16::from_be_bytes([ca[0], ca[1]]));
+            let vb = i128::from(u16::from_be_bytes([cb[0], cb[1]]));
+            acc = acc.checked_add((va - bias128) * (vb - bias128))?;
+        }
+    } else {
+        for (&va, &vb) in a_slice.iter().zip(b_slice.iter()) {
+            acc = acc.checked_add((i128::from(va) - bias128) * (i128::from(vb) - bias128))?;
+        }
+    }
+    i64::try_from(acc).ok()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::quote_prim;
+    use super::{bytes_dot_biased, quote_prim};
 
     #[test]
     fn quote_prim_escapes_c0_c1_and_invisible_scalars() {
@@ -755,5 +835,25 @@ mod tests {
         );
         assert_eq!(quote_prim("'", b'\'').expect("apos"), "'\\''");
         assert_eq!(quote_prim("\"", b'\'').expect("dquote"), "'\"'");
+    }
+
+    #[test]
+    fn bytes_dot_biased_matches_exact_bounds_and_overflow() {
+        let a16 = [9, 0x80, 0x00, 0x7f, 0xfe];
+        let b16 = [0x7f, 0xfe, 0x80, 0x00];
+        assert_eq!(bytes_dot_biased(&a16, 1, &b16, 0, 2, 32767, 2), Some(-2));
+        assert_eq!(bytes_dot_biased(&a16, 5, &b16, 4, 0, i64::MIN, 2), Some(0));
+        assert_eq!(bytes_dot_biased(&a16, 1, &b16, 0, 3, 0, 2), None);
+        assert_eq!(
+            bytes_dot_biased(&[0, 1], 0, &[0, 1], 0, 1, i64::MIN, 2),
+            None
+        );
+
+        let a8 = [9, 130, 125];
+        let b8 = [129, 126];
+        assert_eq!(bytes_dot_biased(&a8, 1, &b8, 0, 2, 127, 1), Some(8));
+        assert_eq!(bytes_dot_biased(&a8, -1, &b8, 0, 1, 0, 1), None);
+        assert_eq!(bytes_dot_biased(&a8, 0, &b8, 0, -1, 0, 1), None);
+        assert_eq!(bytes_dot_biased(&a8, 0, &b8, 0, i64::MAX, 0, 1), None);
     }
 }

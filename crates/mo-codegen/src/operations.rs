@@ -393,6 +393,8 @@ pub fn resolve_operation(prim: &Prim) -> Option<Operation> {
             CoreBytesOp::I64BeAt => PrimId::BytesI64BeAt,
             CoreBytesOp::IsEmpty => PrimId::BytesIsEmpty,
             CoreBytesOp::CompareSliceAt => PrimId::BytesCompareSliceAt,
+            CoreBytesOp::DotU16BeBiased => PrimId::BytesDotU16BeBiased,
+            CoreBytesOp::DotU8Biased => PrimId::BytesDotU8Biased,
         },
         Prim::Unicode16(op) => match op {
             CoreUnicodeOp::Graphemes => PrimId::Unicode16Graphemes,
