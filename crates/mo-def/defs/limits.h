@@ -320,6 +320,7 @@
 #define MO_LIMIT_LOOKUPS 8
 #define MO_LIMIT_LOOKUP_ADDRESSES 8
 #define MO_LIMIT_FAKE_QUOTE 120
+#define MO_LIMIT_RECORDED_CALLS 4096
 
 /* Lookup-wide component attempts, including portable ancestor reconstruction.
  * A refusal is Failed naming this limit, not a language bug. Test builds may

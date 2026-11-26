@@ -172,6 +172,7 @@ pub fn confine_command_child(
     tmp_dir: &Path,
     parent_pid: u32,
     allow_loopback: bool,
+    loopback_ports_filter: Option<&[u16]>,
 ) -> Result<(), String> {
     #[cfg(all(
         target_os = "linux",
@@ -185,6 +186,7 @@ pub fn confine_command_child(
             tmp_dir,
             parent_pid,
             allow_loopback,
+            loopback_ports_filter,
         )
     }
     #[cfg(not(all(
@@ -193,7 +195,14 @@ pub fn confine_command_child(
         any(target_arch = "x86_64", target_arch = "aarch64")
     )))]
     {
-        let _ = (executable, work_dir, tmp_dir, parent_pid, allow_loopback);
+        let _ = (
+            executable,
+            work_dir,
+            tmp_dir,
+            parent_pid,
+            allow_loopback,
+            loopback_ports_filter,
+        );
         Err("confinement is unsupported on this host".to_string())
     }
 }
@@ -239,6 +248,7 @@ fn run_trampoline_inner(args: Vec<OsString>) -> u8 {
     let mut parent_pid: Option<u32> = None;
     let mut confine = false;
     let mut allow_loopback = false;
+    let mut loopback_ports_filter: Option<Vec<u16>> = None;
     let mut exe_path: Option<PathBuf> = None;
     let mut cmd_args: Vec<OsString> = Vec::new();
 
@@ -282,6 +292,26 @@ fn run_trampoline_inner(args: Vec<OsString>) -> u8 {
             "--confine" => confine = true,
             "--no-confine" => confine = false,
             "--allow-loopback" => allow_loopback = true,
+            "--loopback-ports" => {
+                i += 1;
+                let Some(raw) = args.get(i).and_then(|v| v.to_str()) else {
+                    return fail_trampoline("invalid --loopback-ports argument");
+                };
+                if raw.is_empty() {
+                    return fail_trampoline("empty --loopback-ports argument");
+                }
+                let mut parsed = Vec::new();
+                for tok in raw.split(',') {
+                    let Ok(p) = tok.parse::<u16>() else {
+                        return fail_trampoline("invalid port in --loopback-ports");
+                    };
+                    if p == 0 {
+                        return fail_trampoline("zero port in --loopback-ports");
+                    }
+                    parsed.push(p);
+                }
+                loopback_ports_filter = Some(parsed);
+            }
             "--exe" => {
                 i += 1;
                 exe_path = args.get(i).map(PathBuf::from);
@@ -316,7 +346,16 @@ fn run_trampoline_inner(args: Vec<OsString>) -> u8 {
         return fail_trampoline(step);
     }
 
-    if confine && let Err(step) = confine_command_child(&exe, &wd, &td, ppid, allow_loopback) {
+    if confine
+        && let Err(step) = confine_command_child(
+            &exe,
+            &wd,
+            &td,
+            ppid,
+            allow_loopback,
+            loopback_ports_filter.as_deref(),
+        )
+    {
         return fail_trampoline(&step);
     }
 
@@ -452,7 +491,7 @@ mod linux {
             .is_ok_and(|s| s.split_whitespace().any(|tok| tok == "kill_process"))
     }
 
-    fn create_ruleset_v3_to_v6() -> Result<RulesetCreated, String> {
+    fn create_ruleset_v3_to_v6(require_net_v4: bool) -> Result<RulesetCreated, String> {
         // First confirm Landlock ABI >= 3 is supported.
         Ruleset::default()
             .set_compatibility(CompatLevel::HardRequirement)
@@ -461,6 +500,13 @@ mod linux {
             .map_err(|e| format!("landlock_create_ruleset(v3 probe): {e}"))?;
 
         let net_access = AccessNet::from_all(ABI::V4);
+        if require_net_v4 {
+            Ruleset::default()
+                .set_compatibility(CompatLevel::HardRequirement)
+                .handle_access(net_access)
+                .and_then(Ruleset::create)
+                .map_err(|e| format!("landlock_create_ruleset(v4 net probe): {e}"))?;
+        }
 
         // Build best-effort ABI V6 ruleset (FS + TCP net + signal/abstract-unix scopes);
         // `restrict_self` verifies enforcement is not NotEnforced.
@@ -803,6 +849,17 @@ mod linux {
                     bad_val,
                 )?])?);
             }
+            // Also restrict protocol (arg2) to 0 (default TCP) or IPPROTO_TCP so non-TCP
+            // stream protocols (e.g. SCTP 132, MPTCP 262) cannot slip past Landlock TCP rules.
+            socket_deny.push(rule(vec![
+                cond(2, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, 0)?,
+                cond(
+                    2,
+                    SeccompCmpArgLen::Dword,
+                    SeccompCmpOp::Ne,
+                    libc::IPPROTO_TCP as u64,
+                )?,
+            ])?);
             rules.insert(libc::SYS_socket, socket_deny);
         }
 
@@ -883,7 +940,7 @@ mod linux {
     ) -> Result<(), String> {
         rustix::thread::set_no_new_privs(true).map_err(|e| format!("no_new_privs: {e}"))?;
 
-        let mut ruleset = create_ruleset_v3_to_v6()?;
+        let mut ruleset = create_ruleset_v3_to_v6(false)?;
         for sys in ["/usr", "/lib", "/lib64", "/etc/ld.so.cache"] {
             ruleset = allow_path(ruleset, Path::new(sys), SYSTEM_READ)?;
         }
@@ -922,17 +979,21 @@ mod linux {
         tmp_dir: &Path,
         parent_pid: u32,
         allow_loopback: bool,
+        loopback_ports_filter: Option<&[u16]>,
     ) -> Result<(), String> {
         rustix::thread::set_no_new_privs(true).map_err(|e| format!("no_new_privs: {e}"))?;
 
-        let loopback_ports = if allow_loopback {
+        let mut loopback_ports = if allow_loopback {
             collect_loopback_listen_ports()
         } else {
             Vec::new()
         };
+        if let Some(allowed) = loopback_ports_filter {
+            loopback_ports.retain(|p| allowed.contains(p));
+        }
 
-        let mut ruleset = create_ruleset_v3_to_v6()?;
-        if allow_loopback {
+        let mut ruleset = create_ruleset_v3_to_v6(allow_loopback)?;
+        if allow_loopback && loopback_ports_filter.is_none() {
             ruleset = ruleset
                 .add_rule(NetPort::new(0, AccessNet::BindTcp))
                 .map_err(|e| format!("landlock net_port(0, bind): {e}"))?;

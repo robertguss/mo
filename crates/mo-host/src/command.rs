@@ -40,7 +40,7 @@ struct RealCommandCap {
     forbidden: bool,
     prefix: Option<String>,
     allowed: Option<Vec<String>>,
-    allow_loopback: bool,
+    loopback: crate::network::LoopbackAccess,
     open_folders: Rc<Cell<u32>>,
 }
 
@@ -58,7 +58,7 @@ struct FakeCommandCap {
     prefix: Option<String>,
     forbidden: bool,
     allowed: Option<Vec<String>>,
-    allow_loopback: bool,
+    loopback: crate::network::LoopbackAccess,
     next_pid: Rc<Cell<i64>>,
 }
 
@@ -685,8 +685,20 @@ fn spawn_confined_child(
             } else {
                 "--no-confine"
             });
-        if root.allow_loopback {
-            c.arg("--allow-loopback");
+        match &root.loopback {
+            crate::network::LoopbackAccess::Denied => {}
+            crate::network::LoopbackAccess::AllPorts => {
+                c.arg("--allow-loopback");
+            }
+            crate::network::LoopbackAccess::Ports(ports) => {
+                c.arg("--allow-loopback");
+                let csv = ports
+                    .iter()
+                    .map(u16::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                c.arg("--loopback-ports").arg(csv);
+            }
         }
         c.arg("--exe").arg(&exe_path).arg("--").args(&arg_strs);
         c
@@ -741,7 +753,7 @@ pub(crate) fn make_real_command(
         forbidden: false,
         prefix: None,
         allowed: None,
-        allow_loopback: false,
+        loopback: crate::network::LoopbackAccess::Denied,
         open_folders: Rc::clone(open_folders),
     });
     Ok(heap.alloc_capability(Capability::Command, ty, Rc::new(cap))?)
@@ -757,7 +769,7 @@ pub(crate) fn command_fake(
         prefix: None,
         forbidden: false,
         allowed: None,
-        allow_loopback: false,
+        loopback: crate::network::LoopbackAccess::Denied,
         next_pid: Rc::new(Cell::new(10_000)),
     });
     Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(cap))?)
@@ -774,7 +786,7 @@ fn command_allow_loopback(
     args: &[Value],
 ) -> Result<Value, HostError> {
     let cap = crate::downcast_cap::<CommandCap>(&args[0], "Command capability");
-    let permitted = crate::network::network_allows_loopback(
+    let loopback = crate::network::network_loopback_access(
         &args[1],
         #[cfg(unix)]
         matches!(cap, CommandCap::Real(_)),
@@ -788,7 +800,7 @@ fn command_allow_loopback(
                 prefix: f.prefix.clone(),
                 forbidden: f.forbidden,
                 allowed: f.allowed.clone(),
-                allow_loopback: permitted,
+                loopback,
                 next_pid: Rc::clone(&f.next_pid),
             });
             Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?)
@@ -812,7 +824,7 @@ fn command_allow_loopback(
                 forbidden: r.forbidden,
                 prefix: r.prefix.clone(),
                 allowed: r.allowed.clone(),
-                allow_loopback: permitted,
+                loopback,
                 open_folders: Rc::clone(open_folders),
             });
             Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?)
@@ -856,7 +868,7 @@ fn command_allow_programs(
                 prefix: f.prefix.clone(),
                 forbidden: f.forbidden,
                 allowed: Some(next_allowed),
-                allow_loopback: f.allow_loopback,
+                loopback: f.loopback.clone(),
                 next_pid: Rc::clone(&f.next_pid),
             });
             Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?)
@@ -880,7 +892,7 @@ fn command_allow_programs(
                 forbidden: r.forbidden,
                 prefix: r.prefix.clone(),
                 allowed: Some(next_allowed),
-                allow_loopback: r.allow_loopback,
+                loopback: r.loopback.clone(),
                 open_folders: Rc::clone(open_folders),
             });
             Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?)
@@ -900,7 +912,7 @@ fn command_within_fake(
             prefix: orig.prefix.clone(),
             forbidden: true,
             allowed: orig.allowed.clone(),
-            allow_loopback: orig.allow_loopback,
+            loopback: orig.loopback.clone(),
             next_pid: Rc::clone(&orig.next_pid),
         });
         return Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?);
@@ -911,7 +923,7 @@ fn command_within_fake(
             prefix: Some(raw.to_string()),
             forbidden: true,
             allowed: orig.allowed.clone(),
-            allow_loopback: orig.allow_loopback,
+            loopback: orig.loopback.clone(),
             next_pid: Rc::clone(&orig.next_pid),
         });
         return Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?);
@@ -930,7 +942,7 @@ fn command_within_fake(
         prefix,
         forbidden: false,
         allowed: orig.allowed.clone(),
-        allow_loopback: orig.allow_loopback,
+        loopback: orig.loopback.clone(),
         next_pid: Rc::clone(&orig.next_pid),
     });
     Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?)
@@ -969,7 +981,7 @@ fn command_within_real(
             forbidden,
             prefix,
             allowed: orig.allowed.clone(),
-            allow_loopback: orig.allow_loopback,
+            loopback: orig.loopback.clone(),
             open_folders: Rc::clone(open_folders),
         });
         Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(cap))?)

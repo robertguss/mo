@@ -14,7 +14,7 @@ use mo_bytecode::types::TypeTable;
 use mo_def::HostOpId;
 use mo_def::limits::{
     MO_LIMIT_FAKE_QUOTE, MO_LIMIT_HOST_NAME, MO_LIMIT_LOOKUP_ADDRESSES, MO_LIMIT_LOOKUPS,
-    MO_LIMIT_OPEN_CONNECTIONS, MO_LIMIT_RECEIVE_BYTES,
+    MO_LIMIT_OPEN_CONNECTIONS, MO_LIMIT_RECEIVE_BYTES, MO_LIMIT_RECORDED_CALLS,
 };
 use mo_heap::{Heap, ScratchGuard, Value};
 use rustls::pki_types::{CertificateDer, ServerName};
@@ -410,19 +410,42 @@ fn is_loopback_host(host: &str) -> bool {
     matches!(host, "127.0.0.1" | "localhost" | "::1")
 }
 
-pub(crate) fn network_allows_loopback(cap_val: &Value, require_real: bool) -> bool {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LoopbackAccess {
+    Denied,
+    AllPorts,
+    Ports(Vec<u16>),
+}
+
+pub(crate) fn network_loopback_access(cap_val: &Value, require_real: bool) -> LoopbackAccess {
     let net = crate::downcast_cap::<NetworkCap>(cap_val, "Network capability");
-    match net {
-        NetworkCap::Real { allowed } => allowed
-            .as_ref()
-            .is_none_or(|rules| rules.iter().any(|r| is_loopback_host(&r.host))),
+    let allowed = match net {
+        NetworkCap::Real { allowed } => allowed,
         NetworkCap::Fake { allowed, .. } | NetworkCap::FakeScripted { allowed, .. } => {
-            !require_real
-                && allowed
-                    .as_ref()
-                    .is_none_or(|rules| rules.iter().any(|r| is_loopback_host(&r.host)))
+            if require_real {
+                return LoopbackAccess::Denied;
+            }
+            allowed
         }
+    };
+    let Some(rules) = allowed else {
+        return LoopbackAccess::AllPorts;
+    };
+    let mut ports = Vec::new();
+    let mut any_loopback = false;
+    for r in rules.iter().filter(|r| is_loopback_host(&r.host)) {
+        any_loopback = true;
+        if r.port == 0 {
+            return LoopbackAccess::AllPorts;
+        }
+        ports.push(r.port);
     }
+    if !any_loopback {
+        return LoopbackAccess::Denied;
+    }
+    ports.sort_unstable();
+    ports.dedup();
+    LoopbackAccess::Ports(ports)
 }
 
 // ---------------------------------------------------------------------------
@@ -1192,10 +1215,8 @@ pub(crate) fn network_fake_scripted(
     )?)
 }
 
-const MO_LIMIT_RECORDED_CALLS: usize = 4096;
-
 fn push_recorded_call(recorded: &mut Vec<RecordedCallEntry>, entry: RecordedCallEntry) {
-    if recorded.len() < MO_LIMIT_RECORDED_CALLS {
+    if recorded.len() < MO_LIMIT_RECORDED_CALLS as usize {
         recorded.push(entry);
     }
 }
