@@ -1113,8 +1113,22 @@ struct WorkerPool {
     sse_relay: SseRelayPool,
     stopping: AtomicBool,
     data_dir: PathBuf,
+    bound_bind: String,
+    bound_port: u16,
     limits: Limits,
     log_mutex: Mutex<()>,
+}
+
+#[cfg(unix)]
+fn worker_env_vars(pool: &WorkerPool) -> Vec<(String, String)> {
+    let mut env_vars: Vec<(String, String)> = std::env::vars().collect();
+    if !env_vars.iter().any(|(k, _)| k == "MO_SERVE_BIND") {
+        env_vars.push(("MO_SERVE_BIND".to_string(), pool.bound_bind.clone()));
+    }
+    if !env_vars.iter().any(|(k, _)| k == "MO_SERVE_PORT") {
+        env_vars.push(("MO_SERVE_PORT".to_string(), pool.bound_port.to_string()));
+    }
+    env_vars
 }
 
 #[cfg(unix)]
@@ -1176,7 +1190,7 @@ fn dispatch_vm_request(
     keep_alive: bool,
     stream_opt: &mut Option<TcpStream>,
 ) -> DispatchOutcome {
-    let env_vars: Vec<(String, String)> = std::env::vars().collect();
+    let env_vars = worker_env_vars(pool);
     let host = match HostContext::stdio_with_root(Vec::new(), env_vars, Some(&pool.data_dir)) {
         Ok(h) => h,
         Err(_) => {
@@ -1681,7 +1695,7 @@ fn job_worker_main(pool: Arc<WorkerPool>) {
                 }
                 if Instant::now() >= *next_due {
                     let start = Instant::now();
-                    let env_vars: Vec<(String, String)> = std::env::vars().collect();
+                    let env_vars = worker_env_vars(&pool);
                     let outcome_str = if let Ok(host) =
                         HostContext::stdio_with_root(Vec::new(), env_vars, Some(&pool.data_dir))
                     {
@@ -1903,6 +1917,8 @@ pub fn run_serve_api(
         sse_relay: SseRelayPool::default_pool(),
         stopping: AtomicBool::new(false),
         data_dir: data_dir.to_path_buf(),
+        bound_bind: bind_host.to_string(),
+        bound_port: actual_port,
         limits: req_limits,
         log_mutex: Mutex::new(()),
     });

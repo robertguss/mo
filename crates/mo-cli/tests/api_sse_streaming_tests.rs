@@ -768,4 +768,100 @@ end
         let _ = fs::remove_dir_all(&dir);
         Ok(())
     }
+
+    #[test]
+    fn mo_serve_job_reads_bound_port_and_pushes_to_sse_subscribers() -> Result<(), Box<dyn Error>> {
+        let dir = temp_dir("mo_serve_job_sse_push")?;
+        let ready_file = dir.join("ready.txt");
+        let main_mo = dir.join("main.mo");
+        let src = r##"module Main
+use Api
+use Http
+use Json
+
+api
+  job "tick" tick_job every 1.second
+  get "/events" get_events
+  post "/internal/publish" post_publish
+end
+
+fn get_events() : Api.Response
+  Api.sse_stream_with(["jobs"], None, Some(1000), [(Some("ready"), "{}")])
+end
+
+fn post_publish(body: Json) : Api.Response
+  Api.with_sse_publish_json(
+    Api.json_response(200, Json.Object({"ok": Json.Boolean(true)})),
+    "jobs",
+    "job.tick",
+    body
+  )
+end
+
+fn tick_job(_payload: Json, env: Env, network: Network) : Result(Unit, Text)
+  port = env.get("MO_SERVE_PORT") or ""
+  bind = env.get("MO_SERVE_BIND") or ""
+  return Ok(Unit) if port.empty? or bind.empty?
+  pinned = network.allow_hosts(["127.0.0.1:#{port}"])
+  payload = Json.Object({"port": Json.String(port), "bind": Json.String(bind)})
+  _resp = try Http.post("http://127.0.0.1:#{port}/internal/publish")
+    .json(payload)
+    .within(2.seconds)
+    .send(pinned)
+    .map_error(fn(e) "#{e}" end)
+  Ok(Unit)
+end
+
+fn main() : Int
+  0
+end
+"##;
+        fs::write(&main_mo, src)?;
+
+        let child = Command::new(mo_bin())
+            .arg("serve")
+            .arg(&main_mo)
+            .arg("--bind")
+            .arg("127.0.0.1")
+            .arg("--port")
+            .arg("0")
+            .arg("--workers")
+            .arg("2")
+            .arg("--data")
+            .arg(&dir)
+            .arg("--ready-file")
+            .arg(&ready_file)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let mut guard = ServeGuard { child };
+        let port = wait_ready_port(&ready_file, &mut guard.child)?;
+
+        let mut sub = open_sse_stream(port, "/events", None)?;
+        sub.read_until_contains("event: ready\ndata: {}\n\n")?;
+        let tick = sub.read_until_contains(&format!("\"port\":\"{port}\""))?;
+        assert!(tick.contains("event: job.tick\n"), "{tick}");
+        assert!(tick.contains("id: 1\n"), "{tick}");
+
+        if let Some(pid) = rustix::process::Pid::from_raw(guard.child.id() as i32) {
+            rustix::process::kill_process(pid, rustix::process::Signal::TERM)?;
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = guard.child.try_wait()? {
+                assert!(
+                    status.success(),
+                    "expected clean SIGTERM exit, got {status}"
+                );
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err("mo serve did not exit cleanly after SIGTERM".into());
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        drop(sub);
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
 }
