@@ -27,6 +27,10 @@ use mo_heap::{Heap, ScratchGuard, Value};
 use rustix::fs::{Access, AtFlags, CWD, FileType, OFlags, access, fcntl_setfl, fstat, statat};
 #[cfg(unix)]
 use rustix::io::fcntl_dupfd_cloexec;
+#[cfg(unix)]
+use rustix::io::read as read_fd;
+#[cfg(unix)]
+use rustix::pipe::{PipeFlags, pipe_with};
 #[cfg(target_os = "linux")]
 use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
 
@@ -693,9 +697,14 @@ fn spawn_confined_child(
         return Err(("spawn_failed:confinement unavailable", String::new()));
     }
 
+    let mut exec_status = None;
     let mut cmd = if let Some(trampoline) = trampoline {
+        let (read, write) = pipe_with(PipeFlags::CLOEXEC)
+            .map_err(|_| ("spawn_failed:pipe failed", String::new()))?;
+        exec_status = Some(read);
         let mut c = Command::new(trampoline);
-        c.arg(crate::confine::INTERNAL_COMMAND_TRAMPOLINE_ARG)
+        c.stdin(Stdio::from(write))
+            .arg(crate::confine::INTERNAL_COMMAND_TRAMPOLINE_ARG)
             .arg("--dev")
             .arg(workdir_stat.st_dev.to_string())
             .arg("--ino")
@@ -734,14 +743,12 @@ fn spawn_confined_child(
         c
     } else {
         let mut c = Command::new(&exe_path);
-        c.args(&arg_strs);
+        c.stdin(Stdio::null()).args(&arg_strs);
         c
     };
 
-    let child = cmd
-        .process_group(0)
+    cmd.process_group(0)
         .current_dir(&workdir_path)
-        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env_clear()
@@ -749,9 +756,35 @@ fn spawn_confined_child(
         .env("HOME", &workdir_path)
         .env("TMPDIR", &tmp_guard.0)
         .env("LANG", "C.UTF-8")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    if exec_status.is_some() {
+        cmd.env(crate::confine::EXEC_STATUS_STDIN, "1");
+    }
+    let mut child = cmd
         .spawn()
         .map_err(|_| ("spawn_failed:fork failed", String::new()))?;
+    drop(cmd);
+    if let Some(read) = exec_status {
+        let mut status = [0u8; crate::confine::EXEC_STATUS_BYTES];
+        loop {
+            match read_fd(&read, &mut status) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let _ = child.wait();
+                    return Err((
+                        "spawn_failed:",
+                        String::from_utf8_lossy(&status[..n]).into_owned(),
+                    ));
+                }
+                Err(rustix::io::Errno::INTR) => continue,
+                Err(err) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(("spawn_failed:exec status pipe failed: ", err.to_string()));
+                }
+            }
+        }
+    }
     Ok((child, tmp_guard))
 }
 
@@ -1360,17 +1393,6 @@ fn command_run_real(
         drop(io_scratch);
         return command_error_tag(heap, types, result_ty, "timed_out", "");
     }
-    if st.code() == Some(125) {
-        drop(io_scratch);
-        return command_error_tag(
-            heap,
-            types,
-            result_ty,
-            "spawn_failed:could not confine command child",
-            "",
-        );
-    }
-
     let exit_code = match st.code() {
         Some(c) => i64::from(c),
         None => 128 + i64::from(st.signal().unwrap_or(0)),
@@ -1473,17 +1495,6 @@ fn process_wait_real(
         st.captured = Some(Err("timed_out"));
         return command_error_tag(heap, types, result_ty, "timed_out", "");
     }
-    if es.code() == Some(125) {
-        st.captured = Some(Err("spawn_failed:could not confine command child"));
-        return command_error_tag(
-            heap,
-            types,
-            result_ty,
-            "spawn_failed:could not confine command child",
-            "",
-        );
-    }
-
     let exit_code = match es.code() {
         Some(c) => i64::from(c),
         None => 128 + i64::from(es.signal().unwrap_or(0)),
