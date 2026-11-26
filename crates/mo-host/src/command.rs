@@ -8,7 +8,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -25,13 +25,13 @@ use mo_heap::{Heap, ScratchGuard, Value};
 use rustix::fs::{Access, AtFlags, CWD, FileType, OFlags, access, fcntl_setfl, fstat, statat};
 #[cfg(unix)]
 use rustix::io::fcntl_dupfd_cloexec;
+#[cfg(unix)]
+use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
 
 use crate::HostError;
 use crate::files_common::{FileStatus, find_case_tag, join_path, prepare_real_path};
 #[cfg(unix)]
 use crate::real_files::{PathMode, ResolverState, dir_fd_path, resolve};
-
-static NEXT_FAKE_PID: AtomicI64 = AtomicI64::new(10_000);
 
 #[cfg(unix)]
 struct RealCommandCap {
@@ -59,6 +59,7 @@ struct FakeCommandCap {
     forbidden: bool,
     allowed: Option<Vec<String>>,
     allow_loopback: bool,
+    next_pid: Rc<Cell<i64>>,
 }
 
 enum CommandCap {
@@ -76,13 +77,27 @@ pub(crate) struct CommandCounters<'a> {
 }
 
 #[cfg(unix)]
+struct PipeDrainInner {
+    buf: Vec<u8>,
+    too_large: bool,
+    done: bool,
+}
+
+#[cfg(unix)]
+struct PipeDrainer {
+    shared: Arc<(Mutex<PipeDrainInner>, Condvar)>,
+    handle: Option<JoinHandle<()>>,
+}
+
+#[cfg(unix)]
 struct RealProcessState {
     pid: i64,
     raw_pid: u32,
     child: Child,
+    reaped: bool,
     exit_status: Option<ExitStatus>,
-    out_reader: Option<JoinHandle<(Vec<u8>, bool)>>,
-    err_reader: Option<JoinHandle<(Vec<u8>, bool)>>,
+    out_reader: Option<PipeDrainer>,
+    err_reader: Option<PipeDrainer>,
     captured: Option<CapturedProcessOutput>,
     _tmp_guard: TempDirGuard,
 }
@@ -94,25 +109,75 @@ struct RealProcessCap {
 }
 
 #[cfg(unix)]
+fn child_exited_nowait(child: &Child) -> bool {
+    if let Ok(raw) = i32::try_from(child.id())
+        && let Some(pid) = Pid::from_raw(raw)
+    {
+        return matches!(
+            waitid(
+                WaitId::Pid(pid),
+                WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+            ),
+            Ok(Some(_))
+        );
+    }
+    false
+}
+
+#[cfg(unix)]
+fn reap_and_kill_tree(st: &mut RealProcessState) {
+    if !st.reaped {
+        crate::confine::kill_child_tree(st.raw_pid);
+        let _ = st.child.kill();
+        st.exit_status = st.child.wait().ok();
+        st.reaped = true;
+    }
+}
+
+#[cfg(unix)]
+fn take_drainer_bounded(
+    drainer_opt: &mut Option<PipeDrainer>,
+    budget: Duration,
+) -> (Vec<u8>, bool) {
+    let Some(mut d) = drainer_opt.take() else {
+        return (Vec::new(), false);
+    };
+    let (lock, cv) = &*d.shared;
+    let deadline = Instant::now() + budget;
+    let mut inner = lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    while !inner.done {
+        let now = Instant::now();
+        if now >= deadline {
+            break;
+        }
+        let rem = deadline - now;
+        let (guard, wait_res) = cv
+            .wait_timeout(inner, rem)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        inner = guard;
+        if !inner.done && wait_res.timed_out() {
+            break;
+        }
+    }
+    let buf = std::mem::take(&mut inner.buf);
+    let too_large = inner.too_large;
+    let is_done = inner.done;
+    drop(inner);
+    if is_done && let Some(h) = d.handle.take() {
+        let _ = h.join();
+    }
+    (buf, too_large)
+}
+
+#[cfg(unix)]
 impl Drop for RealProcessCap {
     fn drop(&mut self) {
         let mut st = self.state.borrow_mut();
-        if st.exit_status.is_none() {
-            match st.child.try_wait() {
-                Ok(Some(es)) => st.exit_status = Some(es),
-                _ => {
-                    crate::confine::kill_child_tree(st.raw_pid);
-                    let _ = st.child.kill();
-                    st.exit_status = st.child.wait().ok();
-                }
-            }
-        }
-        if let Some(h) = st.out_reader.take() {
-            let _ = h.join();
-        }
-        if let Some(h) = st.err_reader.take() {
-            let _ = h.join();
-        }
+        reap_and_kill_tree(&mut st);
+        let _ = take_drainer_bounded(&mut st.out_reader, Duration::from_millis(250));
+        let _ = take_drainer_bounded(&mut st.err_reader, Duration::from_millis(250));
         let cur = self.open_processes.get();
         debug_assert!(cur != 0);
         self.open_processes.set(cur.saturating_sub(1));
@@ -468,8 +533,18 @@ fn make_temp_dir() -> Option<TempDirGuard> {
 }
 
 #[cfg(unix)]
-fn spawn_pipe_drainer<R: Read + Send + 'static>(mut pipe: R) -> JoinHandle<(Vec<u8>, bool)> {
+fn spawn_pipe_drainer<R: Read + Send + 'static>(pipe: R) -> Result<PipeDrainer, &'static str> {
+    let mut pipe = pipe;
     let max_out = MO_LIMIT_COMMAND_OUTPUT_BYTES as usize;
+    let shared = Arc::new((
+        Mutex::new(PipeDrainInner {
+            buf: Vec::new(),
+            too_large: false,
+            done: false,
+        }),
+        Condvar::new(),
+    ));
+    let worker_shared = Arc::clone(&shared);
     let builder = std::thread::Builder::new()
         .name("mo-cmd-pipe".to_string())
         .stack_size(256 * 1024);
@@ -494,12 +569,22 @@ fn spawn_pipe_drainer<R: Read + Send + 'static>(mut pipe: R) -> JoinHandle<(Vec<
                 Err(_) => break,
             }
         }
-        (buf, too_large)
+        let (lock, cv) = &*worker_shared;
+        let mut inner = lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        inner.buf = buf;
+        inner.too_large = too_large;
+        inner.done = true;
+        cv.notify_all();
     };
-    match builder.spawn(task) {
-        Ok(h) => h,
-        Err(_) => std::thread::spawn(|| (Vec::new(), false)),
-    }
+    let handle = builder
+        .spawn(task)
+        .map_err(|_| "spawn_failed:could not spawn pipe reader thread")?;
+    Ok(PipeDrainer {
+        shared,
+        handle: Some(handle),
+    })
 }
 
 #[cfg(unix)]
@@ -673,6 +758,7 @@ pub(crate) fn command_fake(
         forbidden: false,
         allowed: None,
         allow_loopback: false,
+        next_pid: Rc::new(Cell::new(10_000)),
     });
     Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(cap))?)
 }
@@ -688,6 +774,13 @@ fn command_allow_loopback(
     args: &[Value],
 ) -> Result<Value, HostError> {
     let cap = crate::downcast_cap::<CommandCap>(&args[0], "Command capability");
+    let permitted = crate::network::network_allows_loopback(
+        &args[1],
+        #[cfg(unix)]
+        matches!(cap, CommandCap::Real(_)),
+        #[cfg(not(unix))]
+        false,
+    );
     match cap {
         CommandCap::Fake(f) => {
             let new_cap = CommandCap::Fake(FakeCommandCap {
@@ -695,7 +788,8 @@ fn command_allow_loopback(
                 prefix: f.prefix.clone(),
                 forbidden: f.forbidden,
                 allowed: f.allowed.clone(),
-                allow_loopback: true,
+                allow_loopback: permitted,
+                next_pid: Rc::clone(&f.next_pid),
             });
             Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?)
         }
@@ -718,7 +812,7 @@ fn command_allow_loopback(
                 forbidden: r.forbidden,
                 prefix: r.prefix.clone(),
                 allowed: r.allowed.clone(),
-                allow_loopback: true,
+                allow_loopback: permitted,
                 open_folders: Rc::clone(open_folders),
             });
             Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?)
@@ -763,6 +857,7 @@ fn command_allow_programs(
                 forbidden: f.forbidden,
                 allowed: Some(next_allowed),
                 allow_loopback: f.allow_loopback,
+                next_pid: Rc::clone(&f.next_pid),
             });
             Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?)
         }
@@ -806,6 +901,7 @@ fn command_within_fake(
             forbidden: true,
             allowed: orig.allowed.clone(),
             allow_loopback: orig.allow_loopback,
+            next_pid: Rc::clone(&orig.next_pid),
         });
         return Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?);
     }
@@ -816,6 +912,7 @@ fn command_within_fake(
             forbidden: true,
             allowed: orig.allowed.clone(),
             allow_loopback: orig.allow_loopback,
+            next_pid: Rc::clone(&orig.next_pid),
         });
         return Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?);
     };
@@ -834,6 +931,7 @@ fn command_within_fake(
         forbidden: false,
         allowed: orig.allowed.clone(),
         allow_loopback: orig.allow_loopback,
+        next_pid: Rc::clone(&orig.next_pid),
     });
     Ok(heap.alloc_capability(Capability::Command, result_ty, Rc::new(new_cap))?)
 }
@@ -941,7 +1039,8 @@ fn command_spawn_fake(
             command_error_tag(heap, types, result_ty, prefix, &detail)
         }
         FakeLookup::Ok(status, stdout, stderr) => {
-            let pid = NEXT_FAKE_PID.fetch_add(1, Ordering::Relaxed);
+            let pid = fake.next_pid.get();
+            fake.next_pid.set(pid + 1);
             let ok_tag = find_case_tag(types, result_ty, "Ok");
             let proc_ty = types.get(result_ty).cases[ok_tag as usize].fields[0].ty;
             let proc_cap = ProcessCap::Fake(FakeProcessCap {
@@ -987,8 +1086,30 @@ fn command_spawn_real(
 
     let raw_pid = child.id();
     let pid = i64::from(raw_pid);
-    let out_reader = child.stdout.take().map(spawn_pipe_drainer);
-    let err_reader = child.stderr.take().map(spawn_pipe_drainer);
+    let out_reader = match child.stdout.take() {
+        Some(p) => match spawn_pipe_drainer(p) {
+            Ok(d) => Some(d),
+            Err(tag) => {
+                crate::confine::kill_child_tree(raw_pid);
+                let _ = child.kill();
+                let _ = child.wait();
+                return command_error_tag(heap, types, result_ty, tag, "");
+            }
+        },
+        None => None,
+    };
+    let err_reader = match child.stderr.take() {
+        Some(p) => match spawn_pipe_drainer(p) {
+            Ok(d) => Some(d),
+            Err(tag) => {
+                crate::confine::kill_child_tree(raw_pid);
+                let _ = child.kill();
+                let _ = child.wait();
+                return command_error_tag(heap, types, result_ty, tag, "");
+            }
+        },
+        None => None,
+    };
 
     open_processes.set(open_processes.get() + 1);
     let proc_cap = ProcessCap::Real(RealProcessCap {
@@ -996,6 +1117,7 @@ fn command_spawn_real(
             pid,
             raw_pid,
             child,
+            reaped: false,
             exit_status: None,
             out_reader,
             err_reader,
@@ -1223,6 +1345,32 @@ fn command_run_real(
 }
 
 #[cfg(unix)]
+fn drainer_done(drainer: &Option<PipeDrainer>) -> bool {
+    let Some(d) = drainer else {
+        return true;
+    };
+    d.shared
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .done
+}
+
+#[cfg(unix)]
+fn wait_drainer_briefly(drainer: &Option<PipeDrainer>, step: Duration) {
+    let Some(d) = drainer else {
+        return;
+    };
+    let (lock, cv) = &*d.shared;
+    let guard = lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !guard.done {
+        let _ = cv.wait_timeout(guard, step);
+    }
+}
+
+#[cfg(unix)]
 fn process_wait_real(
     heap: &Heap,
     types: &TypeTable,
@@ -1242,39 +1390,32 @@ fn process_wait_real(
 
     let deadline = Instant::now() + Duration::from_micros(timeout_us as u64);
     let mut timed_out = false;
-    while st.exit_status.is_none() {
-        match st.child.try_wait() {
-            Ok(Some(es)) => {
-                st.exit_status = Some(es);
-                break;
-            }
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    timed_out = true;
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(2));
-            }
-            Err(_) => break,
+    loop {
+        let exited = st.reaped || child_exited_nowait(&st.child);
+        let out_done = drainer_done(&st.out_reader);
+        let err_done = drainer_done(&st.err_reader);
+        if exited && out_done && err_done {
+            break;
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            timed_out = true;
+            break;
+        }
+        let step = (deadline - now).min(Duration::from_millis(5));
+        if !out_done {
+            wait_drainer_briefly(&st.out_reader, step);
+        } else if !err_done {
+            wait_drainer_briefly(&st.err_reader, step);
+        } else {
+            std::thread::sleep(step.min(Duration::from_millis(2)));
         }
     }
 
-    if st.exit_status.is_none() {
-        crate::confine::kill_child_tree(st.raw_pid);
-        let _ = st.child.kill();
-        st.exit_status = st.child.wait().ok();
-    }
+    reap_and_kill_tree(&mut st);
 
-    let (out_buf, out_large) = st
-        .out_reader
-        .take()
-        .and_then(|h| h.join().ok())
-        .unwrap_or_else(|| (Vec::new(), false));
-    let (err_buf, err_large) = st
-        .err_reader
-        .take()
-        .and_then(|h| h.join().ok())
-        .unwrap_or_else(|| (Vec::new(), false));
+    let (out_buf, out_large) = take_drainer_bounded(&mut st.out_reader, Duration::from_millis(250));
+    let (err_buf, err_large) = take_drainer_bounded(&mut st.err_reader, Duration::from_millis(250));
 
     if timed_out {
         st.captured = Some(Err("timed_out"));
@@ -1302,6 +1443,10 @@ fn process_wait_real(
             "",
         );
     }
+
+    let mut io_scratch = ScratchGuard::new(heap.budget());
+    io_scratch.charge(out_buf.len().saturating_add(err_buf.len()))?;
+    drop(io_scratch);
 
     let exit_code = match es.code() {
         Some(c) => i64::from(c),
@@ -1398,11 +1543,8 @@ pub(crate) fn call_command(
             match proc_cap {
                 #[cfg(unix)]
                 ProcessCap::Real(r) => {
-                    let mut st = r.state.borrow_mut();
-                    if st.exit_status.is_some() {
-                        Ok(Value::Bool(false))
-                    } else if let Ok(Some(es)) = st.child.try_wait() {
-                        st.exit_status = Some(es);
+                    let st = r.state.borrow();
+                    if st.reaped || st.exit_status.is_some() || child_exited_nowait(&st.child) {
                         Ok(Value::Bool(false))
                     } else {
                         Ok(Value::Bool(true))
@@ -1418,16 +1560,9 @@ pub(crate) fn call_command(
                 #[cfg(unix)]
                 ProcessCap::Real(r) => {
                     let mut st = r.state.borrow_mut();
-                    if st.exit_status.is_none() {
-                        match st.child.try_wait() {
-                            Ok(Some(es)) => st.exit_status = Some(es),
-                            _ => {
-                                crate::confine::kill_child_tree(st.raw_pid);
-                                let _ = st.child.kill();
-                                st.exit_status = st.child.wait().ok();
-                            }
-                        }
-                    }
+                    reap_and_kill_tree(&mut st);
+                    let _ = take_drainer_bounded(&mut st.out_reader, Duration::from_millis(250));
+                    let _ = take_drainer_bounded(&mut st.err_reader, Duration::from_millis(250));
                     command_ok_unit(heap, types, result_ty)
                 }
                 ProcessCap::Fake(f) => {

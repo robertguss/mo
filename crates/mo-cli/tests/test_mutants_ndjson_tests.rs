@@ -287,3 +287,63 @@ fn strength_ndjson_and_parallel_jobs_deterministic() -> Result<(), Box<dyn Error
     assert!(summary_lines[0].contains("\"partial\":false"));
     Ok(())
 }
+
+#[test]
+fn mutants_ndjson_parallel_jobs_deterministic_with_simulations() -> Result<(), Box<dyn Error>> {
+    let dir = temp_dir("parallel-sim-mutants")?;
+    let main_mo = dir.join("main.mo");
+    fs::write(
+        &main_mo,
+        r#"module Main
+
+struct CounterState
+  total: Int
+end
+
+actor Counter
+  state CounterState = CounterState(total: 0)
+  call add(delta: Int) : Int
+end
+
+fn add(s: CounterState, delta: Int) : (CounterState, Int)
+  next = s.total + delta
+  (CounterState(total: next), next)
+end
+
+fn bump(x: Int) : Int
+  if x > 0: x + 1 else: x
+end
+
+test "two concurrent simulations stay isolated across parallel --jobs workers"
+  t0 = Time.parse("2026-11-22T09:00:00Z") or stop "t0"
+  sim1 = Simulation.start(Counter, t0)
+  sim2 = Simulation.start(Counter, t0)
+  assert sim1.Counter.add(2) == Ok(2)
+  assert sim2.Counter.add(5) == Ok(5)
+  _ = bump(10)
+end
+"#,
+    )?;
+
+    let j1 = Command::new(mo_bin())
+        .args(["test", "--json", "--jobs", "1", "--mutants"])
+        .arg(&main_mo)
+        .output()?;
+    let j4 = Command::new(mo_bin())
+        .args(["test", "--json", "--jobs", "4", "--mutants"])
+        .arg(&main_mo)
+        .output()?;
+    assert_eq!(j1.status.code(), Some(1), "bump mutants should survive");
+    assert_eq!(j4.status.code(), Some(1), "parallel run must match serial");
+
+    let s1 = String::from_utf8(j1.stdout)?;
+    let s4 = String::from_utf8(j4.stdout)?;
+    assert_eq!(
+        strip_microseconds(&s1),
+        strip_microseconds(&s4),
+        "Simulation tests under --jobs 4 must produce identical NDJSON to --jobs 1"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+    Ok(())
+}

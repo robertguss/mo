@@ -41,6 +41,234 @@ fn report(
     diags.push(diag).unwrap_or(false)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "program-level SQLite stats check inspects entry, apis, services, functions, and constants"
+)]
+fn check_sqlite_stats_reachability(
+    modules: &ModuleSet,
+    interfaces: &ModuleInterfaces,
+    functions: &[CheckedFunction],
+    constants: &[crate::checked::CheckedConstant],
+    services: &[crate::checked::CheckedService],
+    apis: &[crate::checked::CheckedApi],
+    entry_func: Option<CheckedFuncId>,
+    diags: &mut DiagBag,
+) -> bool {
+    use std::collections::HashMap;
+
+    let sym_to_func: HashMap<SymRef, usize> = functions
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.symbol, i))
+        .collect();
+    let sym_to_const: HashMap<SymRef, usize> = constants
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (c.symbol, i))
+        .collect();
+
+    let fn_count = functions.len();
+    let const_count = constants.len();
+    let mut fn_reaches: Vec<Option<Span>> = vec![None; fn_count];
+    let mut fn_edges: Vec<Vec<(usize, Span)>> = vec![Vec::new(); fn_count];
+    let mut fn_const_edges: Vec<Vec<(usize, Span)>> = vec![Vec::new(); fn_count];
+
+    let mut const_reaches: Vec<Option<Span>> = vec![None; const_count];
+    let mut const_fn_edges: Vec<Vec<(usize, Span)>> = vec![Vec::new(); const_count];
+    let mut const_const_edges: Vec<Vec<(usize, Span)>> = vec![Vec::new(); const_count];
+
+    let scan_body = |owner_mod: ModuleId,
+                     body: &CheckedBody,
+                     out_direct: &mut Option<Span>,
+                     out_fn_edges: &mut Vec<(usize, Span)>,
+                     out_const_edges: &mut Vec<(usize, Span)>| {
+        let tree = &modules.module(owner_mod).syntax.tree;
+        for expr in &body.items {
+            let expr_span = tree.node(expr.syntax).span;
+            let is_direct = matches!(
+                expr.native.as_deref(),
+                Some(
+                    "Sqlite.stats_raw"
+                        | "Sqlite.reset_stats_raw"
+                        | "Sqlite.stats"
+                        | "Sqlite.reset_stats"
+                )
+            ) || expr.symbol.is_some_and(|sr| {
+                let sc = interfaces.scope(sr.module);
+                let sym = interfaces.symbol(sr);
+                sc.library
+                    && sc.name.as_deref() == Some("Sqlite")
+                    && matches!(
+                        sym.name.as_str(),
+                        "stats" | "reset_stats" | "stats_raw" | "reset_stats_raw"
+                    )
+            });
+            if is_direct && out_direct.is_none() {
+                *out_direct = Some(expr_span);
+            }
+            if let Some(sr) = expr.symbol {
+                if let Some(&callee) = sym_to_func.get(&sr) {
+                    out_fn_edges.push((callee, expr_span));
+                }
+                if let Some(&c_idx) = sym_to_const.get(&sr) {
+                    out_const_edges.push((c_idx, expr_span));
+                }
+            }
+        }
+    };
+
+    for (i, f) in functions.iter().enumerate() {
+        let m = interfaces.symbol(f.symbol).module;
+        scan_body(
+            m,
+            &f.body,
+            &mut fn_reaches[i],
+            &mut fn_edges[i],
+            &mut fn_const_edges[i],
+        );
+    }
+    for (i, c) in constants.iter().enumerate() {
+        let m = interfaces.symbol(c.symbol).module;
+        scan_body(
+            m,
+            &c.initializer,
+            &mut const_reaches[i],
+            &mut const_fn_edges[i],
+            &mut const_const_edges[i],
+        );
+    }
+
+    loop {
+        let mut changed = false;
+        for i in 0..fn_count {
+            if fn_reaches[i].is_some() {
+                continue;
+            }
+            for &(callee, span) in &fn_edges[i] {
+                if fn_reaches[callee].is_some() {
+                    fn_reaches[i] = Some(span);
+                    changed = true;
+                    break;
+                }
+            }
+            if fn_reaches[i].is_some() {
+                continue;
+            }
+            for &(c_idx, span) in &fn_const_edges[i] {
+                if const_reaches[c_idx].is_some() {
+                    fn_reaches[i] = Some(span);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        for i in 0..const_count {
+            if const_reaches[i].is_some() {
+                continue;
+            }
+            for &(callee, span) in &const_fn_edges[i] {
+                if fn_reaches[callee].is_some() {
+                    const_reaches[i] = Some(span);
+                    changed = true;
+                    break;
+                }
+            }
+            if const_reaches[i].is_some() {
+                continue;
+            }
+            for &(c_idx, span) in &const_const_edges[i] {
+                if const_reaches[c_idx].is_some() {
+                    const_reaches[i] = Some(span);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    let report_violation = |diags: &mut DiagBag, span: Span| -> bool {
+        let _ = report(
+            diags,
+            ErrorCode::FakeOutsideSpec,
+            span,
+            "Sqlite.stats and Sqlite.reset_stats are reachable only from tests, examples, and promises",
+            Some(
+                "Query instrumentation belongs to fake or in-memory test databases, never main, \
+                 services, actors, constants, or route handlers (reference 12.4).",
+            ),
+        );
+        false
+    };
+
+    if let Some(eid) = entry_func
+        && let Some(span) = fn_reaches[eid.index()]
+    {
+        return report_violation(diags, span);
+    }
+    for api in apis {
+        if let Some(ref auth) = api.auth
+            && let Some(span) = fn_reaches[auth.function.index()]
+        {
+            return report_violation(diags, span);
+        }
+        for route in &api.routes {
+            if let Some(span) = fn_reaches[route.function.index()] {
+                return report_violation(diags, span);
+            }
+        }
+        for job in &api.jobs {
+            if let Some(span) = fn_reaches[job.function.index()] {
+                return report_violation(diags, span);
+            }
+        }
+    }
+    for svc in services {
+        let mut dummy_dir = None;
+        let mut init_fns = Vec::new();
+        let mut init_consts = Vec::new();
+        scan_body(
+            svc.module,
+            &svc.initializer,
+            &mut dummy_dir,
+            &mut init_fns,
+            &mut init_consts,
+        );
+        if let Some(span) = dummy_dir {
+            return report_violation(diags, span);
+        }
+        for (callee, span) in init_fns {
+            if fn_reaches[callee].is_some() {
+                return report_violation(diags, span);
+            }
+        }
+        for (c_idx, span) in init_consts {
+            if const_reaches[c_idx].is_some() {
+                return report_violation(diags, span);
+            }
+        }
+        for tool in &svc.tools {
+            if let Some(span) = fn_reaches[tool.function.index()] {
+                return report_violation(diags, span);
+            }
+        }
+        for timer in &svc.timers {
+            if let Some(span) = fn_reaches[timer.function.index()] {
+                return report_violation(diags, span);
+            }
+        }
+    }
+    for (i, _) in constants.iter().enumerate() {
+        if let Some(span) = const_reaches[i] {
+            return report_violation(diags, span);
+        }
+    }
+    true
+}
+
 fn resource_failed(diags: &DiagBag) -> bool {
     if diags.dropped() != 0 {
         return true;
@@ -1159,6 +1387,20 @@ fn check_program_inner(
 
     // Unused imports audit (`E0093`).
     if !check_imports(&modules, &mut signatures, diags) {
+        return None;
+    }
+
+    // Reject `Sqlite.stats` / `Sqlite.reset_stats` transitively reachable from production roots.
+    if !check_sqlite_stats_reachability(
+        &modules,
+        &interfaces,
+        &functions,
+        &raw_constants,
+        &services,
+        &apis,
+        checked_entry.function,
+        diags,
+    ) {
         return None;
     }
 

@@ -42,9 +42,13 @@ mod unix_tests {
     #[test]
     fn command_allow_loopback_permits_loopback_and_blocks_non_loopback()
     -> Result<(), Box<dyn Error>> {
-        if !mo_host::confine::can_confine() || !Path::new("/usr/bin/python3").exists() {
+        if !mo_host::confine::can_confine() {
             return Ok(());
         }
+        assert!(
+            Path::new("/usr/bin/python3").exists(),
+            "/usr/bin/python3 is required when Linux confinement is enabled"
+        );
 
         let dir = temp_dir("loopback")?;
 
@@ -69,11 +73,12 @@ mod unix_tests {
             r##"module Main
 use Command
 
-fn main(console: Console, cmd: Command) : Unit
+fn main(console: Console, cmd: Command, net: Network) : Unit
   py_default = cmd.allow_programs(["python3"])
-  py_loop = py_default.allow_loopback()
+  py_loop = py_default.allow_loopback(net)
+  py_disallowed = py_default.allow_loopback(net.allow_hosts(["example.com"]))
 
-  # 1. Without allow_loopback(), even loopback TCP socket creation is blocked with EPERM (1).
+  # 1. Without allow_loopback(net), even loopback TCP socket creation is blocked with EPERM (1).
   r_def = py_default.run(
     "python3",
     [
@@ -87,11 +92,25 @@ fn main(console: Console, cmd: Command) : Unit
     Error(_): console.print("DEF_ERR")
   end
 
-  # 2. With allow_loopback(), connecting to 127.0.0.1:{loop_port} succeeds, while:
+  # 1b. With a non-loopback Network allowlist, allow_loopback fails closed!
+  r_disallowed = py_disallowed.run(
+    "python3",
+    [
+      "-c",
+      "import socket\ntry:\n s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n print('DISALLOWED_OPEN')\nexcept OSError as e:\n print('DISALLOWED_BLOCKED', e.errno)\n"
+    ],
+    5.seconds
+  )
+  case r_disallowed
+    Ok(o): console.print(o.stdout.trim)
+    Error(_): console.print("DISALLOWED_ERR")
+  end
+
+  # 2. With allow_loopback(net), connecting to 127.0.0.1:{loop_port} succeeds, while:
   #    - connecting to external IP 1.1.1.1:80 is blocked by Landlock ConnectTcp (EACCES = 13)
   #    - connecting to wildcard listener port 127.0.0.1:{wildcard_port} is blocked by Landlock (EACCES = 13)
-  #    - creating a UDP socket (SOCK_DGRAM) is blocked by Seccomp (EPERM = 1)
-  script = "import socket\ns = socket.create_connection(('127.0.0.1', {loop_port}), timeout=2.0)\ns.sendall(b'ping-loopback')\nreply = s.recv(64).decode()\ns.close()\nprint('LOOP_OK:' + reply)\ntry:\n socket.create_connection(('1.1.1.1', 80), timeout=1.0)\n print('EXT_OPEN')\nexcept OSError as e:\n print('EXT_BLOCKED', e.errno)\ntry:\n socket.create_connection(('127.0.0.1', {wildcard_port}), timeout=1.0)\n print('WILD_OPEN')\nexcept OSError as e:\n print('WILD_BLOCKED', e.errno)\ntry:\n socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n print('UDP_OPEN')\nexcept OSError as e:\n print('UDP_BLOCKED', e.errno)\n"
+  #    - creating a UDP socket (SOCK_DGRAM) or AF_UNIX socket is blocked by Seccomp (EPERM = 1)
+  script = "import socket\ns = socket.create_connection(('127.0.0.1', {loop_port}), timeout=2.0)\ns.sendall(b'ping-loopback')\nreply = s.recv(64).decode()\ns.close()\nprint('LOOP_OK:' + reply)\ntry:\n socket.create_connection(('1.1.1.1', 80), timeout=1.0)\n print('EXT_OPEN')\nexcept OSError as e:\n print('EXT_BLOCKED', e.errno)\ntry:\n socket.create_connection(('127.0.0.1', {wildcard_port}), timeout=1.0)\n print('WILD_OPEN')\nexcept OSError as e:\n print('WILD_BLOCKED', e.errno)\ntry:\n socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n print('UDP_OPEN')\nexcept OSError as e:\n print('UDP_BLOCKED', e.errno)\ntry:\n socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)\n print('UNIX_OPEN')\nexcept OSError as e:\n print('UNIX_BLOCKED', e.errno)\n"
 
   r_loop = py_loop.run("python3", ["-c", script], 5.seconds)
   case r_loop
@@ -129,6 +148,10 @@ end
             "expected default Command to block AF_INET socket with EPERM(1), got:\n{stdout}"
         );
         assert!(
+            stdout.contains("DISALLOWED_BLOCKED 1"),
+            "expected non-loopback Network allowlist to keep AF_INET blocked with EPERM(1), got:\n{stdout}"
+        );
+        assert!(
             stdout.contains("LOOP_OK:ping-loopback"),
             "expected loopback TCP connect+echo to succeed, got:\n{stdout}"
         );
@@ -143,6 +166,10 @@ end
         assert!(
             stdout.contains("UDP_BLOCKED 1"),
             "expected SOCK_DGRAM UDP socket to be blocked with EPERM(1), got:\n{stdout}"
+        );
+        assert!(
+            stdout.contains("UNIX_BLOCKED 1"),
+            "expected AF_UNIX socket() to be blocked with EPERM(1), got:\n{stdout}"
         );
 
         let _ = fs::remove_dir_all(&dir);
@@ -274,7 +301,7 @@ use Http
 use Json
 
 fn main(console: Console, cmd: Command, files: Files, clock: Clock, net: Network) : Unit
-  mo_cmd = cmd.allow_programs(["mo"]).allow_loopback()
+  mo_cmd = cmd.allow_programs(["mo"]).allow_loopback(net)
   srv = case mo_cmd.spawn(
     "mo",
     ["serve", "app.mo", "--port", "0", "--data", "data", "--ready-file", "ready.json"]
@@ -410,6 +437,130 @@ end
             .status();
         let status = child.wait()?;
         assert_eq!(status.code(), Some(0), "expected clean exit 0 on SIGTERM");
+        assert!(
+            !ready2.exists(),
+            "expected ready2.json to be removed on clean shutdown"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn command_process_wait_bounds_and_kills_grandchildren() -> Result<(), Box<dyn Error>> {
+        let dir = temp_dir("grandchild")?;
+        let pid_file = dir.join("gc.pid");
+        let main_mo = dir.join("main.mo");
+        fs::write(
+            &main_mo,
+            r##"module Main
+use Command
+
+fn spawn_null_bg(cmd: Command) : Unit
+  p = case cmd.spawn("sh", ["-c", "sleep 29 >/dev/null 2>&1 & echo $! > gc.pid; echo leader-done"])
+    Ok(h): h
+    Error(_): stop "spawn null bg"
+  end
+  assert p.wait(2.seconds) is Ok(out) and out.stdout.contains?("leader-done")
+end
+
+fn main(console: Console, cmd: Command) : Unit
+  sh = cmd.allow_programs(["sh"])
+
+  # 1. Background grandchild holding stdout/stderr MUST NOT cause wait(500ms) to block until child exits!
+  p1 = case sh.spawn("sh", ["-c", "sleep 7 & echo leader-done"])
+    Ok(h): h
+    Error(_): stop "spawn pipe holder"
+  end
+  res1 = p1.wait(500.milliseconds)
+  assert res1 == Error(Command.TimedOut)
+  console.print("WAIT_BOUNDED_OK")
+
+  # 2. Background grandchild with redirected stdio MUST be killed before leader reaps!
+  spawn_null_bg(sh)
+  console.print("GC_KILLED_OK")
+end
+"##,
+        )?;
+
+        let start = Instant::now();
+        let out = Command::new(mo_bin())
+            .arg("run")
+            .arg("--root")
+            .arg(&dir)
+            .arg(&main_mo)
+            .output()?;
+        let elapsed = start.elapsed();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.success(),
+            "mo run failed:\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+        assert!(stdout.contains("WAIT_BOUNDED_OK"), "stdout:\n{stdout}");
+        assert!(stdout.contains("GC_KILLED_OK"), "stdout:\n{stdout}");
+        assert!(
+            elapsed < Duration::from_secs(4),
+            "expected bounded wait to complete well under 4s, took {elapsed:?}"
+        );
+
+        let gc_pid: i32 = fs::read_to_string(&pid_file)?.trim().parse()?;
+        let mut gone = false;
+        for _ in 0..40 {
+            if !Path::new(&format!("/proc/{gc_pid}")).exists() {
+                gone = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(gone, "grandchild PID {gc_pid} survived wait/drop!");
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn command_fake_pid_is_per_fake_deterministic() -> Result<(), Box<dyn Error>> {
+        let dir = temp_dir("fake-pid")?;
+        let main_mo = dir.join("main.mo");
+        fs::write(
+            &main_mo,
+            r#"module Main
+use Command
+
+fn label(x: Int) : Text
+  if x > 0: "pos" else: "non"
+end
+
+test "per-fake PID starts at 10000 deterministically without inflating mutant kills"
+  _ = label(5)
+  c1 = Command.fake(Command.replies([(Command.spec("echo", ["a"]), Command.ok_output("a"))]))
+  c2 = Command.fake(Command.replies([(Command.spec("echo", ["b"]), Command.ok_output("b"))]))
+  p1 = case c1.spawn("echo", ["a"])
+    Ok(h): h
+    Error(_): stop "p1"
+  end
+  p2 = case c2.spawn("echo", ["b"])
+    Ok(h): h
+    Error(_): stop "p2"
+  end
+  assert p1.pid == 10000
+  assert p2.pid == 10000
+end
+"#,
+        )?;
+
+        let out = Command::new(mo_bin())
+            .args(["test", "--json", "--jobs", "1", "--mutants"])
+            .arg(&main_mo)
+            .output()?;
+        // Label's 3 mutants must survive (not falsely killed by incrementing global fake PID).
+        assert_eq!(out.status.code(), Some(1), "mutants should survive");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("\"survived\":3"),
+            "expected 3 surviving mutants (per-fake PID), got:\n{stdout}"
+        );
 
         let _ = fs::remove_dir_all(&dir);
         Ok(())

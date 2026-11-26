@@ -83,10 +83,31 @@ test "ordered faults, truncation, allow_hosts narrowing, and recorded_calls"
     ),
     (
       "GET",
+      "https://api.example.org",
+      [Network.Respond(response: Http.reply(200, "exact-host"))]
+    ),
+    (
+      "GET",
       "https://blocked.example.org/secret",
       [Network.Respond(response: Http.reply(200, "should-never-run"))]
     )
   ])
+
+  # Domain prefix must NOT match a lookalike suffix like api.example.org.evil.test
+  lookalike = Http.get("https://api.example.org.evil.test/v1").send(net)
+  assert lookalike == Error(Http.Unreachable(Network.Refused(host: "api.example.org.evil.test", port: 443)))
+
+  # Spoofed Host header on raw Connection must NOT override connected host recorded in recorded_calls()
+  raw_conn = case net.connect_secure("api.example.org", 443, 5.seconds)
+    Ok(c): c
+    Error(_): stop "connect"
+  end
+  assert raw_conn.send("GET /check HTTP/1.1\r\nHost: spoofed.evil.test\r\n\r\n".bytes) == Ok(Unit)
+  assert raw_conn.receive(4096) is Ok(raw_reply)
+  assert raw_reply.decode_utf8 is Some(raw_text) and raw_text.contains?("exact-host")
+  recorded_so_far = net.recorded_calls()
+  assert recorded_so_far.any?(fn(c) c.url == "https://api.example.org/check" end)
+  assert not recorded_so_far.any?(fn(c) c.url.contains?("spoofed.evil.test") end)
 
   scoped = net.allow_hosts(["payments.example.org"])
 
@@ -106,12 +127,12 @@ test "ordered faults, truncation, allow_hosts narrowing, and recorded_calls"
   assert whole == Ok(Http.reply(200, "complete-body"))
 
   calls = Network.recorded_calls(net)
-  assert calls.size == 6
+  assert calls.size == 8
   assert scoped.recorded_calls() == calls
 
-  c0 = calls.get(0) or stop "c0"
-  c1 = calls.get(1) or stop "c1"
-  c2 = calls.get(2) or stop "c2"
+  c0 = calls.get(2) or stop "c0"
+  c1 = calls.get(3) or stop "c1"
+  c2 = calls.get(4) or stop "c2"
   assert c0.method == "POST"
   assert c0.url == "https://payments.example.org/v1/charge"
   assert c0.body == "payload-0".bytes

@@ -69,7 +69,8 @@ fn format_utc_rfc3339_now() -> String {
 }
 
 /// Atomically writes a server readiness JSON file (`url`, `port`, `pid`, `data_dir`, `started_at`)
-/// via a sibling temporary file + `sync_all` + `rename` after the HTTP listener is bound.
+/// via a sibling exclusive temporary file (`create_new`, refusing symlinks) + `sync_all` + `rename`
+/// after the HTTP listener is bound.
 pub fn write_ready_file(
     ready_path: &Path,
     url: &str,
@@ -100,7 +101,10 @@ pub fn write_ready_file(
         .map_or(0u128, |d| d.as_nanos());
     let tmp_path = parent.join(format!(".mo-ready-{pid}-{nanos}.tmp"));
     let write_res = (|| -> std::io::Result<()> {
-        let mut f = fs::File::create(&tmp_path)?;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)?;
         f.write_all(json.as_bytes())?;
         f.sync_all()?;
         drop(f);
@@ -111,6 +115,22 @@ pub fn write_ready_file(
         return Err(format!("{}: {e}", ready_path.display()));
     }
     Ok(())
+}
+
+/// Removes a stale readiness file before server bind if present, ignoring `NotFound`.
+pub fn clear_ready_file(ready_path: &Path) {
+    let _ = fs::remove_file(ready_path);
+}
+
+/// RAII guard removing a readiness file on clean server exit.
+pub struct ReadyFileGuard<'a>(pub Option<&'a Path>);
+
+impl Drop for ReadyFileGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(p) = self.0 {
+            let _ = fs::remove_file(p);
+        }
+    }
 }
 
 /// Extracts a concise human-readable message from a caught panic payload.

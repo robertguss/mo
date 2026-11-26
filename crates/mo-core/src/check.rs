@@ -1533,7 +1533,8 @@ impl<'a> Checker<'a> {
                 }
                 CoreIoNullaryOp::CommandAllowLoopback => {
                     let cmd = self.cap_ty(Cap::Command);
-                    self.sig1(cmd, cmd)
+                    let net = self.cap_ty(Cap::Network);
+                    self.sig2(cmd, cmd, net)
                 }
                 CoreIoNullaryOp::CommandSpawnRaw => {
                     let cmd = self.cap_ty(Cap::Command);

@@ -161,12 +161,12 @@ end
         "expected E0098 when calling db.stats() in main, got:\n{stderr}"
     );
 
-    // 2. Passing a real production `Sqlite.Database` to a helper that calls `db.stats()`
-    //    stops at runtime with exit code 70 and zero production stats state.
-    let runtime_dir = temp_dir("runtime-reject")?;
-    let runtime_main = runtime_dir.join("main.mo");
+    // 2. Calling a helper that invokes `db.stats()` or `db.reset_stats()` transitively from `main`
+    //    or an `api` handler is rejected at compile time (`E0098`).
+    let indirect_main_dir = temp_dir("indirect-main-reject")?;
+    let indirect_main = indirect_main_dir.join("main.mo");
     fs::write(
-        &runtime_main,
+        &indirect_main,
         r##"module Main
 
 fn inspect_helper(db: Sqlite.Database) : Int
@@ -184,59 +184,55 @@ fn main(sql: Sqlite, console: Console)
 end
 "##,
     )?;
-    let run_out = Command::new(mo)
-        .current_dir(&runtime_dir)
-        .arg("run")
-        .arg(&runtime_main)
-        .output()?;
+    let check_indirect = Command::new(mo).arg("check").arg(&indirect_main).output()?;
     assert_eq!(
-        run_out.status.code(),
-        Some(70),
-        "expected exit code 70 on real Sqlite.Database.stats:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&run_out.stdout),
-        String::from_utf8_lossy(&run_out.stderr),
+        check_indirect.status.code(),
+        Some(1),
+        "expected compile-time rejection of indirect db.stats() from main"
     );
-    let run_stderr = String::from_utf8_lossy(&run_out.stderr);
     assert!(
-        run_stderr.contains(
-            "Sqlite.Database.stats is only available on fake or in-memory test databases"
-        ),
-        "expected clear bug reason on stderr, got:\n{run_stderr}"
+        String::from_utf8_lossy(&check_indirect.stderr).contains("E0098"),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&check_indirect.stderr)
     );
 
-    // 3. Same for `db.reset_stats()` on a real production `Sqlite.Database`.
-    let reset_dir = temp_dir("runtime-reset-reject")?;
-    let reset_main = reset_dir.join("main.mo");
+    // 3. Passing `db.reset_stats()` indirectly from an `api` route handler is also rejected with E0098.
+    let api_dir = temp_dir("indirect-api-reject")?;
+    let api_main = api_dir.join("main.mo");
     fs::write(
-        &reset_main,
+        &api_main,
         r#"module Main
+use Api
 
 fn reset_helper(db: Sqlite.Database) : Unit
   db.reset_stats()
 end
 
-fn main(sql: Sqlite)
-  case sql.open(":memory:")
-    Ok(db): reset_helper(db)
-    Error(_): Unit
-  end
+fn route_index(_req: Api.Request, db: Sqlite.Database) : Api.Response
+  reset_helper(db)
+  Api.text_response(200, "ok")
+end
+
+api
+  sqlite db from "app.db"
+  get "/" route_index
 end
 "#,
     )?;
-    let reset_out = Command::new(mo)
-        .current_dir(&reset_dir)
-        .arg("run")
-        .arg(&reset_main)
-        .output()?;
+    let check_api = Command::new(mo).arg("check").arg(&api_main).output()?;
     assert_eq!(
-        reset_out.status.code(),
-        Some(70),
-        "expected exit code 70 on real Sqlite.Database.reset_stats:\nstderr:\n{}",
-        String::from_utf8_lossy(&reset_out.stderr),
+        check_api.status.code(),
+        Some(1),
+        "expected compile-time rejection of indirect db.reset_stats() from api route"
+    );
+    assert!(
+        String::from_utf8_lossy(&check_api.stderr).contains("E0098"),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&check_api.stderr)
     );
 
     let _ = fs::remove_dir_all(&dir);
-    let _ = fs::remove_dir_all(&runtime_dir);
-    let _ = fs::remove_dir_all(&reset_dir);
+    let _ = fs::remove_dir_all(&indirect_main_dir);
+    let _ = fs::remove_dir_all(&api_dir);
     Ok(())
 }

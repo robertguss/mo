@@ -2,10 +2,9 @@
 //! matching `src/vm/simulation.c`, `src/vm/service.c`, `src/host/store.c`,
 //! and `src/base/log-record.c`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
-use std::sync::Mutex;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use mo_bytecode::{
@@ -29,10 +28,12 @@ use crate::{
 };
 
 // ---------------------------------------------------------------------------
-// Global open store counter (MO_LIMIT_STORES = 8)
+// Per-thread open store counter (MO_LIMIT_STORES = 8)
 // ---------------------------------------------------------------------------
 
-static OPEN_STORES: Mutex<u32> = Mutex::new(0);
+thread_local! {
+    static OPEN_STORES: Cell<u32> = const { Cell::new(0) };
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StoreRecordKind {
@@ -56,17 +57,17 @@ struct SimStore {
 
 impl SimStore {
     fn open() -> Result<Self, ()> {
-        let mut count = OPEN_STORES
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if u64::from(*count) >= MO_LIMIT_STORES {
-            return Err(());
-        }
-        *count += 1;
-        Ok(Self {
-            snapshot: None,
-            log: Vec::new(),
-            head: None,
+        OPEN_STORES.with(|c| {
+            let cur = c.get();
+            if u64::from(cur) >= MO_LIMIT_STORES {
+                return Err(());
+            }
+            c.set(cur + 1);
+            Ok(Self {
+                snapshot: None,
+                log: Vec::new(),
+                head: None,
+            })
         })
     }
 
@@ -117,11 +118,11 @@ impl SimStore {
 
 impl Drop for SimStore {
     fn drop(&mut self) {
-        let mut count = OPEN_STORES
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        debug_assert!(*count > 0);
-        *count = count.saturating_sub(1);
+        OPEN_STORES.with(|c| {
+            let cur = c.get();
+            debug_assert!(cur > 0);
+            c.set(cur.saturating_sub(1));
+        });
     }
 }
 

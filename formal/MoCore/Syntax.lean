@@ -645,7 +645,7 @@ def IoOp.sig : IoOp → List Ty × Ty
     ([.cap .command, .text, .list .text, .duration], .result (.tuple [.int, .bytes, .bytes]) .text)
   | .commandWithin => ([.cap .command, .text], .cap .command)
   | .commandAllowPrograms => ([.cap .command, .list .text], .cap .command)
-  | .commandAllowLoopback => ([.cap .command], .cap .command)
+  | .commandAllowLoopback => ([.cap .command, .cap .network], .cap .command)
   | .commandSpawnRaw => ([.cap .command, .text, .list .text], .result (.cap .process) .text)
   | .commandProcessPid => ([.cap .process], .int)
   | .commandProcessAlive => ([.cap .process], .bool)

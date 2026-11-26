@@ -473,6 +473,9 @@ pub fn run_serve_service(
         .file()
         .string(cand_img.image.file().services[cand_img.service as usize].token_env)
         .to_string();
+    if let Some(ready_path) = opts.ready_file {
+        crate::clear_ready_file(ready_path);
+    }
     let listener = match Listener::open_tcp(
         &ListenerConfig {
             address: opts.bind.map(str::to_string),
@@ -970,6 +973,7 @@ pub fn run_serve_service(
         );
         return 1;
     }
+    let _ready_guard = crate::ReadyFileGuard(opts.ready_file);
 
     if writeln!(output, "mo serve: listening on http://{numeric}/mcp").is_err()
         || output.flush().is_err()

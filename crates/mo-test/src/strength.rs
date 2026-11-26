@@ -1300,8 +1300,17 @@ pub fn run_strength(
                 Err(poisoned) => poisoned.into_inner(),
             };
             for (dst, slot) in set.versions.iter_mut().zip(collected) {
-                if let Some(m) = slot {
-                    *dst = m;
+                match slot {
+                    Some(m) => *dst = m,
+                    None => {
+                        test_report_error(
+                            diags,
+                            "a wrong version could not be measured",
+                            Span::NONE,
+                            None,
+                        );
+                        dst.outcome = Outcome::Unfinished;
+                    }
                 }
             }
         }

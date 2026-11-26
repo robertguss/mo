@@ -980,7 +980,7 @@ impl<'a> InferState<'a> {
                     (scope.name.as_deref(), sym.name.as_str()),
                     (Some("Network"), "recorded_calls")
                         | (Some("Sqlite"), "stats" | "reset_stats")
-                        | (Some("Command"), "allow_loopback" | "kill")
+                        | (Some("Command"), "kill")
                 )
             {
                 return true;
@@ -996,7 +996,6 @@ impl<'a> InferState<'a> {
                     | "ApiTest.App.openapi_json"
                     | "Sqlite.stats"
                     | "Sqlite.reset_stats"
-                    | "Command.allow_loopback"
                     | "Command.kill"
             )
         )

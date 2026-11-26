@@ -1610,6 +1610,9 @@ pub fn run_serve_api(
         }
     };
     let requested_port = opts.port.unwrap_or(initial_gen.default_port);
+    if let Some(ready_path) = opts.ready_file {
+        crate::clear_ready_file(ready_path);
+    }
     let listener = match TcpListener::bind(SocketAddr::new(ip, requested_port)) {
         Ok(l) => l,
         Err(e) => {
@@ -1722,6 +1725,7 @@ pub fn run_serve_api(
             &format!("mo serve could not write ready file: {err}"),
         );
     }
+    let _ready_guard = crate::ReadyFileGuard(opts.ready_file);
 
     if writeln!(output, "mo serve: listening on {listen_url}").is_err() || output.flush().is_err() {
         pool.stopping.store(true, Ordering::Relaxed);

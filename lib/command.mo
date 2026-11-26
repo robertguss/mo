@@ -231,7 +231,8 @@ test "fake Command.spawn supports pid, alive?, wait, kill, within, allow_program
       (spec("mo", ["test", "app.mo"]).in_folder("svc"), ok_output("3 passed\n"))
     ])
   )
-  scoped = cmd.within("svc").allow_programs(["mo"]).allow_loopback()
+  net = Network.fake({})
+  scoped = cmd.within("svc").allow_programs(["mo"]).allow_loopback(net)
 
   assert scoped.spawn("curl", ["http://127.0.0.1:8080"]) is Error(NotPermitted(program: "curl"))
 

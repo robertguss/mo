@@ -406,6 +406,25 @@ fn is_host_allowed(allowed: &Option<Vec<TargetRule>>, host: &str, port: u16) -> 
         .any(|r| r.host == lower && (r.port == 0 || r.port == port))
 }
 
+fn is_loopback_host(host: &str) -> bool {
+    matches!(host, "127.0.0.1" | "localhost" | "::1")
+}
+
+pub(crate) fn network_allows_loopback(cap_val: &Value, require_real: bool) -> bool {
+    let net = crate::downcast_cap::<NetworkCap>(cap_val, "Network capability");
+    match net {
+        NetworkCap::Real { allowed } => allowed
+            .as_ref()
+            .is_none_or(|rules| rules.iter().any(|r| is_loopback_host(&r.host))),
+        NetworkCap::Fake { allowed, .. } | NetworkCap::FakeScripted { allowed, .. } => {
+            !require_real
+                && allowed
+                    .as_ref()
+                    .is_none_or(|rules| rules.iter().any(|r| is_loopback_host(&r.host)))
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Real non-blocking socket + pure-Rust rustls TLS helpers
 // ---------------------------------------------------------------------------
@@ -1080,27 +1099,20 @@ fn parse_sent_http_request(
     let method = parts.next().unwrap_or("").to_string();
     let raw_target = parts.next().unwrap_or("/");
     let mut headers = Vec::new();
-    let mut host_header: Option<String> = None;
     for line in lines {
         if let Some((name, val)) = line.split_once(':') {
             let trimmed = val.trim().to_string();
-            if host_header.is_none() && name.eq_ignore_ascii_case("host") && !trimmed.is_empty() {
-                host_header = Some(trimmed.clone());
-            }
             headers.push((name.to_string(), trimmed));
         }
     }
-    let authority = host_header.unwrap_or(default_auth);
+    // Always record the connected authority rather than a spoofable client `Host` header.
+    let authority = default_auth;
     let path = if raw_target.starts_with('/') {
         raw_target.to_string()
     } else {
         format!("/{raw_target}")
     };
-    let url = if raw_target.starts_with("http://") || raw_target.starts_with("https://") {
-        raw_target.to_string()
-    } else {
-        format!("{scheme}://{authority}{path}")
-    };
+    let url = format!("{scheme}://{authority}{path}");
     (
         RecordedCallEntry {
             method,
@@ -1178,6 +1190,35 @@ pub(crate) fn network_fake_scripted(
             allowed: None,
         }),
     )?)
+}
+
+const MO_LIMIT_RECORDED_CALLS: usize = 4096;
+
+fn push_recorded_call(recorded: &mut Vec<RecordedCallEntry>, entry: RecordedCallEntry) {
+    if recorded.len() < MO_LIMIT_RECORDED_CALLS {
+        recorded.push(entry);
+    }
+}
+
+fn scripted_url_matches(entry_url: &str, entry_path: &str, url_prefix: &str) -> bool {
+    if url_prefix.is_empty() {
+        return false;
+    }
+    if url_prefix.starts_with('/') {
+        if !entry_path.starts_with(url_prefix) {
+            return false;
+        }
+        let rest = &entry_path[url_prefix.len()..];
+        return url_prefix == "/"
+            || url_prefix.ends_with('/')
+            || rest.is_empty()
+            || matches!(rest.as_bytes()[0], b'/' | b'?' | b'#');
+    }
+    if !entry_url.starts_with(url_prefix) {
+        return false;
+    }
+    let rest = &entry_url[url_prefix.len()..];
+    url_prefix.ends_with('/') || rest.is_empty() || matches!(rest.as_bytes()[0], b'/' | b'?' | b'#')
 }
 
 pub(crate) fn call_network(
@@ -1540,7 +1581,7 @@ pub(crate) fn call_network(
                         fake.recorded_yet = true;
                         let (entry, _) =
                             parse_sent_http_request(&fake.sent, fake.secure, &fake.host, fake.port);
-                        fake.recorded.borrow_mut().push(entry);
+                        push_recorded_call(&mut fake.recorded.borrow_mut(), entry);
                     }
                     let pos = if fake.position < 0 { 0 } else { fake.position };
                     let sent_val = heap.alloc_bytes(fake.sent.clone())?;
@@ -1582,12 +1623,10 @@ pub(crate) fn call_network(
                             scripted.port,
                         );
                         let mut state_mut = scripted.state.borrow_mut();
-                        state_mut.recorded.push(entry.clone());
+                        push_recorded_call(&mut state_mut.recorded, entry.clone());
                         let matched_idx = state_mut.scripts.iter().position(|s| {
                             (s.method == "*" || s.method.eq_ignore_ascii_case(&entry.method))
-                                && (entry.url.starts_with(&s.url_prefix)
-                                    || (s.url_prefix.starts_with('/')
-                                        && path.starts_with(&s.url_prefix)))
+                                && scripted_url_matches(&entry.url, &path, &s.url_prefix)
                         });
                         let Some(sidx) = matched_idx else {
                             drop(state_mut);

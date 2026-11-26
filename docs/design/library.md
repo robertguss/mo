@@ -637,7 +637,7 @@ results in `lib/command.mo`.
 | `run_raw(program, args, within)` | host | `COMMAND_RUN_RAW` | spawns `program` inside the capability's folder with monotonic deadline and 4 MiB pipe cap, or looks up a `Command.fake` exchange |
 | `within(folder)` | host | `COMMAND_WITHIN` | narrows the working folder with `mo_host_resolve` (`RESOLVE_BENEATH`), poisoning escapes |
 | `allow_programs(programs)` | host | `COMMAND_ALLOW_PROGRAMS` | intersects allowed program basenames so authority only narrows |
-| `allow_loopback()` | host | `COMMAND_ALLOW_LOOPBACK` | opts child confinement into loopback-only TCP (`127.0.0.1` / `::1`) while keeping external network connections blocked |
+| `allow_loopback(net)` | host | `COMMAND_ALLOW_LOOPBACK` | opts child confinement into loopback TCP using `net` (requires loopback-permitting `Network`; blocks `socket(AF_UNIX)`, UDP, and non-loopback-listening ports; `NetPort` rules filter by port rather than IP) |
 | `spawn_raw(program, args)` | host | `COMMAND_SPAWN_RAW` | spawns a supervised `Command.Process` child inside the capability's folder, or looks up a `Command.fake` exchange |
 | `pid` | host | `COMMAND_PROCESS_PID` | returns the OS PID (or deterministic fake PID) of a `Command.Process` |
 | `alive?` | host | `COMMAND_PROCESS_ALIVE` | checks whether a `Command.Process` is still running without losing its exit status |

@@ -435,6 +435,8 @@ mod linux {
         libc::SYS_mq_notify,
         libc::SYS_mq_getsetattr,
         libc::SYS_ptrace,
+        libc::SYS_setsid,
+        libc::SYS_setpgid,
     ];
 
     pub(super) fn can_confine_linux() -> bool {
@@ -450,7 +452,7 @@ mod linux {
             .is_ok_and(|s| s.split_whitespace().any(|tok| tok == "kill_process"))
     }
 
-    fn create_ruleset_v3_to_v6(allow_loopback: bool) -> Result<RulesetCreated, String> {
+    fn create_ruleset_v3_to_v6() -> Result<RulesetCreated, String> {
         // First confirm Landlock ABI >= 3 is supported.
         Ruleset::default()
             .set_compatibility(CompatLevel::HardRequirement)
@@ -458,11 +460,7 @@ mod linux {
             .and_then(Ruleset::create)
             .map_err(|e| format!("landlock_create_ruleset(v3 probe): {e}"))?;
 
-        let net_access = if allow_loopback {
-            BitFlags::from(AccessNet::ConnectTcp)
-        } else {
-            AccessNet::from_all(ABI::V4)
-        };
+        let net_access = AccessNet::from_all(ABI::V4);
 
         // Build best-effort ABI V6 ruleset (FS + TCP net + signal/abstract-unix scopes);
         // `restrict_self` verifies enforcement is not NotEnforced.
@@ -777,19 +775,13 @@ mod linux {
         }
 
         if allow_loopback {
-            // Permit `socket(AF_UNIX, ...)` and `socket(AF_INET | AF_INET6, SOCK_STREAM [| flags], ...)`.
-            // Deny all other address families (`AF_NETLINK`, `AF_PACKET`, etc.) and all non-stream
-            // IP socket types (`SOCK_DGRAM` UDP, `SOCK_RAW`, `SOCK_SEQPACKET`, etc.) with `EPERM`.
+            // Permit strictly `socket(AF_INET | AF_INET6, SOCK_STREAM [| flags], ...)`.
+            // `AF_UNIX` `socket()` is denied with `EPERM` (preventing connections to Docker/D-Bus
+            // filesystem sockets), while `socketpair(AF_UNIX, ...)` remains permitted below.
             // Among 4-bit socket base types `0..=15`, `SOCK_STREAM == 1` is the unique value with
             // `(type & 1) == 1 && (type & 2) == 0 && (type & 4) == 0 && (type & 8) == 0`
             // (`SOCK_NONBLOCK = 0x800` and `SOCK_CLOEXEC = 0x80000` do not touch bits `0..=3`).
             let mut socket_deny = vec![rule(vec![
-                cond(
-                    0,
-                    SeccompCmpArgLen::Dword,
-                    SeccompCmpOp::Ne,
-                    libc::AF_UNIX as u64,
-                )?,
                 cond(
                     0,
                     SeccompCmpArgLen::Dword,
@@ -804,20 +796,12 @@ mod linux {
                 )?,
             ])?];
             for (mask, bad_val) in [(1u64, 0u64), (2, 2), (4, 4), (8, 8)] {
-                socket_deny.push(rule(vec![
-                    cond(
-                        0,
-                        SeccompCmpArgLen::Dword,
-                        SeccompCmpOp::Ne,
-                        libc::AF_UNIX as u64,
-                    )?,
-                    cond(
-                        1,
-                        SeccompCmpArgLen::Dword,
-                        SeccompCmpOp::MaskedEq(mask),
-                        bad_val,
-                    )?,
-                ])?);
+                socket_deny.push(rule(vec![cond(
+                    1,
+                    SeccompCmpArgLen::Dword,
+                    SeccompCmpOp::MaskedEq(mask),
+                    bad_val,
+                )?])?);
             }
             rules.insert(libc::SYS_socket, socket_deny);
         }
@@ -899,7 +883,7 @@ mod linux {
     ) -> Result<(), String> {
         rustix::thread::set_no_new_privs(true).map_err(|e| format!("no_new_privs: {e}"))?;
 
-        let mut ruleset = create_ruleset_v3_to_v6(false)?;
+        let mut ruleset = create_ruleset_v3_to_v6()?;
         for sys in ["/usr", "/lib", "/lib64", "/etc/ld.so.cache"] {
             ruleset = allow_path(ruleset, Path::new(sys), SYSTEM_READ)?;
         }
@@ -947,7 +931,12 @@ mod linux {
             Vec::new()
         };
 
-        let mut ruleset = create_ruleset_v3_to_v6(allow_loopback)?;
+        let mut ruleset = create_ruleset_v3_to_v6()?;
+        if allow_loopback {
+            ruleset = ruleset
+                .add_rule(NetPort::new(0, AccessNet::BindTcp))
+                .map_err(|e| format!("landlock net_port(0, bind): {e}"))?;
+        }
         for port in loopback_ports {
             ruleset = ruleset
                 .add_rule(NetPort::new(port, AccessNet::ConnectTcp))

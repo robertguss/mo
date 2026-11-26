@@ -326,7 +326,7 @@ def signatures():
         f"(result (tuple ({I} (bytes) (bytes))) {T})")
     add("io", "commandWithin", C("command") + "|" + T, C("command"))
     add("io", "commandAllowPrograms", C("command") + "|" + L(T), C("command"))
-    add("io", "commandAllowLoopback", C("command"), C("command"))
+    add("io", "commandAllowLoopback", C("command") + "|" + C("network"), C("command"))
     add("io", "commandSpawnRaw", C("command") + "|" + T + "|" + L(T),
         f"(result {C('process')} {T})")
     add("io", "commandProcessPid", C("process"), I)

@@ -267,7 +267,7 @@ fn write_mutant_summary(output: &mut dyn Write, mutants: &MutantTotals) -> bool 
     let dropped = u64::from(mutants.dropped);
     let total = tried + dropped;
     let kill_rate = if tried == 0 {
-        "1.0".to_string()
+        "null".to_string()
     } else {
         format!("{:.4}", (killed as f64) / (tried as f64))
     };

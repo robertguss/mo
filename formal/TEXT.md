@@ -50,7 +50,7 @@ effects. `sqliteFake` is spec-only.
 | `commandRunRaw` | Command, Text, List(Text), Duration | Result((Int, Bytes, Bytes), Text) |
 | `commandWithin` | Command, Text | Command |
 | `commandAllowPrograms` | Command, List(Text) | Command |
-| `commandAllowLoopback` | Command | Command |
+| `commandAllowLoopback` | Command, Network | Command |
 | `commandSpawnRaw` | Command, Text, List(Text) | Result(Command.Process, Text) |
 | `commandProcessPid` | Command.Process | Int |
 | `commandProcessAlive` | Command.Process | Bool |

@@ -2241,6 +2241,112 @@ pub(crate) fn verify_module_with_site(file: &BytecodeFile) -> Result<(), (LoadEr
             .map_err(|e| (e, Some(i)))?;
     }
 
+    // 6. Reject `Sqlite.stats_raw` / `Sqlite.reset_stats_raw` transitively reachable from
+    // non-spec entry functions (`init`, services, or module-0 `main`).
+    verify_sqlite_stats_not_in_prod(file)?;
+
+    Ok(())
+}
+
+fn verify_sqlite_stats_not_in_prod(file: &BytecodeFile) -> Result<(), (LoadError, Option<u32>)> {
+    let n = file.functions.len();
+    let mut reaches = vec![false; n];
+    let mut edges: Vec<Vec<u32>> = vec![Vec::new(); n];
+
+    for (i, fn_def) in file.functions.iter().enumerate() {
+        let mut pc = 0u32;
+        while (pc as usize) < fn_def.code.len() {
+            let head = fn_def.code[pc as usize];
+            let op_num = (head & OPCODE_MASK) as u16;
+            let a = &fn_def.code[pc as usize + 1..];
+            if op_num == Opcode::Host.number() {
+                if let Some(host_op) = HostOpId::from_u32(a[1])
+                    && matches!(
+                        host_op,
+                        HostOpId::SqliteStatsRaw | HostOpId::SqliteResetStatsRaw
+                    )
+                {
+                    reaches[i] = true;
+                }
+            } else if op_num == Opcode::Call.number() {
+                edges[i].push(a[1]);
+            } else if op_num == Opcode::TailCall.number() {
+                edges[i].push(a[0]);
+            } else if op_num == Opcode::MakeClosure.number() {
+                edges[i].push(a[1]);
+            } else if op_num == Opcode::Const.number() {
+                let c_idx = a[1] as usize;
+                if let Some(c) = file.constants.get(c_idx)
+                    && file.types.get(c.ty).kind == TypeKind::Function
+                    && let ConstantValue::Closure(callee) = c.value
+                {
+                    edges[i].push(callee);
+                }
+            }
+            pc = next_pc(fn_def, pc).map_err(|e| (e, Some(i as u32)))?;
+        }
+    }
+
+    loop {
+        let mut changed = false;
+        for i in 0..n {
+            if reaches[i] {
+                continue;
+            }
+            if edges[i].iter().any(|&callee| reaches[callee as usize]) {
+                reaches[i] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    for &init_fn in &file.init {
+        if reaches[init_fn as usize] {
+            return Err((
+                LoadError::invalid(PAYLOAD_OFFSET, "Sqlite.stats reachable from init"),
+                Some(init_fn),
+            ));
+        }
+    }
+    for svc in &file.services {
+        if reaches[svc.start as usize] {
+            return Err((
+                LoadError::invalid(PAYLOAD_OFFSET, "Sqlite.stats reachable from service start"),
+                Some(svc.start),
+            ));
+        }
+        for tool in &svc.tools {
+            if reaches[tool.function as usize] {
+                return Err((
+                    LoadError::invalid(PAYLOAD_OFFSET, "Sqlite.stats reachable from service tool"),
+                    Some(tool.function),
+                ));
+            }
+        }
+        for timer in &svc.timers {
+            if reaches[timer.function as usize] {
+                return Err((
+                    LoadError::invalid(PAYLOAD_OFFSET, "Sqlite.stats reachable from service timer"),
+                    Some(timer.function),
+                ));
+            }
+        }
+    }
+    for (i, fn_def) in file.functions.iter().enumerate() {
+        if !fn_def.spec_code
+            && fn_def.module == 0
+            && file.function_name(i as u32) == "main"
+            && reaches[i]
+        {
+            return Err((
+                LoadError::invalid(PAYLOAD_OFFSET, "Sqlite.stats reachable from main"),
+                Some(i as u32),
+            ));
+        }
+    }
     Ok(())
 }
 
