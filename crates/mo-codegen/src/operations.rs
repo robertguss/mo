@@ -413,6 +413,8 @@ pub fn resolve_operation(prim: &Prim) -> Option<Operation> {
             CoreCryptoOp::OpenRaw => PrimId::CryptoOpenRaw,
             CoreCryptoOp::HashPasswordRaw => PrimId::CryptoHashPasswordRaw,
             CoreCryptoOp::VerifyPassword => PrimId::CryptoVerifyPassword,
+            CoreCryptoOp::HmacSha1 => PrimId::CryptoHmacSha1,
+            CoreCryptoOp::VerifySignatureRaw => PrimId::CryptoVerifySignatureRaw,
         },
         Prim::Json(op) => match op {
             CoreJsonOp::QuoteRaw => PrimId::JsonQuoteRaw,

@@ -752,21 +752,24 @@ SHA-256 counter stream for tests, examples, and promises.
 ## Crypto
 
 `Crypto` (`use Crypto`) runs pure-Rust cryptographic primitives (`sha2`, `hmac`, `subtle`,
-`aes-gcm`, `scrypt`, `zeroize`) in `crates/mo-prim/src/crypto.rs` and exposes typed
-`CryptoError` wrappers in `lib/crypto.mo`.
+`aes-gcm`, `scrypt`, `ring`, `zeroize`) in `crates/mo-prim/src/crypto.rs` and exposes typed
+`CryptoError` and `SignatureAlg` wrappers in `lib/crypto.mo`.
 
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
 | `Crypto.sha256(data)` | primitive | `CRYPTO_SHA256` | pure-Rust `sha2::Sha256` |
 | `Crypto.hmac_sha256(key, data)` | primitive | `CRYPTO_HMAC_SHA256` | pure-Rust `hmac` + `sha2::Sha256` |
+| `Crypto.hmac_sha1(key, data)` | primitive | `CRYPTO_HMAC_SHA1` | pure-Rust `ring::hmac` HMAC-SHA1 (for RFC 6238 TOTP) |
 | `Crypto.constant_time_eq?(a, b)` | primitive | `CRYPTO_CONSTANT_TIME_EQ` | `subtle::ConstantTimeEq` without early exit on equal-length inputs |
 | `Crypto.seal_raw(key, nonce, plaintext, aad)` | primitive | `CRYPTO_SEAL_RAW` | `aes_gcm::Aes256Gcm` returning ciphertext plus 16-byte tag or error tag |
 | `Crypto.open_raw(key, nonce, ciphertext, aad)` | primitive | `CRYPTO_OPEN_RAW` | `aes_gcm::Aes256Gcm` verifying the 16-byte tag before releasing plaintext |
 | `Crypto.hash_password_raw(password, salt)` | primitive | `CRYPTO_HASH_PASSWORD_RAW` | pure-Rust `scrypt` (`ln=15,r=8,p=1`) producing a PHC string |
 | `Crypto.verify_password(password, encoded)` | primitive | `CRYPTO_VERIFY_PASSWORD` | strict PHC scrypt parser with DoS bounds + `scrypt` + `subtle::ConstantTimeEq` |
+| `Crypto.verify_signature_raw(alg, public_key, message, signature)` | primitive | `CRYPTO_VERIFY_SIGNATURE_RAW` | pure-Rust `ring::signature` detached verification (Ed25519, ES256, RS256) |
 | `Crypto.seal(key, nonce, plaintext, aad)` | Mo | `lib/crypto.mo` | wraps `seal_raw` into `Result(Bytes, CryptoError)` |
 | `Crypto.open(key, nonce, ciphertext, aad)` | Mo | `lib/crypto.mo` | wraps `open_raw` into `Result(Bytes, CryptoError)` |
 | `Crypto.hash_password(password, salt)` | Mo | `lib/crypto.mo` | wraps `hash_password_raw` into `Result(Text, CryptoError)` |
+| `Crypto.verify_signature(alg, public_key, message, signature)` | Mo | `lib/crypto.mo` | typed `SignatureAlg` wrapper over `verify_signature_raw` |
 
 ## Date
 

@@ -319,6 +319,7 @@ inductive UnicodeOp where
 /-- Cryptographic trusted primitives; Core specifies their interface, not OpenSSL implementations. -/
 inductive CryptoOp where
   | sha256 | hmacSha256 | constantTimeEq | sealRaw | openRaw | hashPasswordRaw | verifyPassword
+  | hmacSha1 | verifySignatureRaw
   deriving DecidableEq, Repr, Inhabited
 
 /-- Native RFC 8259 JSON primitives; Core specifies their interface, not the runtime codec. -/
@@ -604,6 +605,8 @@ def CryptoOp.sig : CryptoOp → List Ty × Ty
   | .sealRaw | .openRaw => ([.bytes, .bytes, .bytes, .bytes], .result .bytes .text)
   | .hashPasswordRaw => ([.text, .bytes], .result .text .text)
   | .verifyPassword => ([.text, .text], .bool)
+  | .hmacSha1 => ([.bytes, .bytes], .bytes)
+  | .verifySignatureRaw => ([.text, .bytes, .bytes, .bytes], .result .bool .text)
 
 def JsonOp.sig : JsonOp → List Ty × Ty
   | .quoteRaw => ([.text], .text)

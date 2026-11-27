@@ -483,7 +483,7 @@ Each name in the following table means a **nullary S-expression**, e.g.
 | `TextOp` | `concat byteCount charCount isEmpty chars fromChars lines words split trim trimStart trimEnd startsWith endsWith contains dropPrefix dropSuffix replace repeat padLeft padRight lower upper toInt toDecimal toFloat join bytes quoted` |
 | `BytesOp` | `size get decodeUtf8 slice join toHex fromHex toBase64url fromBase64url empty zeroed fromList toList fromU16Be fromU32Be fromI64Be u16BeAt u32BeAt i64BeAt isEmpty compareSliceAt dotU16BeBiased dotU8Biased` |
 | `UnicodeOp` | `graphemes displayWidth normalizeNfc lowercase uppercase letter digit` |
-| `CryptoOp` | `sha256 hmacSha256 constantTimeEq sealRaw openRaw hashPasswordRaw verifyPassword` |
+| `CryptoOp` | `sha256 hmacSha256 constantTimeEq sealRaw openRaw hashPasswordRaw verifyPassword hmacSha1 verifySignatureRaw` |
 | `RangeOp` | `make start end toList contains toText` |
 | `TimeOp` | `sub add subDur checkedAdd toText parse durAdd durSub durMul durNeg inMilliseconds inSeconds durToText` |
 | `ListOp` | `size isEmpty get first last append prepend concat reverse take drop set removeAt uncons enumerate contains unique` |

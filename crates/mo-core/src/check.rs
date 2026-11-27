@@ -1087,6 +1087,11 @@ impl<'a> Checker<'a> {
                     self.sig2(res, s_text, s_bytes)
                 }
                 CoreCryptoOp::VerifyPassword => self.sig2(s_bool, s_text, s_text),
+                CoreCryptoOp::HmacSha1 => self.sig2(s_bytes, s_bytes, s_bytes),
+                CoreCryptoOp::VerifySignatureRaw => {
+                    let res = self.binary(TyTag::Result, s_bool, s_text);
+                    self.sig4(res, s_text, s_bytes, s_bytes, s_bytes)
+                }
             },
             Prim::Json(op) => match op {
                 CoreJsonOp::QuoteRaw => self.sig1(s_text, s_text),

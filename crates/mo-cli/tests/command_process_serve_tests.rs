@@ -867,4 +867,62 @@ end
         let _ = fs::remove_dir_all(&dir);
         Ok(())
     }
+
+    #[test]
+    fn serve_injects_unspoofable_peer_ip_header() -> Result<(), Box<dyn Error>> {
+        let dir = temp_dir("peer-ip")?;
+        fs::write(
+            dir.join("app.mo"),
+            r##"module App
+use Api
+
+api
+  port 8080
+  get "/peer" show_peer
+end
+
+fn show_peer(req: Api.Request) : Api.Response
+  all = req.headers_named("X-Mo-Peer-Ip")
+  Api.text_response(200, all.join(","))
+end
+"##,
+        )?;
+        let ready = dir.join("ready.json");
+        let mut command = Command::new(mo_bin());
+        command.current_dir(&dir).args([
+            "serve",
+            "app.mo",
+            "--bind",
+            "127.0.0.1",
+            "--port",
+            "0",
+            "--data",
+            ".",
+            "--ready-file",
+            "ready.json",
+        ]);
+        let (server, json) = wait_for_ready(&mut command, &ready)?;
+        let port = ready_port(&json)?;
+
+        let mut stream = TcpStream::connect(("127.0.0.1", port))?;
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        stream.write_all(
+            format!(
+                "GET /peer HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Mo-Peer-Ip: 8.8.8.8\r\nx-mo-peer-ip: 1.1.1.1\r\nConnection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        )?;
+        stream.flush()?;
+        let mut raw = String::new();
+        stream.read_to_string(&mut raw)?;
+        let body = raw
+            .split_once("\r\n\r\n")
+            .map(|(_, b)| b)
+            .ok_or("missing HTTP response body")?;
+        assert_eq!(body, "127.0.0.1", "raw response:\n{raw}");
+
+        drop(server);
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
 }

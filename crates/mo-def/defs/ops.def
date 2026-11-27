@@ -60,7 +60,8 @@
 #define MO_CORE_CRYPTO_OPS(X) \
     X(SHA256, "sha256") X(HMAC_SHA256, "hmacSha256") X(CONSTANT_TIME_EQ, "constantTimeEq") \
     X(SEAL_RAW, "sealRaw") X(OPEN_RAW, "openRaw") X(HASH_PASSWORD_RAW, "hashPasswordRaw") \
-    X(VERIFY_PASSWORD, "verifyPassword")
+    X(VERIFY_PASSWORD, "verifyPassword") X(HMAC_SHA1, "hmacSha1") \
+    X(VERIFY_SIGNATURE_RAW, "verifySignatureRaw")
 #define MO_CORE_JSON_OPS(X) \
     X(QUOTE_RAW, "quoteRaw") X(PARSE_RAW, "parseRaw")
 #define MO_CORE_RANGE_OPS(X) \

@@ -11,6 +11,8 @@ use mo_def::limits::{
     MO_LIMIT_VALUE_BYTES,
 };
 use mo_heap::{Heap, ScratchGuard, Value};
+use ring::hmac as ring_hmac;
+use ring::signature as ring_sig;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
@@ -45,6 +47,15 @@ fn ok_text(
     Ok(heap.make_result(types, result_ty, Ok(payload))?)
 }
 
+fn ok_bool(
+    heap: &Heap,
+    types: &TypeTable,
+    result_ty: u32,
+    verified: bool,
+) -> Result<Value, PrimError> {
+    Ok(heap.make_result(types, result_ty, Ok(Value::Bool(verified)))?)
+}
+
 fn err_text(
     heap: &Heap,
     types: &TypeTable,
@@ -76,6 +87,42 @@ fn crypto_hmac_sha256(heap: &Heap, key: &[u8], data: &[u8]) -> Result<Value, Pri
     mac.update(data);
     let tag: Zeroizing<[u8; 32]> = Zeroizing::new(mac.finalize().into_bytes().into());
     Ok(heap.alloc_bytes(tag.as_slice().to_vec())?)
+}
+
+fn crypto_hmac_sha1(heap: &Heap, key: &[u8], data: &[u8]) -> Result<Value, PrimError> {
+    let mac_key = ring_hmac::Key::new(ring_hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, key);
+    let sig = ring_hmac::sign(&mac_key, data);
+    let tag: Zeroizing<Vec<u8>> = Zeroizing::new(sig.as_ref().to_vec());
+    Ok(heap.alloc_bytes(tag.as_slice().to_vec())?)
+}
+
+fn crypto_verify_signature_raw(
+    heap: &Heap,
+    types: &TypeTable,
+    result_ty: u32,
+    alg: &str,
+    public_key: &[u8],
+    message: &[u8],
+    signature: &[u8],
+) -> Result<Value, PrimError> {
+    let verifier: &'static dyn ring_sig::VerificationAlgorithm = match alg {
+        "ed25519" => &ring_sig::ED25519,
+        "es256_asn1" => &ring_sig::ECDSA_P256_SHA256_ASN1,
+        "es256_fixed" => &ring_sig::ECDSA_P256_SHA256_FIXED,
+        "rs256" => &ring_sig::RSA_PKCS1_2048_8192_SHA256,
+        _ => {
+            return err_text(
+                heap,
+                types,
+                result_ty,
+                format!("unsupported_algorithm:{alg}"),
+            );
+        }
+    };
+    let verified = ring_sig::UnparsedPublicKey::new(verifier, public_key)
+        .verify(message, signature)
+        .is_ok();
+    ok_bool(heap, types, result_ty, verified)
 }
 
 fn crypto_constant_time_eq(a: &[u8], b: &[u8]) -> Value {
@@ -500,6 +547,16 @@ pub fn call(
             args[0].as_text().as_bytes(),
             args[1].as_text().as_bytes(),
         )),
+        PrimId::CryptoHmacSha1 => crypto_hmac_sha1(heap, args[0].as_bytes(), args[1].as_bytes()),
+        PrimId::CryptoVerifySignatureRaw => crypto_verify_signature_raw(
+            heap,
+            types,
+            result_ty,
+            args[0].as_text(),
+            args[1].as_bytes(),
+            args[2].as_bytes(),
+            args[3].as_bytes(),
+        ),
         _ => unreachable!("non-Crypto primitive dispatched to crypto::call"),
     }
 }
@@ -805,5 +862,202 @@ mod tests {
         assert!(crypto_constant_time_eq(b"abc", b"abc").as_bool());
         assert!(!crypto_constant_time_eq(b"abc", b"abd").as_bool());
         assert!(!crypto_constant_time_eq(b"abc", b"ab").as_bool());
+    }
+
+    #[test]
+    fn hmac_sha1_rfc_2202_and_signature_verification() {
+        let heap = Heap::new(4 * 1024 * 1024);
+        let (_, _, _) = crypto_types();
+
+        // Build TypeTable including Result(Bool, Text) at index 4.
+        let base = |kind: TypeKind| TypeDef {
+            kind,
+            parameters: Vec::new(),
+            result: NO_INDEX,
+            function: NO_INDEX,
+            capability: None,
+            name_idx: None,
+            name: None,
+            fields: Vec::new(),
+            cases: Vec::new(),
+            is_reference: false,
+            has_fields: false,
+        };
+        let res_bool_def = TypeDef {
+            kind: TypeKind::Choice,
+            parameters: Vec::new(),
+            result: NO_INDEX,
+            function: NO_INDEX,
+            capability: None,
+            name_idx: None,
+            name: Some("Result".into()),
+            fields: Vec::new(),
+            cases: vec![
+                TypeCase {
+                    name_idx: 0,
+                    name: "Ok".into(),
+                    fields: vec![TypeField {
+                        name_idx: None,
+                        name: None,
+                        ty: 2,
+                    }],
+                    unnamed: true,
+                },
+                TypeCase {
+                    name_idx: 1,
+                    name: "Error".into(),
+                    fields: vec![TypeField {
+                        name_idx: None,
+                        name: None,
+                        ty: 1,
+                    }],
+                    unnamed: true,
+                },
+            ],
+            is_reference: false,
+            has_fields: false,
+        };
+        let sig_types = TypeTable::finish(
+            vec![
+                base(TypeKind::Bytes), // 0
+                base(TypeKind::Text),  // 1
+                base(TypeKind::Bool),  // 2
+                res_bool_def,          // 3
+            ],
+            Vec::new(),
+        )
+        .unwrap();
+        let res_bool = 3u32;
+
+        // RFC 2202 HMAC-SHA1 test vectors.
+        assert_eq!(
+            hex_encode(
+                crypto_hmac_sha1(&heap, &[0x0bu8; 20], b"Hi There")
+                    .unwrap()
+                    .as_bytes()
+            ),
+            "b617318655057264e28bc0b6fb378c8ef146be00"
+        );
+        assert_eq!(
+            hex_encode(
+                crypto_hmac_sha1(&heap, b"Jefe", b"what do ya want for nothing?")
+                    .unwrap()
+                    .as_bytes()
+            ),
+            "effcdf6ae5eb2fa2d27416d5f184df9c259a7c79"
+        );
+        assert_eq!(
+            hex_encode(
+                crypto_hmac_sha1(&heap, &[0xaau8; 20], &[0xddu8; 50])
+                    .unwrap()
+                    .as_bytes()
+            ),
+            "125d7342b9ac11cd91a39af48aa17b4f63f175d3"
+        );
+        assert_eq!(
+            hex_encode(
+                crypto_hmac_sha1(
+                    &heap,
+                    &[0xaau8; 80],
+                    b"Test Using Larger Than Block-Size Key and Larger Than One Block-Size Data",
+                )
+                .unwrap()
+                .as_bytes()
+            ),
+            "e8e99d0f45237d786d6bbaa7965c7808bbff1a91"
+        );
+        assert_eq!(
+            hex_encode(crypto_hmac_sha1(&heap, b"", b"").unwrap().as_bytes()),
+            "fbdb1d1b18aa6c08324b7d64b71fb76370690e1d"
+        );
+
+        let check_verify = |alg: &str, pk: &[u8], msg: &[u8], sig: &[u8]| -> bool {
+            let v = crypto_verify_signature_raw(&heap, &sig_types, res_bool, alg, pk, msg, sig)
+                .unwrap();
+            assert_eq!(v.as_tag(), 0);
+            heap.extract_case_field(&sig_types, res_bool, &v, 0, 0)
+                .as_bool()
+        };
+
+        // Ed25519
+        let ed_pub = hex_decode("f347ead52316f7f85f4b0448db694606dfcc1aeb420e13cfdb04933c73be350f");
+        let ed_sig = hex_decode(
+            "8a3fc479c36a70d56bb04dc4330886926451a1682f2b236f96c4f725acc98994b437e39ebe9bbf08722d6f0969c7ecc33d8cfe51b1405020052df63374e98a0d",
+        );
+        assert!(check_verify(
+            "ed25519",
+            &ed_pub,
+            b"arvo-wave0-ed25519",
+            &ed_sig
+        ));
+        let mut bad_ed = ed_sig.clone();
+        bad_ed[0] ^= 0x01;
+        assert!(!check_verify(
+            "ed25519",
+            &ed_pub,
+            b"arvo-wave0-ed25519",
+            &bad_ed
+        ));
+        assert!(!check_verify("ed25519", &ed_pub, b"tampered", &ed_sig));
+
+        // ES256 ASN.1 DER and fixed R||S
+        let ec_pub = hex_decode(
+            "04fb4ddba3d0e5b6d1c65eaacd8bf5e13d0e5ab7011cb6591834939df20555dbf8b4a1f9a8726cd2ceff0a1b1cb88b22e637e4c67149b03b0892b7d6c80dfff4ea",
+        );
+        let ec_asn1 = hex_decode(
+            "304502206a28481e84bc6cbfe1bc232b932f8fc125dca9f1be6e79cdd9b45acbfd08b782022100917dbd45a2dea75974f4aa5147e211dff3ac709da9b5fe9a54cc22ca801e57f1",
+        );
+        let ec_fixed = hex_decode(
+            "6a28481e84bc6cbfe1bc232b932f8fc125dca9f1be6e79cdd9b45acbfd08b782917dbd45a2dea75974f4aa5147e211dff3ac709da9b5fe9a54cc22ca801e57f1",
+        );
+        assert!(check_verify(
+            "es256_asn1",
+            &ec_pub,
+            b"arvo-wave0-es256",
+            &ec_asn1
+        ));
+        assert!(!check_verify("es256_asn1", &ec_pub, b"tampered", &ec_asn1));
+        assert!(check_verify(
+            "es256_fixed",
+            &ec_pub,
+            b"arvo-wave0-es256",
+            &ec_fixed
+        ));
+        let mut bad_ec = ec_fixed.clone();
+        bad_ec[10] ^= 0x80;
+        assert!(!check_verify(
+            "es256_fixed",
+            &ec_pub,
+            b"arvo-wave0-es256",
+            &bad_ec
+        ));
+
+        // RS256 PKCS#1 DER public key
+        let rsa_pub = hex_decode(
+            "3082010a0282010100ba7e0e9316a26bf1eba56b750ab96da09a40f275ca1b8c0d971b5bde63c844033fd43bf1f799a57607702c1edc1d9c9c12249f91004be6ee9abd02a8821fd650a2efe27d5f4729b4b341289a6f02075e96c194fbb58bc173cb087fcb5fc4b4aa3e3b0a405843b2acf6ff7797a8f28c9ce64b073c2f3a1216e8b014adbefd98cb1a34d2e02d18efd672c8fc33707abddeb1873ca97d85ceed61bb42acc2447d4e18f3b92d9e9015afc8ce7e2d311d2b3ddaab7597073116e61c176f1fa625a408d44cdcd5d0df7c976ef3f47606997dc4e8dfed3ac675a937dcaee4e717650c6633335a6404d0efeb6c341e7faf09b29c07cb16f5e281b8645f328f7c1f329ba70203010001",
+        );
+        let rsa_sig = hex_decode(
+            "292dd9caafabdc25759f893c69e15f1f2b5f3b9524d88f4b3e7292d58ba951e778cd5db5b796e3319f43f332697ee3cf4a2a2e41420b4e63c5d22733afe110e27b7a57c93f743825b886007a4f5fa1b8b6487b8e871d0d04d320c3cbec19c38c1196ac16355c8076ba19c874629845b2dd334e22d1ce5d496a7a29f9165a83499cb390073d8eaf3237f3c8be9e657516a6f9749c8f6d5733af37cfb5b69453fc4cf5b09513e3e0676af377cf398b1b30f934d506612af4c27ae23c0a5577466442048751544726d23e9662d5446df495b5868b61b9a1e05f70e2a52b3bdba114ca3bf6a2fc30a82eea53a7c2e16921543aef9c0ab1aff790ba58f124d27c311a",
+        );
+        assert!(check_verify("rs256", &rsa_pub, b"arvo-wave0-rsa", &rsa_sig));
+        assert!(!check_verify("rs256", &rsa_pub, b"tampered", &rsa_sig));
+        assert!(!check_verify(
+            "rs256",
+            b"bad-der",
+            b"arvo-wave0-rsa",
+            &rsa_sig
+        ));
+
+        // Unsupported algorithm returns Error(text)
+        let bad_alg = crypto_verify_signature_raw(
+            &heap, &sig_types, res_bool, "hs256", &ed_pub, b"msg", &ed_sig,
+        )
+        .unwrap();
+        assert_eq!(bad_alg.as_tag(), 1);
+        assert_eq!(
+            heap.extract_case_field(&sig_types, res_bool, &bad_alg, 1, 0)
+                .as_text(),
+            "unsupported_algorithm:hs256"
+        );
     }
 }

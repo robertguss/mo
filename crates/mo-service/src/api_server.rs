@@ -1545,6 +1545,7 @@ fn dispatch_vm_request(
 #[cfg(unix)]
 fn serve_connection(pool: &WorkerPool, cache: &mut Option<WorkerCache>, stream: TcpStream) {
     let _ = stream.set_write_timeout(Some(Duration::from_micros(MO_LIMIT_API_WRITE_US)));
+    let peer_ip = stream.peer_addr().ok().map(|addr| addr.ip().to_string());
     let mut stream_opt = Some(stream);
     let mut buf = Vec::new();
     for req_idx in 0..MO_LIMIT_API_KEEPALIVE_REQUESTS {
@@ -1562,7 +1563,15 @@ fn serve_connection(pool: &WorkerPool, cache: &mut Option<WorkerCache>, stream: 
                 break;
             };
             match read_http_request(stream, &mut buf, deadline) {
-                Ok(r) => r,
+                Ok(mut r) => {
+                    // Strip any client-supplied X-Mo-Peer-Ip so proxy/rate-limit logic sees only the socket peer.
+                    r.headers
+                        .retain(|(k, _)| !k.eq_ignore_ascii_case("x-mo-peer-ip"));
+                    if let Some(ip) = &peer_ip {
+                        r.headers.push(("X-Mo-Peer-Ip".to_string(), ip.clone()));
+                    }
+                    r
+                }
                 Err(code) => {
                     if code > 0 {
                         let err_str = match code {

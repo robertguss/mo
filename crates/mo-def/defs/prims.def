@@ -259,5 +259,7 @@ PRIM(JSON_QUOTE_RAW,            "Json",      "quote_raw",          "fn(Text) : T
 PRIM(JSON_PARSE_RAW,            "Json",      "parse_raw",          "fn(Text) : Result((List(Int), List(Text)), (Int, Int, Int, Text))", "b", "")
 PRIM(BYTES_DOT_U16_BE_BIASED,   "Bytes",     "dot_u16_be_biased",  "fn(Bytes, Int, Bytes, Int, Int, Int) : Option(Int)", "bbbbbb", "")
 PRIM(BYTES_DOT_U8_BIASED,       "Bytes",     "dot_u8_biased",      "fn(Bytes, Int, Bytes, Int, Int, Int) : Option(Int)", "bbbbbb", "")
+PRIM(CRYPTO_HMAC_SHA1,          "Crypto",    "hmac_sha1",          "fn(Bytes, Bytes) : Bytes",                   "bb",  "")
+PRIM(CRYPTO_VERIFY_SIGNATURE_RAW, "Crypto",  "verify_signature_raw", "fn(Text, Bytes, Bytes, Bytes) : Result(Bool, Text)", "bbbb", "")
 
 #undef PRIM

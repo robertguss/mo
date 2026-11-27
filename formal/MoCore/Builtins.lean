@@ -1140,6 +1140,10 @@ def sqliteTy (ok : Ty) : Ty := .result ok .sqliteError
   typedAs? program [] (prim (.crypto .hashPasswordRaw) [str "pw", .lit (.bytes [])])
     (.result .text .text) &&
   typedAs? program [] (prim (.crypto .verifyPassword) [str "pw", str "enc"]) tBool &&
+  typedAs? program [] (prim (.crypto .hmacSha1) [.lit (.bytes []), .lit (.bytes [])]) tBytes &&
+  typedAs? program []
+    (prim (.crypto .verifySignatureRaw) [str "ed25519", .lit (.bytes []), .lit (.bytes []), .lit (.bytes [])])
+    (.result .bool .text) &&
   stops program (prim (.crypto .sha256) [.lit (.bytes [])]) tBytes
     (.outside "Crypto is a trusted primitive unavailable in mocore")
 

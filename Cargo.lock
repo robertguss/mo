@@ -607,6 +607,7 @@ dependencies = [
  "mo-bytecode",
  "mo-def",
  "mo-heap",
+ "ring",
  "scrypt",
  "sha2",
  "subtle",

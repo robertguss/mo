@@ -1052,6 +1052,8 @@ fn match_static_prim(native: &str) -> Option<Prim> {
         "Crypto.open_raw" => Some(Prim::Crypto(CoreCryptoOp::OpenRaw)),
         "Crypto.hash_password_raw" => Some(Prim::Crypto(CoreCryptoOp::HashPasswordRaw)),
         "Crypto.verify_password" => Some(Prim::Crypto(CoreCryptoOp::VerifyPassword)),
+        "Crypto.hmac_sha1" => Some(Prim::Crypto(CoreCryptoOp::HmacSha1)),
+        "Crypto.verify_signature_raw" => Some(Prim::Crypto(CoreCryptoOp::VerifySignatureRaw)),
         // Json
         "Json.quote_raw" => Some(Prim::Json(CoreJsonOp::QuoteRaw)),
         "Json.parse_raw" => Some(Prim::Json(CoreJsonOp::ParseRaw)),

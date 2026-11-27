@@ -58,7 +58,8 @@ def unicodeOps : List (String × UnicodeOp) :=
 def cryptoOps : List (String × CryptoOp) :=
   [("sha256", .sha256), ("hmacSha256", .hmacSha256), ("constantTimeEq", .constantTimeEq),
    ("sealRaw", .sealRaw), ("openRaw", .openRaw), ("hashPasswordRaw", .hashPasswordRaw),
-   ("verifyPassword", .verifyPassword)]
+   ("verifyPassword", .verifyPassword), ("hmacSha1", .hmacSha1),
+   ("verifySignatureRaw", .verifySignatureRaw)]
 def jsonOps : List (String × JsonOp) :=
   [("quoteRaw", .quoteRaw), ("parseRaw", .parseRaw)]
 def rangeOps : List (String × RangeOp) :=

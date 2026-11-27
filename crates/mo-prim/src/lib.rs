@@ -248,14 +248,16 @@ pub fn call(
         | PrimId::Unicode16Letter
         | PrimId::Unicode16Digit => unicode::call(heap, prim, args),
 
-        // Crypto (7 primitives)
+        // Crypto (9 primitives)
         PrimId::CryptoSha256
         | PrimId::CryptoHmacSha256
         | PrimId::CryptoConstantTimeEq
         | PrimId::CryptoSealRaw
         | PrimId::CryptoOpenRaw
         | PrimId::CryptoHashPasswordRaw
-        | PrimId::CryptoVerifyPassword => crypto::call(heap, types, prim, result_ty, args),
+        | PrimId::CryptoVerifyPassword
+        | PrimId::CryptoHmacSha1
+        | PrimId::CryptoVerifySignatureRaw => crypto::call(heap, types, prim, result_ty, args),
 
         // Json (2 primitives)
         PrimId::JsonQuoteRaw | PrimId::JsonParseRaw => {
