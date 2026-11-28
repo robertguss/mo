@@ -30,7 +30,7 @@ fn temp_dir(tag: &str) -> PathBuf {
 fn version_and_embedded_docs_nonempty() {
     assert_eq!(version(), MO_VERSION);
     assert_eq!(version_line(), MO_VERSION_LINE);
-    assert_eq!(version_line(), "mo 0.3.0");
+    assert_eq!(version_line(), "mo 0.4.0");
     assert!(!MO_EMBEDDED_GUIDE.is_empty());
     assert!(!MO_EMBEDDED_REFERENCE.is_empty());
     let hex = runtime_identity_hex().expect("runtime digest");
@@ -155,7 +155,7 @@ end
     let mut err = Vec::new();
     let cli = parse_cli(&argv(&["mo", "--version"])).expect("parse");
     assert_eq!(execute_cli(&cli, &mut out, &mut err), 0);
-    assert_eq!(out, b"mo 0.3.0\n");
+    assert_eq!(out, b"mo 0.4.0\n");
     assert!(err.is_empty());
 
     // 2. mo check
