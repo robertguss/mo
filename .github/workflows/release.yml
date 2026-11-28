@@ -1,0 +1,222 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (defaults to github.ref_name)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.target_name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target_name: x86_64-linux
+          - os: macos-latest
+            target_name: aarch64-macos
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary and run smoke test
+        run: |
+          cargo build --release --bin mo
+          ./target/release/mo --version
+          ./target/release/mo test examples/expenses.mo
+
+      - name: Package release archive
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          TARGET_NAME: ${{ matrix.target_name }}
+        run: |
+          RAW_TAG="${INPUT_TAG:-${GITHUB_REF_NAME}}"
+          PKG_DIR="mo-${RAW_TAG}-${TARGET_NAME}"
+          mkdir -p "$PKG_DIR"
+          cp target/release/mo README.md LICENSE-MIT LICENSE-APACHE "$PKG_DIR/"
+          tar -czf "${PKG_DIR}.tar.gz" "$PKG_DIR"
+          echo "ASSET_FILE=${PKG_DIR}.tar.gz" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mo-${{ matrix.target_name }}
+          path: ${{ env.ASSET_FILE }}
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS.txt
+        run: |
+          cd dist
+          sha256sum mo-*.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            dist/mo-*.tar.gz
+            dist/SHA256SUMS.txt
+          generate_release_notes: true
+
+  homebrew:
+    name: Update Homebrew Tap
+    needs: [build, publish]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Homebrew tap token
+        id: check_token
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "HOMEBREW_TAP_TOKEN is not set; skipping automatic formula bump. Update robertguss/homebrew-tap Formula/mo.rb manually or add HOMEBREW_TAP_TOKEN (Contents: Read & Write on robertguss/homebrew-tap)."
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/download-artifact@v4
+        if: steps.check_token.outputs.enabled == 'true'
+        with:
+          name: mo-x86_64-linux
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        if: steps.check_token.outputs.enabled == 'true'
+        with:
+          name: mo-aarch64-macos
+          path: dist
+
+      - name: Update robertguss/homebrew-tap Formula/mo.rb
+        if: steps.check_token.outputs.enabled == 'true'
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          SRC_URL="https://github.com/robertguss/mo/archive/refs/tags/${TAG}.tar.gz"
+          curl -fsSL "$SRC_URL" -o src.tar.gz
+          SRC_SHA=$(sha256sum src.tar.gz | awk '{print $1}')
+          MAC_ARM_SHA=$(sha256sum "dist/mo-${TAG}-aarch64-macos.tar.gz" | awk '{print $1}')
+          LINUX_INTEL_SHA=$(sha256sum "dist/mo-${TAG}-x86_64-linux.tar.gz" | awk '{print $1}')
+
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/robertguss/homebrew-tap.git" tap
+          python3 - "$VERSION" "$TAG" "$MAC_ARM_SHA" "$LINUX_INTEL_SHA" "$SRC_SHA" <<'PY'
+          import pathlib, sys
+
+          version, tag, mac_sha, lin_sha, src_sha = sys.argv[1:6]
+          template = """class Mo < Formula
+            desc "AI-first systems programming language with built-in capabilities, testing, and web server"
+            homepage "https://github.com/robertguss/mo"
+            version "__VERSION__"
+            license any_of: ["MIT", "Apache-2.0"]
+
+            head do
+              url "https://github.com/robertguss/mo.git", branch: "main"
+              depends_on "rust" => :build
+            end
+
+            on_macos do
+              on_arm do
+                url "https://github.com/robertguss/mo/releases/download/__TAG__/mo-__TAG__-aarch64-macos.tar.gz"
+                sha256 "__MAC_SHA__"
+              end
+
+              on_intel do
+                url "https://github.com/robertguss/mo/archive/refs/tags/__TAG__.tar.gz"
+                sha256 "__SRC_SHA__"
+                depends_on "rust" => :build
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "https://github.com/robertguss/mo/releases/download/__TAG__/mo-__TAG__-x86_64-linux.tar.gz"
+                sha256 "__LIN_SHA__"
+              end
+
+              on_arm do
+                url "https://github.com/robertguss/mo/archive/refs/tags/__TAG__.tar.gz"
+                sha256 "__SRC_SHA__"
+                depends_on "rust" => :build
+              end
+            end
+
+            def install
+              if File.exist?("Cargo.toml")
+                system "cargo", "install", *std_cargo_args(path: "crates/mo-cli")
+              else
+                bin.install "mo"
+              end
+              doc.install "README.md", "LICENSE-MIT", "LICENSE-APACHE"
+            end
+
+            test do
+              if build.head?
+                assert_match(/\\Amo \\d+\\.\\d+\\.\\d+/, shell_output("#{bin}/mo --version"))
+              else
+                assert_match "mo #{version}", shell_output("#{bin}/mo --version")
+              end
+
+              (testpath/"hello.mo").write <<~MO
+                module Hello
+
+                fn double(x: Int) : Int
+                  x * 2
+                end
+
+                test "smoke"
+                  assert double(21) == 42
+                end
+              MO
+
+              system bin/"mo", "test", testpath/"hello.mo"
+            end
+          end
+          """
+          rendered = (
+              template
+              .replace("__VERSION__", version)
+              .replace("__TAG__", tag)
+              .replace("__MAC_SHA__", mac_sha)
+              .replace("__LIN_SHA__", lin_sha)
+              .replace("__SRC_SHA__", src_sha)
+          )
+          pathlib.Path("tap/Formula/mo.rb").write_text(rendered, encoding="utf-8")
+          PY
+          if command -v ruby >/dev/null 2>&1; then
+            ruby -c tap/Formula/mo.rb
+          fi
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/mo.rb
+          if git diff --cached --quiet; then
+            echo "Formula already up to date for ${VERSION}."
+            exit 0
+          fi
+          git commit -m "mo ${VERSION}"
+          git push origin main
