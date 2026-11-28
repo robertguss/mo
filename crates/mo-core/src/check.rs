@@ -1598,6 +1598,17 @@ impl<'a> Checker<'a> {
                     let res = self.binary(TyTag::Result, tup, s_text);
                     self.sig2(res, proc, s_dur)
                 }
+                CoreIoNullaryOp::CommandProcessPollRaw => {
+                    let proc = self.cap_ty(Cap::Process);
+                    let tup = self.intern(
+                        TyTag::Tuple,
+                        vec![s_bytes, s_bytes, s_bool, s_int],
+                        "",
+                        Cap::Console,
+                    );
+                    let res = self.binary(TyTag::Result, tup, s_text);
+                    self.sig2(res, proc, s_int)
+                }
                 CoreIoNullaryOp::SecureRandomBytes => {
                     let sr = self.cap_ty(Cap::SecureRandom);
                     self.sig2(s_bytes, sr, s_int)

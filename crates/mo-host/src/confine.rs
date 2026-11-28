@@ -203,6 +203,48 @@ pub fn confine_compile_child(
     }
 }
 
+/// Applies Landlock + Seccomp-BPF confinement inside a `mo sandbox-run` process.
+pub fn confine_sandbox_child(
+    executable: &Path,
+    root_dir: Option<&Path>,
+    read_only: bool,
+    allow_network: bool,
+    library: Option<&Path>,
+    read_files: &[&Path],
+) -> Result<(), String> {
+    #[cfg(all(
+        target_os = "linux",
+        target_endian = "little",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    {
+        linux::confine_sandbox_child_linux(
+            executable,
+            root_dir,
+            read_only,
+            allow_network,
+            library,
+            read_files,
+        )
+    }
+    #[cfg(not(all(
+        target_os = "linux",
+        target_endian = "little",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )))]
+    {
+        let _ = (
+            executable,
+            root_dir,
+            read_only,
+            allow_network,
+            library,
+            read_files,
+        );
+        Err("confinement is unsupported on this host".to_string())
+    }
+}
+
 /// Applies fail-closed Landlock (ABI V3–V6) + Seccomp-BPF confinement to a `Command.run_raw`
 /// or `Command.spawn_raw` child process.
 pub fn confine_command_child(
@@ -1046,6 +1088,136 @@ mod linux {
 
         finish_landlock(ruleset)?;
         apply_compile_seccomp()
+    }
+
+    fn apply_sandbox_net_seccomp() -> Result<(), String> {
+        let arch = target_arch()?;
+        let self_pid = u64::from(std::process::id());
+        let mut rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
+        for &nr in REFUSED_SYSCALLS {
+            if matches!(
+                nr,
+                libc::SYS_socket
+                    | libc::SYS_socketpair
+                    | libc::SYS_connect
+                    | libc::SYS_bind
+                    | libc::SYS_sendto
+                    | libc::SYS_sendmsg
+                    | libc::SYS_sendmmsg
+            ) {
+                continue;
+            }
+            rules.insert(nr, Vec::new());
+        }
+        add_common_conditional_rules(&mut rules)?;
+        let non_self = vec![rule(vec![cond(
+            0,
+            SeccompCmpArgLen::Dword,
+            SeccompCmpOp::Ne,
+            self_pid,
+        )?])?];
+        rules.insert(libc::SYS_kill, non_self.clone());
+        rules.insert(libc::SYS_tgkill, non_self);
+        rules.insert(
+            libc::SYS_prlimit64,
+            vec![rule(vec![
+                cond(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, 0)?,
+                cond(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, self_pid)?,
+            ])?],
+        );
+        let filter = SeccompFilter::new(
+            rules,
+            SeccompAction::Allow,
+            SeccompAction::Errno(libc::EPERM as u32),
+            arch,
+        )
+        .map_err(|e| format!("seccomp(sandbox): {e}"))?;
+        let prog: BpfProgram = filter
+            .try_into()
+            .map_err(|e| format!("seccomp(sandbox bpf): {e}"))?;
+        #[cfg(target_arch = "x86_64")]
+        apply_x32_kill_filter()?;
+        apply_clone3_enosys_filter(arch)?;
+        seccompiler::apply_filter(&prog).map_err(|e| format!("seccomp(sandbox apply): {e}"))
+    }
+
+    pub(super) fn confine_sandbox_child_linux(
+        executable: &Path,
+        root_dir: Option<&Path>,
+        read_only: bool,
+        allow_network: bool,
+        library: Option<&Path>,
+        read_files: &[&Path],
+    ) -> Result<(), String> {
+        rustix::thread::set_no_new_privs(true).map_err(|e| format!("no_new_privs: {e}"))?;
+
+        let mut ruleset = if allow_network {
+            Ruleset::default()
+                .set_compatibility(CompatLevel::HardRequirement)
+                .handle_access(AccessFs::from_all(ABI::V3))
+                .and_then(Ruleset::create)
+                .map_err(|e| format!("landlock_create_ruleset(v3 probe): {e}"))?;
+            Ruleset::default()
+                .handle_access(AccessFs::from_all(ABI::V6))
+                .map_err(|e| format!("landlock handle_access(fs): {e}"))?
+                .scope(Scope::from_all(ABI::V6))
+                .map_err(|e| format!("landlock scope(v6): {e}"))?
+                .create()
+                .map_err(|e| format!("landlock_create_ruleset: {e}"))?
+        } else {
+            create_ruleset_v3_to_v6(false)?
+        };
+
+        for sys in ["/usr", "/lib", "/lib64", "/etc/ld.so.cache"] {
+            ruleset = allow_path(ruleset, Path::new(sys), SYSTEM_READ)?;
+        }
+        if allow_network {
+            for net_cfg in [
+                "/etc/resolv.conf",
+                "/etc/hosts",
+                "/etc/nsswitch.conf",
+                "/etc/ssl",
+                "/etc/ca-certificates",
+            ] {
+                ruleset = allow_path(
+                    ruleset,
+                    Path::new(net_cfg),
+                    AccessFs::ReadFile | AccessFs::ReadDir,
+                )?;
+            }
+        }
+        ruleset = allow_path(ruleset, executable, AccessFs::Execute | AccessFs::ReadFile)?;
+        if let Some(lib_dir) = library {
+            ruleset = allow_path(ruleset, lib_dir, AccessFs::ReadFile | AccessFs::ReadDir)?;
+        }
+        for &rf in read_files {
+            ruleset = allow_path(ruleset, rf, BitFlags::from(AccessFs::ReadFile))?;
+        }
+        if let Some(root) = root_dir {
+            let rights = if read_only {
+                AccessFs::ReadFile | AccessFs::ReadDir
+            } else {
+                COMMAND_OWN
+            };
+            ruleset = allow_path(ruleset, root, rights)?;
+        }
+        ruleset = allow_path(
+            ruleset,
+            Path::new("/dev/null"),
+            AccessFs::ReadFile | AccessFs::WriteFile,
+        )?;
+        ruleset = allow_path(
+            ruleset,
+            Path::new("/dev/urandom"),
+            BitFlags::from(AccessFs::ReadFile),
+        )?;
+
+        finish_landlock(ruleset)?;
+        if allow_network {
+            apply_sandbox_net_seccomp()
+        } else {
+            apply_compile_seccomp()
+        }
     }
 
     fn extract_local_bin_dir(executable: &Path) -> Option<std::path::PathBuf> {

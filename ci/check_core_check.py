@@ -334,6 +334,8 @@ def signatures():
     add("io", "commandProcessKillRaw", C("process"), f"(result {U} {T})")
     add("io", "commandProcessWaitRaw", C("process") + "|(duration)",
         f"(result (tuple ({I} (bytes) (bytes))) {T})")
+    add("io", "commandProcessPollRaw", C("process") + "|" + I,
+        f"(result (tuple ((bytes) (bytes) (bool) {I})) {T})")
     add("io", "commandFake", "(map (bytes) (bytes))", C("command"), True)
     return table
 

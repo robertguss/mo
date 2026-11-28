@@ -846,7 +846,8 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
     outside "Sqlite is not modeled by mocore" w
   | .commandRunRaw, _ | .commandWithin, _ | .commandAllowPrograms, _ | .commandFake, _
   | .commandAllowLoopback, _ | .commandSpawnRaw, _ | .commandProcessPid, _
-  | .commandProcessAlive, _ | .commandProcessKillRaw, _ | .commandProcessWaitRaw, _ =>
+  | .commandProcessAlive, _ | .commandProcessKillRaw, _ | .commandProcessWaitRaw, _
+  | .commandProcessPollRaw, _ =>
     outside "Command is not modeled by mocore" w
   | .secureRandomBytes, _ | .secureRandomSeeded, _ =>
     outside "SecureRandom is not modeled by mocore" w

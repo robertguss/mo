@@ -132,7 +132,8 @@ def ioOps : List (String × IoOp) :=
    ("sqliteStatsRaw", .sqliteStatsRaw), ("sqliteResetStatsRaw", .sqliteResetStatsRaw),
    ("commandAllowLoopback", .commandAllowLoopback), ("commandSpawnRaw", .commandSpawnRaw),
    ("commandProcessPid", .commandProcessPid), ("commandProcessAlive", .commandProcessAlive),
-   ("commandProcessKillRaw", .commandProcessKillRaw), ("commandProcessWaitRaw", .commandProcessWaitRaw)]
+   ("commandProcessKillRaw", .commandProcessKillRaw), ("commandProcessWaitRaw", .commandProcessWaitRaw),
+   ("commandProcessPollRaw", .commandProcessPollRaw)]
 def ioOut : IoOp → Sexp
   | .readText ro => tag "readText" [boolean ro]
   | .readBytes ro => tag "readBytes" [boolean ro]

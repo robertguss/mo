@@ -645,11 +645,13 @@ results in `lib/command.mo`.
 | `alive?` | host | `COMMAND_PROCESS_ALIVE` | checks whether a `Command.Process` is still running without losing its exit status |
 | `kill_raw` | host | `COMMAND_PROCESS_KILL_RAW` | terminates a `Command.Process` process group and reaps the child |
 | `wait_raw(within)` | host | `COMMAND_PROCESS_WAIT_RAW` | waits up to `within` for a `Command.Process` to exit and returns `(status, stdout, stderr)` |
+| `poll_output_raw(max_bytes)` | host | `COMMAND_PROCESS_POLL_RAW` | drains up to `max_bytes` from stdout/stderr of a running or exited `Command.Process` and returns `(stdout, stderr, eof, status)` |
 | `Command.fake(replies)` | host | `COMMAND_FAKE` | a fake, for spec code only (reference 12.4) |
 | `run(program, args, within)` | Mo | `lib/command.mo` | decodes UTF-8 `stdout`/`stderr` into `Output` and maps error tags into `CommandError` |
 | `spawn(program, args)` | Mo | `lib/command.mo` | spawns a supervised `Command.Process` and maps error tags into `CommandError` |
 | `kill()` | Mo | `lib/command.mo` | terminates a `Command.Process` and maps error tags into `CommandError` |
 | `wait(within)` | Mo | `lib/command.mo` | waits for a `Command.Process` and decodes UTF-8 `stdout`/`stderr` into `Output` |
+| `poll_output(max_bytes)` | Mo | `lib/command.mo` | reads the next unread stdout/stderr `Chunk` and `eof`/`status` from a `Command.Process` without blocking on exit |
 | `Command.spec(program, args)` | Mo | `lib/command.mo` | starts a `Spec` at the capability's root folder |
 | `in_folder(folder)` | Mo | `lib/command.mo` | narrows a `Spec` to a relative subfolder |
 | `Command.output(status, stdout, stderr)` | Mo | `lib/command.mo` | builds an `Output` |

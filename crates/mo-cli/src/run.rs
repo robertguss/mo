@@ -473,7 +473,7 @@ pub fn run_bytecode(
     )
 }
 
-fn find_core_entry(core: &CoreProgram, file: &BytecodeFile) -> Option<u32> {
+pub(crate) fn find_core_entry(core: &CoreProgram, file: &BytecodeFile) -> Option<u32> {
     let Metadata::Source(meta) = &core.metadata else {
         return None;
     };

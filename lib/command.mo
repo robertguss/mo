@@ -2,6 +2,7 @@
 ## attenuation, bounded output and deadlines, and deterministic `Command.fake` exchanges for tests.
 module Command
 expose Output(..),
+Chunk(..),
 Spec(..),
 CommandError(..),
 spec,
@@ -13,12 +14,20 @@ replies,
 run,
 spawn,
 kill,
-wait
+wait,
+poll_output
 
 struct Output
   status: Int
   stdout: Text
   stderr: Text
+end
+
+struct Chunk
+  stdout: Bytes
+  stderr: Bytes
+  eof: Bool
+  status: Option(Int)
 end
 
 struct Spec
@@ -200,6 +209,15 @@ fn wait(proc: Command.Process, within: Duration) : Result(Output, CommandError)
   end
 end
 
+fn poll_output(proc: Command.Process, max_bytes: Int) : Result(Chunk, CommandError)
+  case Command.poll_output_raw(proc, max_bytes)
+    Error(tag): Error(parse_error(tag))
+    Ok((out_b, err_b, eof, code)):
+      status = if eof: Some(code) else: None
+      Ok(Chunk(stdout: out_b, stderr: err_b, eof: eof, status: status))
+  end
+end
+
 test "fake command enforces folder containment and monotonic program allowlists"
   cmd = Command.fake(
     replies([
@@ -252,5 +270,37 @@ test "fake Command.spawn supports pid, alive?, wait, kill, within, allow_program
       assert srv.kill() == Ok(Unit)
       assert not srv.alive?
       assert srv.wait(1.second) == Ok(Output(status: 137, stdout: "", stderr: ""))
+  end
+end
+
+test "fake Command.Process.poll_output streams chunks incrementally to eof"
+  cmd = Command.fake(
+    replies([
+      (spec("mo", ["stream"]).in_folder("app"), output(0, "hello world", "err!"))
+    ])
+  )
+  scoped = cmd.within("app").allow_programs(["mo"])
+  case scoped.spawn("mo", ["stream"])
+    Error(_): assert false
+    Ok(proc):
+      assert proc.poll_output(5) == Ok(
+        Chunk(
+          stdout: "hello".bytes,
+          stderr: "err!".bytes,
+          eof: false,
+          status: None
+        )
+      )
+      assert proc.alive?
+      assert proc.poll_output(10) == Ok(
+        Chunk(
+          stdout: " world".bytes,
+          stderr: Bytes.empty,
+          eof: true,
+          status: Some(0)
+        )
+      )
+      assert not proc.alive?
+      assert proc.wait(1.second) == Ok(Output(status: 0, stdout: "", stderr: ""))
   end
 end

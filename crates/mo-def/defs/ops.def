@@ -111,5 +111,6 @@
     X(SQLITE_STATS_RAW, "sqliteStatsRaw") X(SQLITE_RESET_STATS_RAW, "sqliteResetStatsRaw") \
     X(COMMAND_ALLOW_LOOPBACK, "commandAllowLoopback") X(COMMAND_SPAWN_RAW, "commandSpawnRaw") \
     X(COMMAND_PROCESS_PID, "commandProcessPid") X(COMMAND_PROCESS_ALIVE, "commandProcessAlive") \
-    X(COMMAND_PROCESS_KILL_RAW, "commandProcessKillRaw") X(COMMAND_PROCESS_WAIT_RAW, "commandProcessWaitRaw")
+    X(COMMAND_PROCESS_KILL_RAW, "commandProcessKillRaw") X(COMMAND_PROCESS_WAIT_RAW, "commandProcessWaitRaw") \
+    X(COMMAND_PROCESS_POLL_RAW, "commandProcessPollRaw")
 // clang-format on

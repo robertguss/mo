@@ -56,6 +56,7 @@ effects. `sqliteFake` is spec-only.
 | `commandProcessAlive` | Command.Process | Bool |
 | `commandProcessKillRaw` | Command.Process | Result(Unit, Text) |
 | `commandProcessWaitRaw` | Command.Process, Duration | Result((Int, Bytes, Bytes), Text) |
+| `commandProcessPollRaw` | Command.Process, Int | Result((Bytes, Bytes, Bool, Int), Text) |
 | `commandFake` | Map(Bytes, Bytes) | Command |
 | `secureRandomBytes` | SecureRandom, Int | Bytes |
 | `secureRandomSeeded` | Int | SecureRandom |

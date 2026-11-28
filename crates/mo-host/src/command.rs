@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::fs;
 use std::io::{ErrorKind, Read};
 #[cfg(unix)]
@@ -21,7 +22,7 @@ use mo_def::limits::{
     MO_LIMIT_OPEN_FOLDERS, MO_LIMIT_OPEN_PROCESSES, MO_LIMIT_VALUE_BYTES,
 };
 #[cfg(unix)]
-use mo_heap::{ChargedBytes, HeapBudget, HeapError};
+use mo_heap::HeapBudget;
 use mo_heap::{Heap, ScratchGuard, Value};
 #[cfg(unix)]
 use rustix::fs::{Access, AtFlags, CWD, FileType, OFlags, access, fcntl_setfl, fstat, statat};
@@ -99,11 +100,25 @@ pub(crate) struct CommandCounters<'a> {
 
 #[cfg(unix)]
 struct PipeDrainInner {
-    output: Option<Result<ChargedBytes, PipeError>>,
+    buf: VecDeque<u8>,
+    total_bytes: usize,
+    eof: bool,
+    error: Option<PipeError>,
+    budget: HeapBudget,
 }
 
 #[cfg(unix)]
-#[derive(Clone, Copy)]
+impl Drop for PipeDrainInner {
+    fn drop(&mut self) {
+        if !self.buf.is_empty() {
+            self.budget.release(self.buf.len());
+            self.buf.clear();
+        }
+    }
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy)]
 enum PipeError {
     TooLarge,
     Heap,
@@ -125,6 +140,7 @@ struct RealProcessState {
     out_reader: Option<PipeDrainer>,
     err_reader: Option<PipeDrainer>,
     captured: Option<CapturedProcessOutput>,
+    poll_done: Option<Result<i64, &'static str>>,
     _tmp_guard: TempDirGuard,
 }
 
@@ -169,7 +185,7 @@ fn reap_and_kill_tree(st: &mut RealProcessState) {
 fn take_drainer_bounded(
     drainer_opt: &mut Option<PipeDrainer>,
     budget: Duration,
-) -> Result<Option<ChargedBytes>, PipeError> {
+) -> Result<Option<Vec<u8>>, PipeError> {
     let Some(mut d) = drainer_opt.take() else {
         return Ok(None);
     };
@@ -178,7 +194,7 @@ fn take_drainer_bounded(
     let mut inner = lock
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    while inner.output.is_none() {
+    while !inner.eof && !matches!(inner.error, Some(PipeError::Heap)) {
         let now = Instant::now();
         if now >= deadline {
             break;
@@ -188,18 +204,63 @@ fn take_drainer_bounded(
             .wait_timeout(inner, rem)
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         inner = guard;
-        if inner.output.is_none() && wait_res.timed_out() {
+        if !inner.eof && wait_res.timed_out() {
             break;
         }
     }
-    let output = inner.output.take();
+    let finished = inner.eof;
+    let err = inner.error;
+    let result = if let Some(pipe_err) = err {
+        if !inner.buf.is_empty() {
+            inner.budget.release(inner.buf.len());
+            inner.buf.clear();
+        }
+        Err(pipe_err)
+    } else if finished {
+        let bytes: Vec<u8> = inner.buf.drain(..).collect();
+        if !bytes.is_empty() {
+            inner.budget.release(bytes.len());
+        }
+        Ok(Some(bytes))
+    } else {
+        if !inner.buf.is_empty() {
+            inner.budget.release(inner.buf.len());
+            inner.buf.clear();
+        }
+        Ok(None)
+    };
     drop(inner);
-    if output.is_some()
+    if (finished || matches!(err, Some(PipeError::Heap)))
         && let Some(h) = d.handle.take()
     {
         let _ = h.join();
     }
-    output.transpose()
+    result
+}
+
+#[cfg(unix)]
+fn poll_drainer_chunk(
+    drainer: &Option<PipeDrainer>,
+    max_bytes: usize,
+) -> Result<(Vec<u8>, bool), PipeError> {
+    let Some(d) = drainer else {
+        return Ok((Vec::new(), true));
+    };
+    let mut inner = d
+        .shared
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(err) = inner.error {
+        return Err(err);
+    }
+    let take_len = max_bytes.min(inner.buf.len());
+    let out: Vec<u8> = inner.buf.drain(..take_len).collect();
+    if !out.is_empty() {
+        inner.budget.release(out.len());
+    }
+    let drained = inner.eof && inner.buf.is_empty();
+    Ok((out, drained))
 }
 
 #[cfg(unix)]
@@ -222,6 +283,8 @@ struct FakeProcessCap {
     status: i64,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
+    out_cursor: Cell<usize>,
+    err_cursor: Cell<usize>,
     open_processes: Rc<Cell<u32>>,
 }
 
@@ -323,6 +386,34 @@ fn command_ok_output(
         .find_tuple_layout(tup_ty)
         .expect("tuple layout for Command output");
     let tup = heap.construct(types, layout, vec![Value::Int(status), stdout, stderr])?;
+    Ok(heap.make_case(types, result_ty, ok_tag, vec![tup])?)
+}
+
+fn command_ok_poll_tuple(
+    heap: &Heap,
+    types: &TypeTable,
+    result_ty: u32,
+    stdout_bytes: Vec<u8>,
+    stderr_bytes: Vec<u8>,
+    eof: bool,
+    status: i64,
+) -> Result<Value, HostError> {
+    let stdout = heap.alloc_bytes(stdout_bytes)?;
+    let stderr = heap.alloc_bytes(stderr_bytes)?;
+    let ok_tag = find_case_tag(types, result_ty, "Ok");
+    let tup_ty = types.get(result_ty).cases[ok_tag as usize].fields[0].ty;
+    #[expect(
+        clippy::expect_used,
+        reason = "verified bytecode guarantees tuple layout exists"
+    )]
+    let layout = types
+        .find_tuple_layout(tup_ty)
+        .expect("tuple layout for Command poll output");
+    let tup = heap.construct(
+        types,
+        layout,
+        vec![stdout, stderr, Value::Bool(eof), Value::Int(status)],
+    )?;
     Ok(heap.make_case(types, result_ty, ok_tag, vec![tup])?)
 }
 
@@ -588,24 +679,43 @@ fn spawn_pipe_drainer<R: Read + Send + 'static>(
 ) -> Result<PipeDrainer, &'static str> {
     let mut pipe = pipe;
     let max_out = MO_LIMIT_COMMAND_OUTPUT_BYTES as usize;
-    let shared = Arc::new((Mutex::new(PipeDrainInner { output: None }), Condvar::new()));
+    let shared = Arc::new((
+        Mutex::new(PipeDrainInner {
+            buf: VecDeque::new(),
+            total_bytes: 0,
+            eof: false,
+            error: None,
+            budget,
+        }),
+        Condvar::new(),
+    ));
     let worker_shared = Arc::clone(&shared);
     let builder = std::thread::Builder::new()
         .name("mo-cmd-pipe".to_string())
         .stack_size(256 * 1024);
     let task = move || {
-        let mut output = Ok(ChargedBytes::new(budget));
         let mut chunk = [0u8; 8192];
         loop {
             match pipe.read(&mut chunk) {
                 Ok(0) => break,
                 Ok(n) => {
-                    if let Ok(buf) = &mut output {
-                        if n > max_out - buf.as_slice().len() {
-                            output = Err(PipeError::TooLarge);
-                        } else if buf.extend(&chunk[..n]).is_err() {
-                            output = Err(PipeError::Heap);
+                    let (lock, cv) = &*worker_shared;
+                    let mut inner = lock
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    if inner.error.is_none() {
+                        if n > max_out.saturating_sub(inner.total_bytes) {
+                            inner.error = Some(PipeError::TooLarge);
+                            cv.notify_all();
+                        } else if inner.budget.charge(n).is_err() {
+                            inner.error = Some(PipeError::Heap);
+                            inner.eof = true;
+                            cv.notify_all();
                             break;
+                        } else {
+                            inner.total_bytes += n;
+                            inner.buf.extend(&chunk[..n]);
+                            cv.notify_all();
                         }
                     }
                 }
@@ -617,7 +727,7 @@ fn spawn_pipe_drainer<R: Read + Send + 'static>(
         let mut inner = lock
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        inner.output = Some(output);
+        inner.eof = true;
         cv.notify_all();
     };
     let handle = builder
@@ -1197,6 +1307,8 @@ fn command_spawn_fake(
                 status,
                 stdout,
                 stderr,
+                out_cursor: Cell::new(0),
+                err_cursor: Cell::new(0),
                 open_processes: Rc::clone(open_processes),
             });
             let proc_val =
@@ -1264,6 +1376,7 @@ fn command_spawn_real(
             out_reader,
             err_reader,
             captured: None,
+            poll_done: None,
             _tmp_guard: tmp_guard,
         }),
         open_processes: Rc::clone(open_processes),
@@ -1488,10 +1601,7 @@ fn drainer_status(drainer: &Option<PipeDrainer>) -> (bool, bool) {
         .0
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    (
-        inner.output.is_some(),
-        matches!(inner.output, Some(Err(PipeError::Heap))),
-    )
+    (inner.eof, matches!(inner.error, Some(PipeError::Heap)))
 }
 
 #[cfg(unix)]
@@ -1503,8 +1613,16 @@ fn wait_drainer_briefly(drainer: &Option<PipeDrainer>, step: Duration) {
     let guard = lock
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if guard.output.is_none() {
+    if !guard.eof {
         let _ = cv.wait_timeout(guard, step);
+    }
+}
+
+#[cfg(unix)]
+fn exit_code_from_status(es: ExitStatus) -> i64 {
+    match es.code() {
+        Some(c) => i64::from(c),
+        None => 128 + i64::from(es.signal().unwrap_or(0)),
     }
 }
 
@@ -1553,7 +1671,9 @@ fn process_wait_real(
     let stdout = take_drainer_bounded(&mut st.out_reader, Duration::from_millis(250));
     let stderr = take_drainer_bounded(&mut st.err_reader, Duration::from_millis(250));
     if matches!(stdout, Err(PipeError::Heap)) || matches!(stderr, Err(PipeError::Heap)) {
-        return Err(HeapError::OutOfMemory.into());
+        return Err(HostError::OutOfMemory {
+            value_bytes_limit: false,
+        });
     }
 
     if timed_out {
@@ -1572,12 +1692,9 @@ fn process_wait_real(
         st.captured = Some(Err("timed_out"));
         return command_error_tag(heap, types, result_ty, "timed_out", "");
     }
-    let exit_code = match es.code() {
-        Some(c) => i64::from(c),
-        None => 128 + i64::from(es.signal().unwrap_or(0)),
-    };
-    let into_value = |bytes: Option<ChargedBytes>| match bytes {
-        Some(bytes) => bytes.into_value(),
+    let exit_code = exit_code_from_status(es);
+    let into_value = |bytes: Option<Vec<u8>>| match bytes {
+        Some(bytes) => heap.alloc_bytes(bytes),
         None => heap.alloc_bytes(Vec::new()),
     };
     let value = command_ok_output(
@@ -1590,6 +1707,75 @@ fn process_wait_real(
     )?;
     st.captured = Some(Ok(value.clone()));
     Ok(value)
+}
+
+#[cfg(unix)]
+fn process_poll_real(
+    heap: &Heap,
+    types: &TypeTable,
+    proc_cap: &RealProcessCap,
+    result_ty: u32,
+    max_bytes: usize,
+) -> Result<Value, HostError> {
+    let mut st = proc_cap.state.borrow_mut();
+    if let Some(ref cached) = st.poll_done {
+        return match cached {
+            Ok(code) => {
+                command_ok_poll_tuple(heap, types, result_ty, Vec::new(), Vec::new(), true, *code)
+            }
+            Err(tag) => command_error_tag(heap, types, result_ty, tag, ""),
+        };
+    }
+    if let Some(ref cached) = st.captured {
+        return match cached {
+            Ok(_) => {
+                let code = st.exit_status.map_or(0, exit_code_from_status);
+                command_ok_poll_tuple(heap, types, result_ty, Vec::new(), Vec::new(), true, code)
+            }
+            Err(tag) => command_error_tag(heap, types, result_ty, tag, ""),
+        };
+    }
+
+    if !st.reaped
+        && let Ok(Some(es)) = st.child.try_wait()
+    {
+        st.exit_status = Some(es);
+        st.reaped = true;
+    }
+
+    let out_res = poll_drainer_chunk(&st.out_reader, max_bytes);
+    let err_res = poll_drainer_chunk(&st.err_reader, max_bytes);
+    if matches!(out_res, Err(PipeError::Heap)) || matches!(err_res, Err(PipeError::Heap)) {
+        return Err(HostError::OutOfMemory {
+            value_bytes_limit: false,
+        });
+    }
+    let (Ok((out_bytes, out_done)), Ok((err_bytes, err_done))) = (out_res, err_res) else {
+        st.poll_done = Some(Err("output_too_large"));
+        reap_and_kill_tree(&mut st);
+        return command_error_tag(heap, types, result_ty, "output_too_large", "");
+    };
+
+    let done = st.reaped && out_done && err_done;
+    if done {
+        let _ = take_drainer_bounded(&mut st.out_reader, Duration::from_millis(250));
+        let _ = take_drainer_bounded(&mut st.err_reader, Duration::from_millis(250));
+        let Some(es) = st.exit_status else {
+            st.poll_done = Some(Err("spawn_failed:child wait failed"));
+            return command_error_tag(heap, types, result_ty, "spawn_failed:child wait failed", "");
+        };
+        if es.signal() == Some(24) {
+            st.poll_done = Some(Err("timed_out"));
+            return command_error_tag(heap, types, result_ty, "timed_out", "");
+        }
+        let exit_code = exit_code_from_status(es);
+        st.poll_done = Some(Ok(exit_code));
+        return command_ok_poll_tuple(
+            heap, types, result_ty, out_bytes, err_bytes, true, exit_code,
+        );
+    }
+
+    command_ok_poll_tuple(heap, types, result_ty, out_bytes, err_bytes, false, -1)
 }
 
 // ---------------------------------------------------------------------------
@@ -1734,17 +1920,64 @@ pub(crate) fn call_command(
                 ProcessCap::Fake(f) => {
                     f.alive.set(false);
                     if f.killed.get() {
+                        f.out_cursor.set(f.stdout.len());
+                        f.err_cursor.set(f.stderr.len());
                         command_ok_tuple(heap, types, result_ty, 137, Vec::new(), Vec::new())
                     } else {
-                        command_ok_tuple(
+                        let oc = f.out_cursor.get().min(f.stdout.len());
+                        let ec = f.err_cursor.get().min(f.stderr.len());
+                        let out_rem = f.stdout[oc..].to_vec();
+                        let err_rem = f.stderr[ec..].to_vec();
+                        f.out_cursor.set(f.stdout.len());
+                        f.err_cursor.set(f.stderr.len());
+                        command_ok_tuple(heap, types, result_ty, f.status, out_rem, err_rem)
+                    }
+                }
+            }
+        }
+        HostOpId::CommandProcessPollRaw => {
+            let max_bytes = args[1].as_int();
+            if !(1..=(MO_LIMIT_COMMAND_OUTPUT_BYTES as i64)).contains(&max_bytes) {
+                return Err(HostError::Bug {
+                    reason: "max_bytes must be between 1 and 4194304",
+                    detail: None,
+                });
+            }
+            let max_len = max_bytes as usize;
+            let proc_cap =
+                crate::downcast_cap::<ProcessCap>(&args[0], "Command.Process capability");
+            match proc_cap {
+                #[cfg(unix)]
+                ProcessCap::Real(r) => process_poll_real(heap, types, r, result_ty, max_len),
+                ProcessCap::Fake(f) => {
+                    if f.killed.get() {
+                        f.alive.set(false);
+                        f.out_cursor.set(f.stdout.len());
+                        f.err_cursor.set(f.stderr.len());
+                        return command_ok_poll_tuple(
                             heap,
                             types,
                             result_ty,
-                            f.status,
-                            f.stdout.clone(),
-                            f.stderr.clone(),
-                        )
+                            Vec::new(),
+                            Vec::new(),
+                            true,
+                            137,
+                        );
                     }
+                    let oc = f.out_cursor.get().min(f.stdout.len());
+                    let ec = f.err_cursor.get().min(f.stderr.len());
+                    let o_end = oc.saturating_add(max_len).min(f.stdout.len());
+                    let e_end = ec.saturating_add(max_len).min(f.stderr.len());
+                    let out_slice = f.stdout[oc..o_end].to_vec();
+                    let err_slice = f.stderr[ec..e_end].to_vec();
+                    f.out_cursor.set(o_end);
+                    f.err_cursor.set(e_end);
+                    let done = o_end == f.stdout.len() && e_end == f.stderr.len();
+                    if done {
+                        f.alive.set(false);
+                    }
+                    let code = if done { f.status } else { -1 };
+                    command_ok_poll_tuple(heap, types, result_ty, out_slice, err_slice, done, code)
                 }
             }
         }
@@ -1789,5 +2022,34 @@ mod tests {
             0,
             "launcher ran past the deadline"
         );
+    }
+
+    #[test]
+    fn poll_drainer_streams_incremental_chunks_and_reports_eof() {
+        let heap = Heap::new(1 << 20);
+        let child = Command::new("/bin/sh")
+            .args(["-c", "printf 'abc'; sleep 0.05; printf 'def'"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut out_child = child;
+        let out_pipe = out_child.stdout.take().unwrap();
+        let drainer = Some(spawn_pipe_drainer(out_pipe, heap.budget().clone()).unwrap());
+        let mut collected = Vec::new();
+        let mut done = false;
+        let start = Instant::now();
+        while !done && start.elapsed() < Duration::from_secs(2) {
+            let (chunk, eof) = poll_drainer_chunk(&drainer, 2).unwrap();
+            collected.extend_from_slice(&chunk);
+            done = eof;
+            if !done && chunk.is_empty() {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        assert!(done);
+        assert_eq!(collected, b"abcdef");
+        let status = out_child.wait().unwrap();
+        assert!(status.success());
     }
 }

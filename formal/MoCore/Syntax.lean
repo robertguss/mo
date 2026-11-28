@@ -389,7 +389,7 @@ inductive IoOp where
   | sqliteOpen | sqliteRun | sqliteQuery | sqliteExecuteRaw | sqliteStatsRaw | sqliteResetStatsRaw
   | commandRunRaw | commandWithin | commandAllowPrograms | commandAllowLoopback
   | commandSpawnRaw | commandProcessPid | commandProcessAlive
-  | commandProcessKillRaw | commandProcessWaitRaw
+  | commandProcessKillRaw | commandProcessWaitRaw | commandProcessPollRaw
   | secureRandomBytes
   | writeBytes | rename | fileOpen | fileReadAt | fileWriteAt | fileSize | fileTruncate | fileSync
   | fileLockShared | fileLockExclusive | fileUnlock | readFileOpen
@@ -668,6 +668,8 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .commandProcessKillRaw => ([.cap .process], .result .unit .text)
   | .commandProcessWaitRaw =>
     ([.cap .process, .duration], .result (.tuple [.int, .bytes, .bytes]) .text)
+  | .commandProcessPollRaw =>
+    ([.cap .process, .int], .result (.tuple [.bytes, .bytes, .bool, .int]) .text)
   | .commandFake => ([.map .bytes .bytes], .cap .command)
   | .secureRandomBytes => ([.cap .secureRandom, .int], .bytes)
   | .secureRandomSeeded => ([.int], .cap .secureRandom)

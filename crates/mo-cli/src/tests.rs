@@ -280,6 +280,8 @@ fn cli_help_flags_and_serve_root_hint() {
         ("history", "--recover"),
         ("diff", "--json"),
         ("install", "--bin-dir DIR"),
+        ("index", "--json"),
+        ("sandbox-run", "--read-only"),
     ];
     for (cmd, expected_flag) in subcommands {
         for flag in ["--help", "-h"] {
@@ -317,4 +319,228 @@ fn cli_help_flags_and_serve_root_hint() {
         assert!(err.message.contains("--data DIR"), "{}", err.message);
         assert!(!err.message.contains('\n'), "{}", err.message);
     }
+}
+
+#[test]
+fn mo_index_emits_compiler_exact_symbols_edges_and_specs() {
+    let dir = temp_dir("index");
+    let main_path = dir.join("app.mo");
+    fs::write(
+        &main_path,
+        "module App\n\n\
+         struct User\n  id: Int\n  name: Text\nend\n\n\
+         enum Role\n  Admin\n  Member(level: Int)\nend\n\n\
+         fn helper(x: Int) : Int\n  examples\n    helper(2) == 4\n  end\n  promise \"doubles inputs\"\n    result == x * 2\n  end\n  x * 2\nend\n\n\
+         fn greet(console: Console, u: User) : Int\n  v = helper(u.id)\n  console.print(\"hi #{u.name}\")\n  v\nend\n\n\
+         test \"helper works\"\n  assert helper(3) == 6\nend\n",
+    )
+    .expect("write app.mo");
+
+    let main_str = main_path.to_str().expect("utf8 path");
+    let cli = parse_cli(&argv(&["mo", "index", "--json", main_str])).expect("parse index");
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    assert_eq!(
+        execute_cli(&cli, &mut out, &mut err),
+        0,
+        "out={} err={}",
+        String::from_utf8_lossy(&out),
+        String::from_utf8_lossy(&err)
+    );
+    let json = String::from_utf8(out).expect("utf8 index json");
+    assert!(json.contains("\"schema_version\":1"), "{json}");
+    assert!(json.contains("\"entry_module\":\"App\""), "{json}");
+    assert!(json.contains("\"structs\":[{\"name\":\"User\""), "{json}");
+    assert!(json.contains("\"enums\":[{\"name\":\"Role\""), "{json}");
+    assert!(json.contains("\"name\":\"greet\""), "{json}");
+    assert!(json.contains("\"capabilities\":[\"Console\"]"), "{json}");
+    assert!(json.contains("\"calls\":[\"App.helper\"]"), "{json}");
+    assert!(json.contains("\"examples\":1"), "{json}");
+    assert!(json.contains("\"kind\":\"test\""), "{json}");
+    assert!(json.contains("\"label\":\"helper works\""), "{json}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn mo_sandbox_run_enforces_manifest_readonly_and_max_work() {
+    let dir = temp_dir("sandbox");
+    let data_dir = dir.join("work");
+    fs::create_dir_all(&data_dir).expect("create work dir");
+    fs::write(data_dir.join("note.txt"), "hello sandbox").expect("write note.txt");
+
+    // 1. ReadFiles + Console succeeds in --read-only --json.
+    let ok_path = dir.join("sandbox-ok.mo");
+    fs::write(
+        &ok_path,
+        "module SandboxOk\n\n\
+         fn main(console: Console, rf: ReadFiles) : Int\n\
+           case rf.read_text(\"note.txt\")\n\
+             Ok(t): console.print(t)\n\
+             Error(_): console.print(\"err\")\n\
+           end\n\
+           0\n\
+         end\n",
+    )
+    .expect("write sandbox-ok.mo");
+    let cli = parse_cli(&argv(&[
+        "mo",
+        "sandbox-run",
+        "--read-only",
+        "--json",
+        "--root",
+        data_dir.to_str().unwrap(),
+        ok_path.to_str().unwrap(),
+    ]))
+    .expect("parse sandbox ok");
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    assert_eq!(
+        execute_cli(&cli, &mut out, &mut err),
+        0,
+        "out={} err={}",
+        String::from_utf8_lossy(&out),
+        String::from_utf8_lossy(&err)
+    );
+    let out_str = String::from_utf8(out).expect("utf8");
+    assert!(out_str.contains("\"ok\":true"), "{out_str}");
+    assert!(
+        out_str.contains("\"stdout\":\"hello sandbox\\n\""),
+        "{out_str}"
+    );
+
+    // 2. Files refused under --read-only.
+    let files_path = dir.join("sandbox-files.mo");
+    fs::write(
+        &files_path,
+        "module SandboxFiles\n\n\
+         fn main(files: Files) : Int\n\
+           case files.write_text(\"x\", \"y\")\n\
+             Ok(_): 0\n\
+             Error(_): 1\n\
+           end\n\
+         end\n",
+    )
+    .expect("write sandbox-files.mo");
+    let cli = parse_cli(&argv(&[
+        "mo",
+        "sandbox-run",
+        "--read-only",
+        "--json",
+        files_path.to_str().unwrap(),
+    ]))
+    .expect("parse sandbox files");
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    assert_eq!(
+        execute_cli(&cli, &mut out, &mut err),
+        3,
+        "out={} err={}",
+        String::from_utf8_lossy(&out),
+        String::from_utf8_lossy(&err)
+    );
+    let out_str = String::from_utf8(out).expect("utf8");
+    assert!(
+        out_str.contains("Files capability is forbidden in --read-only mode"),
+        "{out_str}"
+    );
+
+    // 3. Command always refused.
+    let cmd_path = dir.join("sandbox-cmd.mo");
+    fs::write(
+        &cmd_path,
+        "module SandboxCmd\nuse Command\n\n\
+         fn main(c: Command) : Int\n\
+           case c.run(\"echo\", [\"hi\"], 1.second)\n\
+             Ok(_): 0\n\
+             Error(_): 1\n\
+           end\n\
+         end\n",
+    )
+    .expect("write sandbox-cmd.mo");
+    let cli = parse_cli(&argv(&[
+        "mo",
+        "sandbox-run",
+        "--json",
+        cmd_path.to_str().unwrap(),
+    ]))
+    .expect("parse sandbox cmd");
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    assert_eq!(
+        execute_cli(&cli, &mut out, &mut err),
+        3,
+        "out={} err={}",
+        String::from_utf8_lossy(&out),
+        String::from_utf8_lossy(&err)
+    );
+    let out_str = String::from_utf8(out).expect("utf8");
+    assert!(
+        out_str.contains("Command capability is forbidden"),
+        "{out_str}"
+    );
+
+    // 4. Network refused without --allow-hosts.
+    let net_path = dir.join("sandbox-net.mo");
+    fs::write(
+        &net_path,
+        "module SandboxNet\n\n\
+         fn main(net: Network) : Int\n\
+           _scoped = net.allow_hosts([\"example.com\"])\n\
+           0\n\
+         end\n",
+    )
+    .expect("write sandbox-net.mo");
+    let cli = parse_cli(&argv(&[
+        "mo",
+        "sandbox-run",
+        "--json",
+        net_path.to_str().unwrap(),
+    ]))
+    .expect("parse sandbox net");
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    assert_eq!(
+        execute_cli(&cli, &mut out, &mut err),
+        3,
+        "out={} err={}",
+        String::from_utf8_lossy(&out),
+        String::from_utf8_lossy(&err)
+    );
+    let out_str = String::from_utf8(out).expect("utf8");
+    assert!(
+        out_str.contains("Network capability requires --allow-hosts"),
+        "{out_str}"
+    );
+
+    // 5. --max-work stops infinite loops cleanly.
+    let loop_path = dir.join("sandbox-loop.mo");
+    fs::write(
+        &loop_path,
+        "module SandboxLoop\n\n\
+         fn main() : Int\n\
+           var i = 0\n\
+           while i >= 0\n\
+             i += 1\n\
+           end\n\
+           0\n\
+         end\n",
+    )
+    .expect("write sandbox-loop.mo");
+    let cli = parse_cli(&argv(&[
+        "mo",
+        "sandbox-run",
+        "--max-work",
+        "200",
+        "--json",
+        loop_path.to_str().unwrap(),
+    ]))
+    .expect("parse sandbox loop");
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    assert_eq!(execute_cli(&cli, &mut out, &mut err), 70);
+    let out_str = String::from_utf8(out).expect("utf8");
+    assert!(out_str.contains("\"ok\":false"), "{out_str}");
+    assert!(out_str.contains("\"exit_code\":70"), "{out_str}");
+
+    let _ = fs::remove_dir_all(&dir);
 }

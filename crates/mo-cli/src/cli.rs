@@ -35,8 +35,10 @@ pub enum Command {
     History = 13,
     Diff = 14,
     Install = 15,
-    Version = 16,
-    Help = 17,
+    Index = 16,
+    SandboxRun = 17,
+    Version = 18,
+    Help = 19,
 }
 
 impl Command {
@@ -64,6 +66,8 @@ impl Command {
             | Self::Serve
             | Self::Fetch
             | Self::Install
+            | Self::Index
+            | Self::SandboxRun
             | Self::Version
             | Self::Help => None,
         }
@@ -89,6 +93,8 @@ impl Command {
             Self::History => "history",
             Self::Diff => "diff",
             Self::Install => "install",
+            Self::Index => "index",
+            Self::SandboxRun => "sandbox-run",
             Self::Version => "--version",
             Self::Help => "--help",
         }
@@ -160,6 +166,9 @@ pub struct Cli {
     pub bin_dir: Option<Vec<u8>>,
     pub stdin_mode: bool,
     pub emit_tests: bool,
+    pub read_only: bool,
+    pub allow_hosts: Option<Vec<u8>>,
+    pub timeout_seconds: u32,
     pub module: Option<Vec<u8>>,
     pub only: Vec<Vec<u8>>,
     pub files: Vec<Vec<u8>>,
@@ -220,6 +229,9 @@ impl Default for Cli {
             bin_dir: None,
             stdin_mode: false,
             emit_tests: false,
+            read_only: false,
+            allow_hosts: None,
+            timeout_seconds: 0,
             module: None,
             only: Vec::new(),
             files: Vec::new(),
@@ -539,6 +551,9 @@ enum FlagId {
     ConfineChild,
     RlimitChild,
     Jobs,
+    ReadOnly,
+    AllowHosts,
+    Timeout,
 }
 
 impl FlagId {
@@ -595,6 +610,8 @@ const FLAGS_TABLE: &[FlagSpec] = &[
             Command::Rehearse,
             Command::Push,
             Command::Diff,
+            Command::Index,
+            Command::SandboxRun,
         ]),
     },
     FlagSpec {
@@ -640,7 +657,12 @@ const FLAGS_TABLE: &[FlagSpec] = &[
         repeated: false,
         value: FlagValue::Bytes,
         maximum: usize::MAX as u64,
-        commands: cmd_mask(&[Command::Run, Command::Test, Command::Query]),
+        commands: cmd_mask(&[
+            Command::Run,
+            Command::Test,
+            Command::Query,
+            Command::SandboxRun,
+        ]),
     },
     FlagSpec {
         id: FlagId::MaxDepth,
@@ -649,7 +671,12 @@ const FLAGS_TABLE: &[FlagSpec] = &[
         repeated: false,
         value: FlagValue::Count,
         maximum: u32::MAX as u64,
-        commands: cmd_mask(&[Command::Run, Command::Test, Command::Query]),
+        commands: cmd_mask(&[
+            Command::Run,
+            Command::Test,
+            Command::Query,
+            Command::SandboxRun,
+        ]),
     },
     FlagSpec {
         id: FlagId::MaxHeap,
@@ -658,7 +685,12 @@ const FLAGS_TABLE: &[FlagSpec] = &[
         repeated: false,
         value: FlagValue::Bytes,
         maximum: usize::MAX as u64,
-        commands: cmd_mask(&[Command::Run, Command::Test, Command::Query]),
+        commands: cmd_mask(&[
+            Command::Run,
+            Command::Test,
+            Command::Query,
+            Command::SandboxRun,
+        ]),
     },
     FlagSpec {
         id: FlagId::Calls,
@@ -766,7 +798,7 @@ const FLAGS_TABLE: &[FlagSpec] = &[
         repeated: false,
         value: FlagValue::Count,
         maximum: u64::MAX,
-        commands: cmd_mask(&[Command::Query]),
+        commands: cmd_mask(&[Command::Query, Command::SandboxRun]),
     },
     FlagSpec {
         id: FlagId::Bundle,
@@ -784,7 +816,7 @@ const FLAGS_TABLE: &[FlagSpec] = &[
         repeated: false,
         value: FlagValue::None,
         maximum: 0,
-        commands: cmd_mask(&[Command::Emit, Command::Test]),
+        commands: cmd_mask(&[Command::Emit, Command::Test, Command::SandboxRun]),
     },
     FlagSpec {
         id: FlagId::RlimitChild,
@@ -793,7 +825,7 @@ const FLAGS_TABLE: &[FlagSpec] = &[
         repeated: false,
         value: FlagValue::None,
         maximum: 0,
-        commands: cmd_mask(&[Command::Emit, Command::Test]),
+        commands: cmd_mask(&[Command::Emit, Command::Test, Command::SandboxRun]),
     },
     FlagSpec {
         id: FlagId::UpgradeFrom,
@@ -853,7 +885,7 @@ const FLAGS_TABLE: &[FlagSpec] = &[
         repeated: false,
         value: FlagValue::None,
         maximum: 0,
-        commands: cmd_mask(&[Command::Serve]),
+        commands: cmd_mask(&[Command::Serve, Command::SandboxRun]),
     },
     FlagSpec {
         id: FlagId::Context,
@@ -946,6 +978,8 @@ const FLAGS_TABLE: &[FlagSpec] = &[
             Command::Push,
             Command::Diff,
             Command::Install,
+            Command::Index,
+            Command::SandboxRun,
         ]),
     },
     FlagSpec {
@@ -955,7 +989,7 @@ const FLAGS_TABLE: &[FlagSpec] = &[
         repeated: false,
         value: FlagValue::Text,
         maximum: 0,
-        commands: cmd_mask(&[Command::Run, Command::Install]),
+        commands: cmd_mask(&[Command::Run, Command::Install, Command::SandboxRun]),
     },
     FlagSpec {
         id: FlagId::StateDir,
@@ -1037,6 +1071,33 @@ const FLAGS_TABLE: &[FlagSpec] = &[
         value: FlagValue::None,
         maximum: 0,
         commands: cmd_mask(&[Command::Emit]),
+    },
+    FlagSpec {
+        id: FlagId::ReadOnly,
+        name: b"--read-only",
+        prefix: false,
+        repeated: false,
+        value: FlagValue::None,
+        maximum: 0,
+        commands: cmd_mask(&[Command::SandboxRun]),
+    },
+    FlagSpec {
+        id: FlagId::AllowHosts,
+        name: b"--allow-hosts",
+        prefix: false,
+        repeated: false,
+        value: FlagValue::Text,
+        maximum: 0,
+        commands: cmd_mask(&[Command::SandboxRun]),
+    },
+    FlagSpec {
+        id: FlagId::Timeout,
+        name: b"--timeout",
+        prefix: false,
+        repeated: false,
+        value: FlagValue::Count,
+        maximum: 3600,
+        commands: cmd_mask(&[Command::SandboxRun]),
     },
 ];
 
@@ -1150,6 +1211,9 @@ fn set_flag(
         FlagId::Fix => out.revised = op_bytes(),
         FlagId::Recover => out.recover = true,
         FlagId::MaxWork => out.max_work = n,
+        FlagId::ReadOnly => out.read_only = true,
+        FlagId::AllowHosts => out.allow_hosts = op_bytes(),
+        FlagId::Timeout => out.timeout_seconds = n as u32,
     }
     Ok(())
 }
@@ -1173,7 +1237,7 @@ pub fn parse_cli(argv: &[Vec<u8>]) -> Result<Cli, CliParseError> {
     if argv.len() < 2 {
         return Err(refuse(
             "expected a command: check, run, test, format, fix, guide, emit, serve, \
-             fetch, push, replay, query, rehearse, history, diff or install",
+             fetch, push, replay, query, rehearse, history, diff, install, index or sandbox-run",
             None,
             None,
         ));
@@ -1282,12 +1346,14 @@ pub fn parse_cli(argv: &[Vec<u8>]) -> Result<Cli, CliParseError> {
         (b"push", Command::Push),
         (b"diff", Command::Diff),
         (b"install", Command::Install),
+        (b"index", Command::Index),
+        (b"sandbox-run", Command::SandboxRun),
     ];
 
     let Some((_, cmd)) = COMMAND_NAMES.iter().find(|(name, _)| *name == command) else {
         return Err(refuse(
             "unknown command (expected check, run, test, format, fix, guide, emit, serve, \
-             fetch, push, replay, query, rehearse, history, diff or install)",
+             fetch, push, replay, query, rehearse, history, diff, install, index or sandbox-run)",
             Some(command),
             None,
         ));
@@ -1388,6 +1454,8 @@ pub fn parse_cli(argv: &[Vec<u8>]) -> Result<Cli, CliParseError> {
                     | Command::Replay
                     | Command::Push
                     | Command::Install
+                    | Command::Index
+                    | Command::SandboxRun
             )
         {
             return Err(refuse("command takes exactly one file", Some(arg), None));
@@ -1410,7 +1478,7 @@ pub fn parse_cli(argv: &[Vec<u8>]) -> Result<Cli, CliParseError> {
             ));
         }
         out.files.push(arg.to_vec());
-        if out.command == Command::Run {
+        if matches!(out.command, Command::Run | Command::SandboxRun) {
             out.arguments = argv[i + 1..].to_vec();
             break;
         }
@@ -1715,6 +1783,18 @@ fn flag_help_meta(id: FlagId) -> (&'static str, &'static str) {
             "",
             "apply resource limits to internal compile child process",
         ),
+        FlagId::ReadOnly => (
+            "",
+            "deny writable Files, Sqlite, and Command capabilities in sandbox-run",
+        ),
+        FlagId::AllowHosts => (
+            "HOSTS",
+            "comma-separated host[:port] allowlist enabling Network in sandbox-run",
+        ),
+        FlagId::Timeout => (
+            "SECONDS",
+            "wall-clock timeout in seconds for sandbox-run (1..3600)",
+        ),
     }
 }
 
@@ -1784,6 +1864,14 @@ fn command_help_summary(command: Command) -> (&'static str, &'static str) {
             "usage: mo install [FLAGS] FILE",
             "Compile a Mo program to bytecode and install an executable launcher.",
         ),
+        Command::Index => (
+            "usage: mo index [FLAGS] FILE",
+            "Emit compiler-exact JSON index of modules, types, functions, edges, and specs.",
+        ),
+        Command::SandboxRun => (
+            "usage: mo sandbox-run [FLAGS] FILE [ARGS...]",
+            "Compile and run a Mo script under fail-closed capability and OS sandbox bounds.",
+        ),
         Command::Version | Command::Help => (
             "usage: mo <command> [FLAGS] [ARGS...]",
             "Pure-Rust Mo compiler, tester, and runtime.",
@@ -1821,6 +1909,8 @@ pub fn format_help(command: Option<Command>) -> String {
                 Command::History,
                 Command::Diff,
                 Command::Install,
+                Command::Index,
+                Command::SandboxRun,
             ];
             for &cmd in ALL_COMMANDS {
                 let (_, desc) = command_help_summary(cmd);

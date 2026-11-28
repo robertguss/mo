@@ -619,6 +619,7 @@ pub fn resolve_operation(prim: &Prim) -> Option<Operation> {
                     CoreIoNullaryOp::CommandProcessAlive => HostOpId::CommandProcessAlive,
                     CoreIoNullaryOp::CommandProcessKillRaw => HostOpId::CommandProcessKillRaw,
                     CoreIoNullaryOp::CommandProcessWaitRaw => HostOpId::CommandProcessWaitRaw,
+                    CoreIoNullaryOp::CommandProcessPollRaw => HostOpId::CommandProcessPollRaw,
                 },
                 IoOp::ReadText { ro: false } => HostOpId::FilesReadText,
                 IoOp::ReadText { ro: true } => HostOpId::ReadfilesReadText,

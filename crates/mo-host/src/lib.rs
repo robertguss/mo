@@ -153,6 +153,8 @@ pub struct HostContext {
     open_connections: Rc<Cell<u32>>,
     open_databases: Rc<Cell<u32>>,
     open_processes: Rc<Cell<u32>>,
+    allowed_hosts: Option<Vec<network::TargetRule>>,
+    read_only_sandbox: bool,
     started: bool,
 }
 
@@ -175,6 +177,8 @@ impl HostContext {
             open_connections: Rc::new(Cell::new(0)),
             open_databases: Rc::new(Cell::new(0)),
             open_processes: Rc::new(Cell::new(0)),
+            allowed_hosts: None,
+            read_only_sandbox: false,
             started: false,
         }
     }
@@ -242,8 +246,21 @@ impl HostContext {
             open_connections: Rc::new(Cell::new(0)),
             open_databases: Rc::new(Cell::new(0)),
             open_processes: Rc::new(Cell::new(0)),
+            allowed_hosts: None,
+            read_only_sandbox: false,
             started: false,
         }
+    }
+
+    /// Restricts `Network` capabilities allocated by this host context to `hosts`.
+    pub fn set_allowed_hosts(&mut self, hosts: &[String]) -> Result<(), String> {
+        self.allowed_hosts = Some(network::parse_allowed_hosts(hosts)?);
+        Ok(())
+    }
+
+    /// Refuses writable (`Files`, `Sqlite`, `Command`) capability creation in read-only sandboxes.
+    pub fn set_read_only_sandbox(&mut self, read_only: bool) {
+        self.read_only_sandbox = read_only;
     }
 
     #[cfg(unix)]
@@ -321,6 +338,14 @@ impl HostContext {
             .get(ty)
             .capability
             .expect("capability type must specify capability kind");
+        if self.read_only_sandbox
+            && matches!(
+                cap,
+                Capability::Files | Capability::Sqlite | Capability::Command
+            )
+        {
+            return Err(HostError::UnimplementedCapability(cap));
+        }
         match cap {
             Capability::Args => {
                 let mut items = VecDeque::with_capacity(self.args.len());
@@ -353,7 +378,9 @@ impl HostContext {
             Capability::Clock => clock_random::make_real_clock(heap, ty),
             Capability::Random => clock_random::make_real_random(heap, ty),
             Capability::SecureRandom => clock_random::make_real_secure_random(heap, ty),
-            Capability::Network => network::make_real_network(heap, ty),
+            Capability::Network => {
+                network::make_real_network_restricted(heap, ty, self.allowed_hosts.clone())
+            }
             #[cfg(unix)]
             Capability::Sqlite => {
                 let open_folders = Rc::clone(&self.open_folders);
@@ -669,7 +696,7 @@ impl HostContext {
                 args,
             ),
 
-            // Command & Command.Process (10 ops)
+            // Command & Command.Process (11 ops)
             HostOpId::CommandFake => command::command_fake(heap, result_ty, args[0].clone()),
             HostOpId::CommandRunRaw
             | HostOpId::CommandWithin
@@ -679,7 +706,8 @@ impl HostContext {
             | HostOpId::CommandProcessPid
             | HostOpId::CommandProcessAlive
             | HostOpId::CommandProcessKillRaw
-            | HostOpId::CommandProcessWaitRaw => command::call_command(
+            | HostOpId::CommandProcessWaitRaw
+            | HostOpId::CommandProcessPollRaw => command::call_command(
                 heap,
                 types,
                 #[cfg(unix)]

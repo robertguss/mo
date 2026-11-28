@@ -25,7 +25,7 @@ use crate::HostError;
 use crate::files_common::find_case_tag;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct TargetRule {
+pub(crate) struct TargetRule {
     host: String,
     port: u16, // 0 = any port 1..=65535
 }
@@ -1336,11 +1336,25 @@ fn parse_sent_http_request(
 // Public entry points for crates/mo-host
 // ---------------------------------------------------------------------------
 
-pub(crate) fn make_real_network(heap: &Heap, ty: u32) -> Result<Value, HostError> {
+pub(crate) fn parse_allowed_hosts(hosts: &[String]) -> Result<Vec<TargetRule>, String> {
+    let mut rules = Vec::new();
+    for raw in hosts {
+        let rule =
+            parse_target(raw).ok_or_else(|| format!("invalid allowed host target: \"{raw}\""))?;
+        push_unique_rule(&mut rules, rule);
+    }
+    Ok(rules)
+}
+
+pub(crate) fn make_real_network_restricted(
+    heap: &Heap,
+    ty: u32,
+    allowed: Option<Vec<TargetRule>>,
+) -> Result<Value, HostError> {
     Ok(heap.alloc_capability(
         Capability::Network,
         ty,
-        Rc::new(NetworkCap::Real { allowed: None }),
+        Rc::new(NetworkCap::Real { allowed }),
     )?)
 }
 

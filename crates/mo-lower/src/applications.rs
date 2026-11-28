@@ -1169,6 +1169,9 @@ fn match_static_prim(native: &str) -> Option<Prim> {
         "Command.wait_raw" => Some(Prim::Io(IoOp::Nullary(
             CoreIoNullaryOp::CommandProcessWaitRaw,
         ))),
+        "Command.poll_output_raw" => Some(Prim::Io(IoOp::Nullary(
+            CoreIoNullaryOp::CommandProcessPollRaw,
+        ))),
         "SecureRandom.bytes" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::SecureRandomBytes))),
         "SecureRandom.seeded" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::SecureRandomSeeded))),
         "Files.write_bytes" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::WriteBytes))),

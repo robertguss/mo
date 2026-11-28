@@ -990,6 +990,12 @@ pub fn execute_cli(
         Command::Fix => {
             return fix_files(cli, output, errors);
         }
+        Command::Index => {
+            return crate::index::run_index(cli, output, errors);
+        }
+        Command::SandboxRun => {
+            return crate::sandbox_exec::run_sandbox_run(cli, output, errors);
+        }
         Command::Check | Command::Run | Command::Test | Command::Emit | Command::Install => {}
     }
 

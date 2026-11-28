@@ -15,9 +15,11 @@ pub mod fix;
 pub mod format;
 pub mod fs_util;
 pub mod identity;
+pub mod index;
 pub mod install;
 pub mod render;
 pub mod run;
+pub mod sandbox_exec;
 pub mod test_cmd;
 
 #[cfg(test)]
