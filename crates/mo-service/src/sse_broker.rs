@@ -33,8 +33,40 @@ use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::io::Errno;
 #[cfg(unix)]
 use rustix::net::{SendFlags, send};
+
 #[cfg(unix)]
-use rustix::pipe::{PipeFlags, pipe_with};
+const fn sse_send_flags() -> SendFlags {
+    #[cfg(target_os = "linux")]
+    {
+        SendFlags::NOSIGNAL
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        SendFlags::empty()
+    }
+}
+
+#[cfg(unix)]
+fn make_wake_pipe() -> std::io::Result<(OwnedFd, OwnedFd)> {
+    #[cfg(target_os = "linux")]
+    {
+        rustix::pipe::pipe_with(
+            rustix::pipe::PipeFlags::NONBLOCK | rustix::pipe::PipeFlags::CLOEXEC,
+        )
+        .map_err(|e| std::io::Error::from_raw_os_error(e.raw_os_error()))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let to_io = |e: Errno| std::io::Error::from_raw_os_error(e.raw_os_error());
+        let (read, write) = rustix::pipe::pipe().map_err(to_io)?;
+        for fd in [&read, &write] {
+            rustix::io::fcntl_setfd(fd, rustix::io::FdFlags::CLOEXEC).map_err(to_io)?;
+            let flags = rustix::fs::fcntl_getfl(fd).map_err(to_io)?;
+            rustix::fs::fcntl_setfl(fd, flags | rustix::fs::OFlags::NONBLOCK).map_err(to_io)?;
+        }
+        Ok((read, write))
+    }
+}
 
 /// Internal response header stripped by `mo serve` to upgrade a `200 OK` response into a live SSE
 /// subscription managed by [`SseBroker`].
@@ -344,8 +376,7 @@ impl SseBroker {
         history_capacity: usize,
         client_capacity: usize,
     ) -> std::io::Result<Self> {
-        let (wake_read, wake_write) = pipe_with(PipeFlags::NONBLOCK | PipeFlags::CLOEXEC)
-            .map_err(|e| std::io::Error::from_raw_os_error(e.raw_os_error()))?;
+        let (wake_read, wake_write) = make_wake_pipe()?;
         let state = Arc::new(Mutex::new(BrokerState::new(
             topic_capacity,
             history_capacity,
@@ -533,7 +564,7 @@ fn flush_active_stream(active: &mut ActiveStream) {
         match send(
             &active.stream,
             &active.write_buf[active.write_offset..],
-            SendFlags::NOSIGNAL,
+            sse_send_flags(),
         ) {
             Ok(0) => {
                 active.dead = true;
@@ -577,7 +608,7 @@ fn sse_driver_loop(
                 drop(st);
                 for a in &mut active {
                     if a.write_offset == a.write_buf.len() {
-                        let _ = send(&a.stream, b"0\r\n\r\n", SendFlags::NOSIGNAL);
+                        let _ = send(&a.stream, b"0\r\n\r\n", sse_send_flags());
                     }
                 }
                 active.clear();

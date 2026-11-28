@@ -1,6 +1,9 @@
 use std::cell::{Cell, RefCell};
+#[cfg(target_os = "linux")]
 use std::mem::MaybeUninit;
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
+use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::path::Path;
 use std::rc::Rc;
 
@@ -12,9 +15,11 @@ use mo_def::limits::{
     MO_LIMIT_PATH_LINKS, MO_LIMIT_PATH_STEPS, MO_LIMIT_VALUE_BYTES,
 };
 use mo_heap::{Heap, ScratchGuard, Value};
+#[cfg(target_os = "linux")]
+use rustix::fs::RawDir;
 use rustix::fs::{
-    AtFlags, CWD, FileType, FlockOperation, Mode, OFlags, RawDir, Stat, flock, fstat, ftruncate,
-    mkdirat, openat, readlinkat, renameat, statat, unlinkat,
+    AtFlags, CWD, FileType, FlockOperation, Mode, OFlags, Stat, flock, fstat, ftruncate, mkdirat,
+    openat, readlinkat, renameat, statat, unlinkat,
 };
 use rustix::io::{Errno, fcntl_dupfd_cloexec, pread, pwrite, read, write};
 
@@ -587,6 +592,8 @@ pub(crate) fn resolve(
     path: &str,
     mode: PathMode,
 ) -> Result<PathResult, FileProblem> {
+    #[cfg(not(target_os = "linux"))]
+    let _ = resolver;
     if path.len() >= MO_LIMIT_HOST_PATH_SIZE as usize {
         return Err(FileProblem::failed("path too long"));
     }
@@ -601,15 +608,25 @@ pub(crate) fn resolve(
 }
 
 pub(crate) fn dir_fd_path(dir_fd: BorrowedFd<'_>, verify_identity: bool) -> Option<String> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
-        let proc_link = format!("/proc/self/fd/{}", dir_fd.as_raw_fd());
-        let raw = readlinkat(CWD, proc_link.as_str(), Vec::new()).ok()?;
-        let bytes = raw.as_bytes();
-        if bytes.is_empty() || bytes.len() >= MO_LIMIT_HOST_PATH_SIZE as usize {
+        let raw_bytes: Vec<u8> = {
+            #[cfg(target_os = "linux")]
+            {
+                let proc_link = format!("/proc/self/fd/{}", dir_fd.as_raw_fd());
+                let raw = readlinkat(CWD, proc_link.as_str(), Vec::new()).ok()?;
+                raw.into_bytes()
+            }
+            #[cfg(target_os = "macos")]
+            {
+                let raw = rustix::fs::getpath(dir_fd).ok()?;
+                raw.into_bytes()
+            }
+        };
+        if raw_bytes.is_empty() || raw_bytes.len() >= MO_LIMIT_HOST_PATH_SIZE as usize {
             return None;
         }
-        let path = String::from_utf8(bytes.to_vec()).ok()?;
+        let path = String::from_utf8(raw_bytes).ok()?;
         if verify_identity {
             let dir_st = fstat(dir_fd).ok()?;
             let path_st = statat(CWD, path.as_str(), AtFlags::empty()).ok()?;
@@ -619,7 +636,7 @@ pub(crate) fn dir_fd_path(dir_fd: BorrowedFd<'_>, verify_identity: bool) -> Opti
         }
         Some(path)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = (dir_fd, verify_identity);
         None
@@ -859,6 +876,33 @@ fn read_all_fd(
     }
 }
 
+fn inspect_listing_entry(
+    dir_fd: BorrowedFd<'_>,
+    entry_name: &std::ffi::CStr,
+) -> Result<Option<(String, EntryKind)>, FileProblem> {
+    let raw_name = entry_name.to_bytes();
+    if raw_name == b"." || raw_name == b".." {
+        return Ok(None);
+    }
+    let st = match statat(dir_fd, entry_name, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(st) => st,
+        Err(Errno::NOENT) => return Ok(None),
+        Err(e) => return Err(errno_to_problem(e)),
+    };
+    let Ok(name_str) = std::str::from_utf8(raw_name) else {
+        return Err(FileProblem::failed(
+            "folder contains a name that is not text",
+        ));
+    };
+    let kind = match FileType::from_raw_mode(st.st_mode) {
+        FileType::RegularFile => EntryKind::File,
+        FileType::Directory => EntryKind::Folder,
+        FileType::Symlink => EntryKind::Link,
+        _ => EntryKind::Other,
+    };
+    Ok(Some((name_str.to_string(), kind)))
+}
+
 fn real_listing(
     heap: &Heap,
     types: &TypeTable,
@@ -876,75 +920,80 @@ fn real_listing(
         Err(e) => return make_file_error(heap, types, result_ty, path_val, errno_to_problem(e)),
     };
 
-    let mut buf: Vec<MaybeUninit<u8>> = Vec::with_capacity(8192);
-    buf.resize_with(8192, MaybeUninit::uninit);
     let mut items: Vec<(String, EntryKind)> = Vec::new();
     let mut scratch = ScratchGuard::new(heap.budget());
 
-    'read: loop {
-        let mut need_grow = false;
-        {
-            let mut iter = RawDir::new(&copy, &mut buf[..]);
-            while let Some(entry_res) = iter.next() {
-                let entry = match entry_res {
-                    Ok(e) => e,
-                    Err(Errno::INVAL) => {
-                        need_grow = true;
-                        break;
+    #[cfg(target_os = "linux")]
+    {
+        let mut buf: Vec<MaybeUninit<u8>> = Vec::with_capacity(8192);
+        buf.resize_with(8192, MaybeUninit::uninit);
+
+        'read: loop {
+            let mut need_grow = false;
+            {
+                let mut iter = RawDir::new(&copy, &mut buf[..]);
+                while let Some(entry_res) = iter.next() {
+                    let entry = match entry_res {
+                        Ok(e) => e,
+                        Err(Errno::INVAL) => {
+                            need_grow = true;
+                            break;
+                        }
+                        Err(e) => {
+                            return make_file_error(
+                                heap,
+                                types,
+                                result_ty,
+                                path_val,
+                                errno_to_problem(e),
+                            );
+                        }
+                    };
+                    match inspect_listing_entry(copy.as_fd(), entry.file_name()) {
+                        Ok(Some((name, kind))) => {
+                            scratch.charge(name.len() + 32)?;
+                            items.push((name, kind));
+                        }
+                        Ok(None) => {}
+                        Err(p) => return make_file_error(heap, types, result_ty, path_val, p),
                     }
-                    Err(e) => {
-                        return make_file_error(
-                            heap,
-                            types,
-                            result_ty,
-                            path_val,
-                            errno_to_problem(e),
-                        );
-                    }
-                };
-                let raw_name = entry.file_name().to_bytes();
-                if raw_name == b"." || raw_name == b".." {
-                    continue;
                 }
-                let st = match statat(&copy, entry.file_name(), AtFlags::SYMLINK_NOFOLLOW) {
-                    Ok(st) => st,
-                    Err(Errno::NOENT) => continue,
-                    Err(e) => {
-                        return make_file_error(
-                            heap,
-                            types,
-                            result_ty,
-                            path_val,
-                            errno_to_problem(e),
-                        );
-                    }
-                };
-                let Ok(name_str) = std::str::from_utf8(raw_name) else {
-                    return make_file_error(
-                        heap,
-                        types,
-                        result_ty,
-                        path_val,
-                        FileProblem::failed("folder contains a name that is not text"),
-                    );
-                };
-                let kind = match FileType::from_raw_mode(st.st_mode) {
-                    FileType::RegularFile => EntryKind::File,
-                    FileType::Directory => EntryKind::Folder,
-                    FileType::Symlink => EntryKind::Link,
-                    _ => EntryKind::Other,
-                };
-                scratch.charge(name_str.len() + 32)?;
-                items.push((name_str.to_string(), kind));
+            }
+            if need_grow {
+                let new_len = buf.len().saturating_mul(2);
+                buf.resize_with(new_len, MaybeUninit::uninit);
+                continue 'read;
+            }
+            break;
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let mut dir = match rustix::fs::Dir::read_from(&copy) {
+            Ok(d) => d,
+            Err(e) => {
+                return make_file_error(heap, types, result_ty, path_val, errno_to_problem(e));
+            }
+        };
+        while let Some(entry_res) = dir.read() {
+            let entry = match entry_res {
+                Ok(e) => e,
+                Err(e) => {
+                    return make_file_error(heap, types, result_ty, path_val, errno_to_problem(e));
+                }
+            };
+            match inspect_listing_entry(copy.as_fd(), entry.file_name()) {
+                Ok(Some((name, kind))) => {
+                    scratch.charge(name.len() + 32)?;
+                    items.push((name, kind));
+                }
+                Ok(None) => {}
+                Err(p) => return make_file_error(heap, types, result_ty, path_val, p),
             }
         }
-        if need_grow {
-            let new_len = buf.len().saturating_mul(2);
-            buf.resize_with(new_len, MaybeUninit::uninit);
-            continue 'read;
-        }
-        break;
     }
+
     drop(scratch);
     make_names_or_entries(heap, types, result_ty, items)
 }

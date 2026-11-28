@@ -29,10 +29,23 @@ use rustix::fs::{Access, AtFlags, CWD, FileType, OFlags, access, fcntl_setfl, fs
 use rustix::io::fcntl_dupfd_cloexec;
 #[cfg(unix)]
 use rustix::io::read as read_fd;
-#[cfg(unix)]
-use rustix::pipe::{PipeFlags, pipe_with};
 #[cfg(target_os = "linux")]
 use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
+
+#[cfg(unix)]
+fn make_cloexec_pipe() -> Result<(OwnedFd, OwnedFd), rustix::io::Errno> {
+    #[cfg(target_os = "linux")]
+    {
+        rustix::pipe::pipe_with(rustix::pipe::PipeFlags::CLOEXEC)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let (read, write) = rustix::pipe::pipe()?;
+        rustix::io::fcntl_setfd(&read, rustix::io::FdFlags::CLOEXEC)?;
+        rustix::io::fcntl_setfd(&write, rustix::io::FdFlags::CLOEXEC)?;
+        Ok((read, write))
+    }
+}
 
 use crate::HostError;
 #[cfg(unix)]
@@ -702,8 +715,8 @@ fn spawn_confined_child(
 
     let mut exec_status = None;
     let mut cmd = if let Some(trampoline) = trampoline {
-        let (read, write) = pipe_with(PipeFlags::CLOEXEC)
-            .map_err(|_| ("spawn_failed:pipe failed", String::new()))?;
+        let (read, write) =
+            make_cloexec_pipe().map_err(|_| ("spawn_failed:pipe failed", String::new()))?;
         exec_status = Some(read);
         let mut c = Command::new(trampoline);
         c.stdin(Stdio::from(write))
@@ -1745,7 +1758,7 @@ mod tests {
 
     #[test]
     fn command_run_times_out_while_launcher_still_holds_exec_status_pipe() {
-        let (read, write) = pipe_with(PipeFlags::CLOEXEC).unwrap();
+        let (read, write) = make_cloexec_pipe().unwrap();
         let mut child = Command::new("/bin/sh")
             .args([
                 "-c",

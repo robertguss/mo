@@ -1,4 +1,4 @@
 /* Canonical Mo toolchain version string. */
 #ifndef MO_VERSION
-#define MO_VERSION "0.4.0"
+#define MO_VERSION "0.4.1"
 #endif

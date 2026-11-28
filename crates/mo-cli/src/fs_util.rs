@@ -144,6 +144,32 @@ pub fn names_a_source(path: &[u8], sources: &SourceMap) -> bool {
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(unix)]
+fn mode_from_unix_bits(bits: u32) -> rustix::fs::Mode {
+    use rustix::fs::Mode;
+    const FLAGS: [(u32, Mode); 12] = [
+        (0o400, Mode::RUSR),
+        (0o200, Mode::WUSR),
+        (0o100, Mode::XUSR),
+        (0o040, Mode::RGRP),
+        (0o020, Mode::WGRP),
+        (0o010, Mode::XGRP),
+        (0o004, Mode::ROTH),
+        (0o002, Mode::WOTH),
+        (0o001, Mode::XOTH),
+        (0o4000, Mode::SUID),
+        (0o2000, Mode::SGID),
+        (0o1000, Mode::SVTX),
+    ];
+    let mut out = Mode::empty();
+    for (bit, flag) in FLAGS {
+        if (bits & bit) != 0 {
+            out |= flag;
+        }
+    }
+    out
+}
+
 /// Atomically replaces `path` with `contents` via a sibling `.mo-write-XXXXXX` file,
 /// preserving permission bits and refusing replacement if `path`'s `dev`/`ino` changed
 /// (`src/tools/fix.c:mo_replace_file`).
@@ -191,7 +217,7 @@ pub fn replace_file(path: &[u8], contents: &[u8], original: &FileIdentity) -> Re
         let mut file = File::from(fd);
         file.write_all(contents).map_err(|e| io_error_message(&e))?;
         file.flush().map_err(|e| io_error_message(&e))?;
-        fchmod(&file, Mode::from_raw_mode(original.mode & 0o777)).map_err(errno_message)?;
+        fchmod(&file, mode_from_unix_bits(original.mode & 0o777)).map_err(errno_message)?;
         fsync(&file).map_err(errno_message)?;
         drop(file);
 
@@ -273,7 +299,7 @@ pub fn write_atomic_file(
         let mut file = File::from(fd);
         file.write_all(bytes).map_err(|e| io_error_message(&e))?;
         file.flush().map_err(|e| io_error_message(&e))?;
-        fchmod(&file, Mode::from_raw_mode(mode)).map_err(errno_message)?;
+        fchmod(&file, mode_from_unix_bits(mode)).map_err(errno_message)?;
         drop(file);
         fs::rename(bytes_to_path(&tmp_path), bytes_to_path(dest_path))
             .map_err(|e| io_error_message(&e))?;
