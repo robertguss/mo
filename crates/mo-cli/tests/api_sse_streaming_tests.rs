@@ -864,4 +864,107 @@ end
         let _ = fs::remove_dir_all(&dir);
         Ok(())
     }
+
+    #[test]
+    fn mo_serve_publishes_sse_on_303_redirect_and_blocks_on_4xx() -> Result<(), Box<dyn Error>> {
+        let dir = temp_dir("sse_303_redirect")?;
+        let ready_file = dir.join("ready.txt");
+        let main_mo = dir.join("main.mo");
+        let src = r##"module Main
+use Api
+use Json
+
+api
+  port 0
+  get "/events" get_events
+  post "/redirect-ok" post_redirect
+  post "/error-no-publish" post_err
+end
+
+fn get_events() : Api.Response
+  Api.sse_stream_with(["bills"], None, Some(1000), [(Some("ready"), "{}")])
+end
+
+fn post_redirect() : Api.Response
+  Api.with_sse_publish_json(
+    Api.redirect_see_other("/"),
+    "bills",
+    "bill.created",
+    Json.Object({"id": Json.String("b_1")})
+  )
+end
+
+fn post_err() : Api.Response
+  Api.with_sse_publish_json(
+    Api.json_response(422, {"error": "invalid"}),
+    "bills",
+    "bill.evil",
+    Json.Object({"id": Json.String("b_bad")})
+  )
+end
+
+fn main() : Int
+  0
+end
+"##;
+        fs::write(&main_mo, src)?;
+
+        let child = Command::new(mo_bin())
+            .arg("serve")
+            .arg(&main_mo)
+            .arg("--bind")
+            .arg("127.0.0.1")
+            .arg("--port")
+            .arg("0")
+            .arg("--workers")
+            .arg("2")
+            .arg("--data")
+            .arg(&dir)
+            .arg("--ready-file")
+            .arg(&ready_file)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let mut guard = ServeGuard { child };
+        let port = wait_ready_port(&ready_file, &mut guard.child)?;
+
+        let mut sub = open_sse_stream(port, "/events", None)?;
+        sub.read_until_contains("event: ready\ndata: {}\n\n")?;
+
+        let (err_status, _err_hdrs, _err_body) =
+            http_request(port, "POST", "/error-no-publish", Some("{}"))?;
+        assert_eq!(err_status, 422);
+
+        let (redir_status, _redir_hdrs, _redir_body) =
+            http_request(port, "POST", "/redirect-ok", Some("{}"))?;
+        assert_eq!(redir_status, 303);
+
+        let seen = sub.read_until_contains("\"id\":\"b_1\"")?;
+        assert!(seen.contains("event: bill.created\n"), "{seen}");
+        assert!(
+            !seen.contains("bill.evil"),
+            "4xx must not publish SSE: {seen}"
+        );
+
+        if let Some(pid) = rustix::process::Pid::from_raw(guard.child.id() as i32) {
+            rustix::process::kill_process(pid, rustix::process::Signal::TERM)?;
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = guard.child.try_wait()? {
+                assert!(
+                    status.success(),
+                    "expected clean SIGTERM exit, got {status}"
+                );
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err("mo serve did not exit cleanly after SIGTERM".into());
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        drop(sub);
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
 }

@@ -411,6 +411,10 @@ struct ParsedHttpRequest {
     body: Vec<u8>,
 }
 
+const fn status_allows_sse_publish(status_code: i64) -> bool {
+    matches!(status_code, 200..300 | 302 | 303 | 307 | 308)
+}
+
 fn status_reason_phrase(code: i64) -> &'static str {
     match code {
         200 => "OK",
@@ -1509,7 +1513,7 @@ fn dispatch_vm_request(
         };
     }
 
-    if (200..300).contains(&status_code) && !publishes.is_empty() {
+    if status_allows_sse_publish(status_code) && !publishes.is_empty() {
         pool.sse_broker.publish(&publishes);
     }
 
