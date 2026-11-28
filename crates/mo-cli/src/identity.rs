@@ -21,13 +21,13 @@ pub const MO_VERSION: &str = mo_def::MO_VERSION;
 /// Formatted `--version` output line without trailing newline.
 pub const MO_VERSION_LINE: &str = mo_def::MO_VERSION_BANNER;
 
-/// Returns the version string (`"0.4.1"`).
+/// Returns the version string (`"0.4.2"`).
 #[must_use]
 pub const fn version() -> &'static str {
     MO_VERSION
 }
 
-/// Returns the version banner (`"mo 0.4.1"`).
+/// Returns the version banner (`"mo 0.4.2"`).
 #[must_use]
 pub const fn version_line() -> &'static str {
     MO_VERSION_LINE
